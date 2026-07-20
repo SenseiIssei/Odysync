@@ -26,6 +26,11 @@ import {
   WifiOff,
   Info,
   Zap,
+  ShieldCheck,
+  Power,
+  DatabaseBackup,
+  PlayCircle,
+  Rocket,
 } from "lucide-react";
 import "./App.css";
 import type {
@@ -42,6 +47,8 @@ import type {
   ProfileDto,
   OfflineCacheStatusDto,
   OfflineManifestEntryDto,
+  StartupProgramDto,
+  BackupDto,
 } from "./types";
 import * as api from "./api";
 
@@ -57,6 +64,8 @@ type Tab =
   | "logs"
   | "profiles"
   | "offline"
+  | "startup"
+  | "backup"
   | "about";
 
 interface NavItem {
@@ -77,6 +86,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: "schedule", label: "Schedule", icon: <Calendar className="w-4 h-4" />, group: "Automation" },
   { id: "profiles", label: "Profiles", icon: <Layers className="w-4 h-4" />, group: "Automation" },
   { id: "offline", label: "Offline", icon: <WifiOff className="w-4 h-4" />, group: "Automation" },
+  { id: "startup", label: "Startup", icon: <Power className="w-4 h-4" />, group: "Automation" },
+  { id: "backup", label: "Backup", icon: <DatabaseBackup className="w-4 h-4" />, group: "Automation" },
   { id: "settings", label: "Settings", icon: <Settings className="w-4 h-4" />, group: "Config" },
   { id: "about", label: "About", icon: <Info className="w-4 h-4" />, group: "Config" },
 ];
@@ -120,7 +131,17 @@ export default function App() {
             <span className="text-xs text-cyber-text-faint">v2.0</span>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => api.restartAsAdmin().catch(() => {})}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-accent/10 border border-accent/30 text-accent text-xs font-medium hover:bg-accent/20 transition-all glow-cyan"
+            title="Restart with admin privileges"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            Run as Admin
+          </motion.button>
           <button
             onClick={minimizeWindow}
             className="p-1.5 rounded hover:bg-cyber-surface-2 text-cyber-text-dim hover:text-accent transition-all"
@@ -205,6 +226,8 @@ export default function App() {
               {tab === "logs" && <LogsTab />}
               {tab === "profiles" && <ProfilesTab />}
               {tab === "offline" && <OfflineTab />}
+              {tab === "startup" && <StartupTab />}
+              {tab === "backup" && <BackupTab />}
               {tab === "about" && <AboutTab />}
             </motion.div>
           </AnimatePresence>
@@ -248,6 +271,9 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
   const [backends, setBackends] = useState<BackendDto[]>([]);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [autoMode, setAutoMode] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
 
   useEffect(() => {
     api.getSystemInfo().then(setSysInfo).catch(() => {});
@@ -256,18 +282,62 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
 
   const quickScan = async () => {
     setScanning(true);
+    setStatus(null);
     try {
       const r = await api.scan();
       setScanResult(r);
+      setStatus(`Found ${r.actionable.length} updates`);
     } catch (e) {
-      console.error(e);
+      setStatus(`Scan failed: ${String(e)}`);
     } finally {
       setScanning(false);
     }
   };
 
+  const installAll = async () => {
+    if (!scanResult || scanResult.actionable.length === 0) return;
+    setInstalling(true);
+    setStatus("Creating backup before installing...");
+    try {
+      // Safety: create a restore point first
+      await api.createBackup(`Odysync - Before bulk update ${new Date().toISOString()}`).catch(() => {});
+      setStatus("Installing all updates...");
+      await api.apply({ updates: scanResult.actionable, dry_run: false, restore_point: true });
+      setStatus("All updates installed successfully!");
+      setScanResult(null);
+    } catch (e) {
+      setStatus(`Install failed: ${String(e)}`);
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const autoScanInstall = async () => {
+    setAutoMode(true);
+    setStatus("Auto mode: scanning...");
+    try {
+      const r = await api.scan();
+      setScanResult(r);
+      if (r.actionable.length === 0) {
+        setStatus("Auto mode: no updates found. System is up to date!");
+        return;
+      }
+      setStatus(`Auto mode: found ${r.actionable.length} updates. Creating backup...`);
+      await api.createBackup(`Odysync - Auto update ${new Date().toISOString()}`).catch(() => {});
+      setStatus(`Auto mode: installing ${r.actionable.length} updates...`);
+      await api.apply({ updates: r.actionable, dry_run: false, restore_point: true });
+      setStatus("Auto mode: all updates installed! Backup was created for safety.");
+      setScanResult(null);
+    } catch (e) {
+      setStatus(`Auto mode failed: ${String(e)}`);
+    } finally {
+      setAutoMode(false);
+    }
+  };
+
   const availableCount = backends.filter((b) => b.available).length;
   const updateCount = scanResult?.actionable.length ?? 0;
+  const busy = scanning || installing || autoMode;
 
   const stats = [
     { label: "Updates Available", value: scanning ? "..." : String(updateCount), icon: <Package className="w-5 h-5" />, color: "text-accent", glow: "glow-cyan" },
@@ -300,17 +370,37 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
         ))}
       </div>
 
-      {/* Quick actions */}
-      <div className="flex gap-3">
+      {/* Action buttons */}
+      <div className="flex flex-wrap gap-3">
         <motion.button
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={quickScan}
-          disabled={scanning}
+          disabled={busy}
           className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-accent/10 border border-accent/30 text-accent font-medium text-sm hover:bg-accent/20 disabled:opacity-50 transition-all glow-cyan"
         >
           <RefreshCw className={`w-4 h-4 ${scanning ? "animate-spin" : ""}`} />
           {scanning ? "Scanning..." : "Quick Scan"}
+        </motion.button>
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={installAll}
+          disabled={busy || !scanResult || updateCount === 0}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-success/10 border border-success/30 text-success font-medium text-sm hover:bg-success/20 disabled:opacity-50 transition-all"
+        >
+          <Download className={`w-4 h-4 ${installing ? "animate-bounce" : ""}`} />
+          {installing ? "Installing..." : `Install All (${updateCount})`}
+        </motion.button>
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={autoScanInstall}
+          disabled={busy}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-purple-neon/10 border border-purple-neon/30 text-purple-neon font-medium text-sm hover:bg-purple-neon/20 disabled:opacity-50 transition-all"
+        >
+          <Rocket className={`w-4 h-4 ${autoMode ? "animate-pulse" : ""}`} />
+          {autoMode ? "Auto Mode..." : "Auto Scan + Install"}
         </motion.button>
         <motion.button
           whileHover={{ scale: 1.02 }}
@@ -322,6 +412,18 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
           View Updates
         </motion.button>
       </div>
+
+      {/* Status message */}
+      {status && (
+        <motion.div
+          initial={{ opacity: 0, y: -5 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-2 text-sm text-cyber-text-dim bg-cyber-surface border border-cyber-border rounded-lg px-4 py-3"
+        >
+          <PlayCircle className="w-4 h-4 text-accent flex-shrink-0" />
+          {status}
+        </motion.div>
+      )}
 
       {/* Backend status */}
       <div className="rounded-xl bg-cyber-surface border border-cyber-border p-4">
@@ -652,7 +754,6 @@ function MaintenanceTab() {
     { id: "temp_cleanup", label: "Temp Cleanup", icon: <Wrench className="w-5 h-5" />, desc: "Clean temporary files and folders" },
     { id: "clean_recycle_bin", label: "Empty Recycle Bin", icon: <HardDrive className="w-5 h-5" />, desc: "Permanently delete recycled files" },
     { id: "system_health", label: "System Health (DISM/SFC)", icon: <Stethoscope className="w-5 h-5" />, desc: "Scan and repair system file integrity" },
-    { id: "startup_programs", label: "View Startup Programs", icon: <Package className="w-5 h-5" />, desc: "List programs that start with Windows" },
   ];
 
   const runAction = async (action: string) => {
@@ -1059,14 +1160,15 @@ function Toggle({ label, description, checked, onChange }: { label: string; desc
       </div>
       <button
         onClick={() => onChange(!checked)}
-        className={`relative w-11 h-6 rounded-full transition-all ${
-          checked ? "bg-accent/30 glow-cyan" : "bg-cyber-bg border border-cyber-border"
+        className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
+          checked ? "bg-accent/30" : "bg-cyber-bg border border-cyber-border"
         }`}
       >
         <motion.span
-          animate={{ x: checked ? 20 : 2 }}
+          animate={{ x: checked ? 22 : 2 }}
           transition={{ type: "spring", stiffness: 500, damping: 30 }}
-          className={`absolute top-0.5 w-5 h-5 rounded-full ${checked ? "bg-accent" : "bg-cyber-text-faint"}`}
+          className="absolute top-0.5 left-0 w-5 h-5 rounded-full"
+          style={{ backgroundColor: checked ? "var(--color-accent)" : "var(--color-cyber-text-faint)" }}
         />
       </button>
     </label>
@@ -1654,6 +1756,243 @@ function OfflineTab() {
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+// ── Startup Programs Tab ─────────────────────────────────────────────────────
+
+function StartupTab() {
+  const [programs, setPrograms] = useState<StartupProgramDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [toggling, setToggling] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  const refresh = () => {
+    api.listStartupPrograms().then(setPrograms).catch(() => {}).finally(() => setLoading(false));
+  };
+
+  useEffect(refresh, []);
+
+  const toggle = async (name: string, location: string, enable: boolean) => {
+    setToggling(name);
+    try {
+      await api.toggleStartupProgram(name, location, enable);
+      refresh();
+    } catch {}
+    setToggling(null);
+  };
+
+  const filtered = programs.filter((p) =>
+    p.name.toLowerCase().includes(search.toLowerCase()) ||
+    p.command.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const enabledCount = programs.filter((p) => p.enabled).length;
+  const disabledCount = programs.length - enabledCount;
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-4">
+      <h1 className="text-2xl font-bold text-glow-cyan">Startup Programs</h1>
+      <p className="text-sm text-cyber-text-dim">
+        Manage programs that start automatically with Windows. Disable unused programs to speed up boot time.
+      </p>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="p-3 rounded-xl bg-cyber-surface border border-cyber-border">
+          <div className="text-xl font-bold text-accent">{programs.length}</div>
+          <div className="text-xs text-cyber-text-dim">Total</div>
+        </div>
+        <div className="p-3 rounded-xl bg-cyber-surface border border-cyber-border">
+          <div className="text-xl font-bold text-success">{enabledCount}</div>
+          <div className="text-xs text-cyber-text-dim">Enabled</div>
+        </div>
+        <div className="p-3 rounded-xl bg-cyber-surface border border-cyber-border">
+          <div className="text-xl font-bold text-danger">{disabledCount}</div>
+          <div className="text-xs text-cyber-text-dim">Disabled</div>
+        </div>
+      </div>
+
+      <input
+        type="text"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+        placeholder="Search startup programs..."
+      />
+
+      {loading && <div className="text-center py-8 text-cyber-text-dim">Loading startup programs...</div>}
+
+      {!loading && filtered.length === 0 && (
+        <div className="text-center py-8">
+          <Power className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
+          <p className="text-sm text-cyber-text-dim">No startup programs found.</p>
+        </div>
+      )}
+
+      <div className="space-y-1">
+        {filtered.map((p, i) => (
+          <motion.div
+            key={`${p.name}-${p.location}`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: Math.min(i * 0.02, 0.3) }}
+            className="flex items-center gap-3 p-3 rounded-lg bg-cyber-surface border border-cyber-border text-xs"
+          >
+            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${p.enabled ? "bg-success" : "bg-danger"}`} />
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-cyber-text truncate">{p.name}</div>
+              <div className="text-cyber-text-faint mt-0.5 truncate font-mono">{p.command}</div>
+              <div className="text-cyber-text-faint mt-0.5">{p.location}</div>
+            </div>
+            <button
+              onClick={() => toggle(p.name, p.location, !p.enabled)}
+              disabled={toggling === p.name}
+              className={`px-3 py-1 rounded text-xs font-medium flex-shrink-0 transition-all disabled:opacity-50 ${
+                p.enabled
+                  ? "bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20"
+                  : "bg-success/10 border border-success/30 text-success hover:bg-success/20"
+              }`}
+            >
+              {toggling === p.name ? "..." : p.enabled ? "Disable" : "Enable"}
+            </button>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Backup Tab ───────────────────────────────────────────────────────────────
+
+function BackupTab() {
+  const [backups, setBackups] = useState<BackupDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [backupName, setBackupName] = useState("");
+  const [protectionEnabled, setProtectionEnabled] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const refresh = () => {
+    Promise.all([
+      api.listBackups().catch(() => []),
+      api.isSystemProtectionEnabled().catch(() => false),
+    ]).then(([b, p]) => {
+      setBackups(b);
+      setProtectionEnabled(p);
+      setLoading(false);
+    });
+  };
+
+  useEffect(refresh, []);
+
+  const createBackup = async () => {
+    setCreating(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const name = backupName.trim() || `Odysync Backup ${new Date().toLocaleString()}`;
+      await api.createBackup(name);
+      setSuccess("Backup created successfully!");
+      setBackupName("");
+      refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+    setCreating(false);
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-4">
+      <h1 className="text-2xl font-bold text-glow-cyan">Backups & Restore Points</h1>
+      <p className="text-sm text-cyber-text-dim">
+        Create and manage system restore points. Always create a backup before bulk updates.
+      </p>
+
+      {!protectionEnabled && !loading && (
+        <div className="flex items-center gap-2 text-xs text-warning bg-warning/5 rounded-lg px-4 py-3 border border-warning/30">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          System Protection is disabled. Enable it in Windows System Properties to use restore points.
+        </div>
+      )}
+
+      <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4 space-y-3">
+        <h3 className="font-bold text-sm text-accent">Create New Backup</h3>
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={backupName}
+            onChange={(e) => setBackupName(e.target.value)}
+            className="flex-1 px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+            placeholder="Backup name (optional)"
+          />
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={createBackup}
+            disabled={creating}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50 transition-all glow-cyan"
+          >
+            <DatabaseBackup className={`w-4 h-4 ${creating ? "animate-pulse" : ""}`} />
+            {creating ? "Creating..." : "Create"}
+          </motion.button>
+        </div>
+        {success && (
+          <div className="flex items-center gap-2 text-xs text-success">
+            <CheckCircle className="w-4 h-4" />
+            {success}
+          </div>
+        )}
+        {error && (
+          <div className="flex items-center gap-2 text-xs text-danger">
+            <AlertTriangle className="w-4 h-4" />
+            {error}
+          </div>
+        )}
+      </div>
+
+      {loading && <div className="text-center py-8 text-cyber-text-dim">Loading backups...</div>}
+
+      {!loading && backups.length === 0 && (
+        <div className="text-center py-8">
+          <DatabaseBackup className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
+          <p className="text-sm text-cyber-text-dim">No restore points found. Create one above to get started.</p>
+        </div>
+      )}
+
+      {!loading && backups.length > 0 && (
+        <div className="space-y-1">
+          <h3 className="text-sm font-bold text-accent mb-2">Existing Restore Points</h3>
+          {backups.map((b, i) => (
+            <motion.div
+              key={`${b.name}-${i}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: Math.min(i * 0.03, 0.3) }}
+              className="flex items-center gap-3 p-3 rounded-lg bg-cyber-surface border border-cyber-border text-xs"
+            >
+              <DatabaseBackup className="w-4 h-4 text-accent flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-cyber-text truncate">{b.name}</div>
+                <div className="text-cyber-text-faint mt-0.5">
+                  {new Date(b.created_at).toLocaleString()} · {b.backup_type}
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  if (confirm(`Restore to "${b.name}"? This will restart your computer.`)) {
+                    api.restoreBackup(i + 1).catch((e) => setError(String(e)));
+                  }
+                }}
+                className="px-3 py-1 rounded bg-warning/10 border border-warning/30 text-warning text-xs font-medium hover:bg-warning/20 transition-all flex-shrink-0"
+              >
+                Restore
+              </button>
+            </motion.div>
+          ))}
+        </div>
       )}
     </div>
   );

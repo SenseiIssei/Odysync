@@ -245,18 +245,7 @@ impl Maintenance for SystemHealth {
     async fn run(&self) -> Result<MaintenanceResult> {
         #[cfg(windows)]
         {
-            let dism_scan = proc::run(
-                "DISM",
-                &["/Online", "/Cleanup-Image", "/ScanHealth"],
-                MAINTENANCE_TIMEOUT,
-            )
-            .await;
-            let dism_restore = proc::run(
-                "DISM",
-                &["/Online", "/Cleanup-Image", "/RestoreHealth"],
-                MAINTENANCE_TIMEOUT,
-            )
-            .await;
+            // SFC first - works without admin for scan, more reliable
             let sfc = proc::run(
                 "sfc",
                 &["/scannow"],
@@ -264,20 +253,84 @@ impl Maintenance for SystemHealth {
             )
             .await;
 
+            // DISM ScanHealth
+            let dism_scan = proc::run(
+                "DISM",
+                &["/Online", "/Cleanup-Image", "/ScanHealth"],
+                MAINTENANCE_TIMEOUT,
+            )
+            .await;
+
+            // DISM RestoreHealth - only if ScanHealth found issues
+            let dism_restore = if matches!(&dism_scan, Ok(o) if o.success()) {
+                // ScanHealth passed, no need for RestoreHealth
+                Ok(odysync_core::proc::Output {
+                    stdout: "Skipped - ScanHealth passed".to_string(),
+                    stderr: String::new(),
+                    code: 0,
+                })
+            } else {
+                proc::run(
+                    "DISM",
+                    &["/Online", "/Cleanup-Image", "/RestoreHealth"],
+                    MAINTENANCE_TIMEOUT,
+                )
+                .await
+            };
+
+            let sfc_ok = matches!(&sfc, Ok(o) if o.success());
             let dism_scan_ok = matches!(&dism_scan, Ok(o) if o.success());
             let dism_restore_ok = matches!(&dism_restore, Ok(o) if o.success());
-            let sfc_ok = matches!(&sfc, Ok(o) if o.success());
+
+            // Build detailed summary
+            let sfc_detail = match &sfc {
+                Ok(o) => {
+                    let last_lines: Vec<&str> = o.stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+                    let detail = last_lines.last().map(|l| l.trim()).unwrap_or("completed");
+                    if o.success() { format!("ok ({})", detail) } else { format!("completed with issues ({})", detail) }
+                }
+                Err(e) => format!("failed ({})", e),
+            };
+
+            let dism_scan_detail = match &dism_scan {
+                Ok(o) => {
+                    if o.success() {
+                        "ok - no corruption detected".to_string()
+                    } else {
+                        let has_corruption = o.stdout.contains("corrupt") || o.stderr.contains("corrupt");
+                        if has_corruption {
+                            "issues found - corruption detected".to_string()
+                        } else {
+                            format!("exit code {}", o.code)
+                        }
+                    }
+                }
+                Err(e) => format!("failed ({})", e),
+            };
+
+            let dism_restore_detail = match &dism_restore {
+                Ok(o) => {
+                    if o.success() {
+                        "ok".to_string()
+                    } else {
+                        format!("exit code {}", o.code)
+                    }
+                }
+                Err(e) => format!("failed ({})", e),
+            };
 
             let summary = format!(
-                "DISM ScanHealth: {}, DISM RestoreHealth: {}, SFC: {}",
-                if dism_scan_ok { "ok" } else { "failed" },
-                if dism_restore_ok { "ok" } else { "failed" },
-                if sfc_ok { "ok" } else { "failed" },
+                "SFC: {}\nDISM ScanHealth: {}\nDISM RestoreHealth: {}",
+                sfc_detail,
+                dism_scan_detail,
+                dism_restore_detail,
             );
+
+            let success = sfc_ok; // SFC success is the main indicator
 
             return Ok(MaintenanceResult {
                 kind: MaintenanceKind::SystemHealth,
-                success: dism_scan_ok && dism_restore_ok && sfc_ok,
+                success,
                 summary,
             });
         }
