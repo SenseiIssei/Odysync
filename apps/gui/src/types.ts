@@ -87,3 +87,56 @@ export interface Config {
   profiles: Profile[];
   restore_point: boolean;
 }
+
+export interface HistoryEntryDto {
+  timestamp: string;
+  package: string;
+  backend: string;
+  from_version: string;
+  to_version: string;
+  outcome: string;
+}
+
+export interface GpuInfoDto {
+  name: string;
+  driver_version: string;
+  vendor: string;
+}
+
+export interface DiskInfoDto {
+  name: string;
+  size_gb: number;
+  filesystem: string;
+}
+
+export interface HardwareInfoDto {
+  cpu: string;
+  cpu_cores: number;
+  total_memory_gb: number;
+  os: string;
+  gpu: GpuInfoDto[];
+  disks: DiskInfoDto[];
+}
+
+export interface InstalledPackageDto {
+  backend: string;
+  id: string;
+  name: string;
+  version: string;
+}
+
+export interface LogEntryDto {
+  level: string;
+  message: string;
+  timestamp: string;
+}
+
+export interface ProfileDto {
+  name: string;
+  packages: string[];
+}
+
+export interface OfflineCacheStatusDto {
+  entry_count: number;
+  cache_size_bytes: number;
+}

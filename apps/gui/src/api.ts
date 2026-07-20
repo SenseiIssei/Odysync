@@ -8,6 +8,12 @@ import type {
   HoldRequest,
   ScheduleRequest,
   Config,
+  HistoryEntryDto,
+  HardwareInfoDto,
+  InstalledPackageDto,
+  LogEntryDto,
+  ProfileDto,
+  OfflineCacheStatusDto,
 } from "./types";
 
 export async function scan(): Promise<ScanResult> {
@@ -64,4 +70,44 @@ export async function createDiagnostics(outPath: string): Promise<void> {
 
 export async function getSystemInfo(): Promise<SystemInfoDto> {
   return invoke<SystemInfoDto>("get_system_info");
+}
+
+export async function getUpdateHistory(): Promise<HistoryEntryDto[]> {
+  return invoke<HistoryEntryDto[]>("get_update_history");
+}
+
+export async function clearUpdateHistory(): Promise<void> {
+  return invoke<void>("clear_update_history");
+}
+
+export async function getHardwareInfo(): Promise<HardwareInfoDto> {
+  return invoke<HardwareInfoDto>("get_hardware_info");
+}
+
+export async function listInstalledPackages(): Promise<InstalledPackageDto[]> {
+  return invoke<InstalledPackageDto[]>("list_installed_packages");
+}
+
+export async function getLogs(): Promise<LogEntryDto[]> {
+  return invoke<LogEntryDto[]>("get_logs");
+}
+
+export async function listProfiles(): Promise<ProfileDto[]> {
+  return invoke<ProfileDto[]>("list_profiles");
+}
+
+export async function createProfile(name: string, packages: string[]): Promise<void> {
+  return invoke<void>("create_profile", { name, packages });
+}
+
+export async function deleteProfile(name: string): Promise<void> {
+  return invoke<void>("delete_profile", { name });
+}
+
+export async function getOfflineCacheStatus(): Promise<OfflineCacheStatusDto> {
+  return invoke<OfflineCacheStatusDto>("get_offline_cache_status");
+}
+
+export async function clearOfflineCache(): Promise<void> {
+  return invoke<void>("clear_offline_cache");
 }
