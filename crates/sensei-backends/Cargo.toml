@@ -1,0 +1,23 @@
+[package]
+name = "sensei-backends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Package manager integrations for Sensei's Updater"
+
+[dependencies]
+sensei-core.workspace = true
+sensei-verify.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+unicode-width = "0.2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
