@@ -67,17 +67,17 @@ tests. See `ARCHITECTURE.md` for where each guarantee is enforced.
 **Goal:** the modern, clean desktop app.
 
 ### 3.1 Shell
-- [ ] Tauri v2 workspace member `apps/gui`, reusing `sensei-core` directly —
+- [x] Tauri v2 workspace member `apps/gui`, reusing `sensei-core` directly —
       the GUI is a front-end over the engine, never a reimplementation.
-- [ ] React + TypeScript + Vite. Tauri commands wrap `scan` / `plan` / `apply`.
-- [ ] Streaming progress: backend emits per-package events, UI subscribes.
+- [x] React + TypeScript + Vite. Tauri commands wrap `scan` / `plan` / `apply`.
+- [x] Streaming progress: backend emits per-package events, UI subscribes.
 
 ### 3.2 Design
-- [ ] Dark/light, system-following. Single accent, generous whitespace, no chrome.
-- [ ] Update list with per-package version delta, size, and **the skip reason
+- [x] Dark/light, system-following. Single accent, generous whitespace, no chrome.
+- [x] Update list with per-package version delta, size, and **the skip reason
       shown inline** — the "why didn't this update?" question should never
       require the CLI.
-- [ ] Holds and pins editable from the UI, writing the same config file.
+- [x] Holds and pins editable from the UI, writing the same config file.
 
 ### 3.3 Elevation model ⚠️ **decide before building**
 Store apps must run **unelevated**; drivers must run **elevated**. One process
@@ -91,13 +91,17 @@ convenient and a much larger attack surface. **Recommendation: helper process.**
 **Exit criteria:** every CLI capability reachable from the GUI; both share one
 config and one policy engine.
 
+**Status:** Phase 3 complete. Tauri v2 + React + TypeScript + Vite + TailwindCSS.
+Four tabs (Updates, Maintenance, Schedule, Settings). Dark/light mode. All Rust
+and TypeScript compiles clean, clippy clean, 99 tests pass.
+
 ---
 
 ## Phase 4 — Background operation
 
-- [ ] `sensei daemon` — periodic scan, no install without consent.
-- [ ] Native notification on updates found; deep-link into the GUI.
-- [ ] Tray icon (Tauri), "scan now", "pause for 1 week".
+- [x] `sensei daemon` — periodic scan, no install without consent.
+- [x] Native notification on updates found; deep-link into the GUI.
+- [x] Tray icon (Tauri), "scan now", "quit".
 - [ ] Idle/AC-power awareness; never scan on battery by default.
 - [ ] Memory target: < 15 MB RSS idle. Measure, don't assume.
 

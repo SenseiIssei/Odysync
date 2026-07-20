@@ -1,5 +1,6 @@
 mod commands;
 mod state;
+mod tray;
 
 use tracing_subscriber::EnvFilter;
 
@@ -13,6 +14,18 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(state::AppState::new())
+        .setup(|app| {
+            tray::setup(app.handle())?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Hide the window instead of closing so the tray icon
+                // keeps the app alive for background notifications.
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::scan,
             commands::apply,
@@ -28,6 +41,7 @@ pub fn run() {
             commands::check_schedule,
             commands::create_diagnostics,
             commands::get_system_info,
+            commands::background_scan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sensei's Updater GUI");
