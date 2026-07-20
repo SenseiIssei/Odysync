@@ -8,6 +8,7 @@
 pub mod nvidia_gpu;
 pub mod amd_gpu;
 pub mod intel_gpu;
+pub mod qualcomm_gpu;
 
 use std::time::Duration;
 
@@ -19,6 +20,7 @@ pub enum GpuVendor {
     Nvidia,
     Amd,
     Intel,
+    Qualcomm,
     Unknown,
 }
 
@@ -29,6 +31,7 @@ impl GpuVendor {
             GpuVendor::Nvidia => Some(0x10DE),
             GpuVendor::Amd => Some(0x1002),
             GpuVendor::Intel => Some(0x8086),
+            GpuVendor::Qualcomm => Some(0x5143),
             GpuVendor::Unknown => None,
         }
     }
@@ -39,6 +42,7 @@ impl GpuVendor {
             0x10DE => GpuVendor::Nvidia,
             0x1002 => GpuVendor::Amd,
             0x8086 => GpuVendor::Intel,
+            0x5143 => GpuVendor::Qualcomm,
             _ => GpuVendor::Unknown,
         }
     }
@@ -155,21 +159,26 @@ fn parse_hex_field(line: &str, prefix: &str) -> Option<u32> {
 
 /// Read an installed driver version from the Windows registry.
 ///
-/// GPU drivers store their version under various registry keys depending on
-/// the vendor.  This helper reads a `REG_SZ` value from
-/// `HKLM\SYSTEM\CurrentControlSet\Services\<service>\Global\NVTweak` or
-/// similar paths.
+/// GPU drivers store their version under vendor-specific registry keys:
+/// - NVIDIA: `HKLM\SYSTEM\CurrentControlSet\Services\nvlddmkm\Global\NVTweak`
+/// - AMD: `HKLM\SYSTEM\CurrentControlSet\Services\amdkmdag\Global`
+/// - Intel: `HKLM\SYSTEM\CurrentControlSet\Services\igfx\Global`
+/// - Qualcomm: `HKLM\SYSTEM\CurrentControlSet\Services\qcomdisp\Global`
+///
+/// The `registry_suffix` parameter selects the vendor-specific subkey path
+/// (e.g. `Global\NVTweak` for NVIDIA, `Global` for AMD/Intel).
 #[cfg(windows)]
 pub async fn read_driver_version_from_registry(
     service_name: &str,
+    registry_suffix: &str,
     value_name: &str,
 ) -> Option<String> {
     let script = format!(
         r#"
-        $val = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\{}\Global\NVTweak' -Name '{}' -ErrorAction SilentlyContinue).{}
+        $val = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\{}\{}' -Name '{}' -ErrorAction SilentlyContinue).{}
         if ($val) {{ Write-Output $val }}
         "#,
-        service_name, value_name, value_name
+        service_name, registry_suffix, value_name, value_name
     );
 
     let out = proc::powershell(&script, Duration::from_secs(10)).await.ok()?;
@@ -245,6 +254,7 @@ Device Description:  Intel(R) Iris(R) Xe Graphics
         assert_eq!(GpuVendor::from_pci_id(0x10DE), GpuVendor::Nvidia);
         assert_eq!(GpuVendor::from_pci_id(0x1002), GpuVendor::Amd);
         assert_eq!(GpuVendor::from_pci_id(0x8086), GpuVendor::Intel);
+        assert_eq!(GpuVendor::from_pci_id(0x5143), GpuVendor::Qualcomm);
         assert_eq!(GpuVendor::from_pci_id(0x1234), GpuVendor::Unknown);
     }
 }

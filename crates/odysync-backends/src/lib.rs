@@ -23,6 +23,7 @@ pub mod scheduler;
 pub mod scoop;
 pub mod snap;
 pub mod fwupd;
+pub mod virtualization_guest;
 pub mod zypper;
 #[cfg(windows)]
 pub mod winget;
@@ -47,6 +48,7 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
         v.push(Box::new(gpu::nvidia_gpu::NvidiaGpuBackend::new()));
         v.push(Box::new(gpu::amd_gpu::AmdGpuBackend::new()));
         v.push(Box::new(gpu::intel_gpu::IntelGpuBackend::new()));
+        v.push(Box::new(gpu::qualcomm_gpu::QualcommGpuBackend::new()));
         v.push(Box::new(oem::dell_command_update::DellCommandUpdateBackend::new()));
         v.push(Box::new(oem::hp_image_assistant::HpImageAssistantBackend::new()));
         v.push(Box::new(oem::lenovo_system_update::LenovoSystemUpdateBackend::new()));
@@ -57,6 +59,7 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
         v.push(Box::new(oem::razer_synapse::RazerSynapseBackend::new()));
         v.push(Box::new(chocolatey::ChocolateyBackend::new()));
         v.push(Box::new(scoop::ScoopBackend::new()));
+        v.push(Box::new(virtualization_guest::VirtualizationGuestBackend::new()));
     }
 
     // Homebrew also runs on Linux, so it is not gated to macOS.
@@ -132,6 +135,7 @@ mod tests {
             assert!(kinds.contains(&BackendKind::NvidiaGpu));
             assert!(kinds.contains(&BackendKind::AmdGpu));
             assert!(kinds.contains(&BackendKind::IntelGpu));
+            assert!(kinds.contains(&BackendKind::QualcommGpu));
             assert!(kinds.contains(&BackendKind::DellCommandUpdate));
             assert!(kinds.contains(&BackendKind::HpImageAssistant));
             assert!(kinds.contains(&BackendKind::LenovoSystemUpdate));
@@ -142,6 +146,7 @@ mod tests {
             assert!(kinds.contains(&BackendKind::RazerSynapse));
             assert!(kinds.contains(&BackendKind::Chocolatey));
             assert!(kinds.contains(&BackendKind::Scoop));
+            assert!(kinds.contains(&BackendKind::VirtualizationGuest));
         }
 
         #[cfg(target_os = "linux")]
