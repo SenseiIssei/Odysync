@@ -1,14 +1,10 @@
-//! AMD GPU driver update backend.
+//! Qualcomm Adreno GPU driver update backend.
 //!
-//! Detects installed AMD GPU driver version via the Windows registry and uses
-//! winget to find and install the latest Radeon Software Adrenalin driver.
+//! Detects Qualcomm Adreno GPUs (common in Windows on ARM devices) via
+//! pnputil and uses winget to find and install driver updates.
 //!
-//! AMD uses two versioning schemes:
-//!   - `radeonSoftwareVersion` (e.g. "23.12.1") — the user-facing version
-//!   - `driverVersion` (e.g. "23.30.13.01-...") — the internal driver version
-//!
-//! We use the radeonSoftwareVersion for comparison since that's what winget
-//! packages report.
+//! Qualcomm Adreno GPUs use PCI vendor ID 0x5143 and are found in Windows
+//! on ARM devices like the Surface Pro X.
 
 use std::time::Duration;
 
@@ -23,32 +19,30 @@ use super::{enumerate_display_adapters, GpuVendor};
 
 const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
+const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The winget package ID for AMD Radeon Software.
-const WINGET_PACKAGE_ID: &str = "AMD.RadeonSoftware";
+pub struct QualcommGpuBackend;
 
-pub struct AmdGpuBackend;
-
-impl AmdGpuBackend {
+impl QualcommGpuBackend {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for AmdGpuBackend {
+impl Default for QualcommGpuBackend {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl Backend for AmdGpuBackend {
+impl Backend for QualcommGpuBackend {
     fn kind(&self) -> BackendKind {
-        BackendKind::AmdGpu
+        BackendKind::QualcommGpu
     }
 
     fn display_name(&self) -> &str {
-        "AMD GPU Driver"
+        "Qualcomm Adreno GPU"
     }
 
     async fn is_available(&self) -> bool {
@@ -58,7 +52,7 @@ impl Backend for AmdGpuBackend {
         enumerate_display_adapters()
             .await
             .iter()
-            .any(|a| a.vendor == GpuVendor::Amd)
+            .any(|a| a.vendor == GpuVendor::Qualcomm)
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
@@ -67,57 +61,57 @@ impl Backend for AmdGpuBackend {
         }
 
         let adapters = enumerate_display_adapters().await;
-        let amd_adapters: Vec<_> = adapters
+        let qualcomm_adapters: Vec<_> = adapters
             .iter()
-            .filter(|a| a.vendor == GpuVendor::Amd)
+            .filter(|a| a.vendor == GpuVendor::Qualcomm)
             .collect();
 
-        if amd_adapters.is_empty() {
+        if qualcomm_adapters.is_empty() {
             return Ok(Vec::new());
         }
 
         let installed_version = read_installed_driver_version().await;
 
+        // Search winget for Qualcomm Adreno driver updates.
         let out = proc::run(
             "winget",
             &[
                 "search",
-                "--id",
-                WINGET_PACKAGE_ID,
-                "-e",
+                "--query",
+                "Qualcomm Adreno driver",
                 "--source",
                 "winget",
+                "--accept-source-agreements",
+                "--disable-interactivity",
             ],
             SCAN_TIMEOUT,
         )
         .await?;
 
         if !out.success() {
-            tracing::warn!(stderr = %out.stderr, "winget search for AMD driver failed");
+            tracing::warn!(stderr = %out.stderr, "winget search for Qualcomm drivers failed");
             return Ok(Vec::new());
         }
 
-        let candidates = crate::winget::table::parse(&out.stdout)
-            .into_iter()
-            .filter(|row| row.id.eq_ignore_ascii_case(WINGET_PACKAGE_ID))
-            .map(|row| {
-                let name = if amd_adapters.len() == 1 {
-                    format!("AMD {} Driver", amd_adapters[0].name)
-                } else {
-                    "AMD Radeon Software".to_string()
-                };
-                UpdateCandidate {
-                    id: PackageId::new(BackendKind::AmdGpu, WINGET_PACKAGE_ID),
-                    name,
-                    installed: Version::parse(installed_version.as_deref().unwrap_or("0.0.0")),
-                    available: Version::parse(&row.version),
+        let candidates = super::super::winget::table::parse(&out.stdout);
+        let mut results = Vec::with_capacity(candidates.len());
+
+        for row in candidates {
+            if row.name.to_lowercase().contains("qualcomm")
+                || row.name.to_lowercase().contains("adreno")
+            {
+                results.push(UpdateCandidate {
+                    id: PackageId::new(BackendKind::QualcommGpu, &row.id),
+                    name: row.name.clone(),
+                    installed: Version::parse(installed_version.as_deref().unwrap_or("")),
+                    available: Version::parse(&row.available),
                     size_bytes: None,
                     expected_sha256: None,
-                }
-            })
-            .collect();
+                });
+            }
+        }
 
-        Ok(candidates)
+        Ok(results)
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
@@ -133,16 +127,16 @@ impl Backend for AmdGpuBackend {
             &[
                 "install",
                 "--id",
-                WINGET_PACKAGE_ID,
-                "-e",
-                "--version",
-                candidate.available.raw(),
+                &candidate.id.native,
                 "--source",
                 "winget",
-                "--silent",
+                "--exact",
+                "--version",
+                candidate.available.raw(),
                 "--accept-package-agreements",
                 "--accept-source-agreements",
-                "--no-reboot",
+                "--disable-interactivity",
+                "--silent",
             ],
             INSTALL_TIMEOUT,
         )
@@ -152,7 +146,7 @@ impl Backend for AmdGpuBackend {
             Ok(())
         } else {
             Err(Error::CommandFailed {
-                command: "winget install".into(),
+                command: format!("winget install --id {} --version {}", candidate.id.native, candidate.available.raw()),
                 code: out.code,
                 stderr: if out.stderr.trim().is_empty() {
                     out.stdout
@@ -164,27 +158,21 @@ impl Backend for AmdGpuBackend {
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        if !cfg!(windows) {
-            return Ok(None);
-        }
-
         let current = read_installed_driver_version().await;
         Ok(current.filter(|v| Version::parse(v) == candidate.available))
     }
 }
 
-/// Read the installed AMD Radeon Software version from the Windows registry.
+/// Read the installed Qualcomm Adreno driver version from the Windows registry.
 ///
-/// AMD stores the driver version under:
-/// - `HKLM\SYSTEM\CurrentControlSet\Services\amdkmdag\Global\DisplayVersion`
-/// - `HKLM\SOFTWARE\AMD\CN\DriverVersion`
+/// Qualcomm stores the driver version under:
+/// - `HKLM\SYSTEM\CurrentControlSet\Services\qcomdisp\Global\DisplayVersion`
 #[cfg(windows)]
 async fn read_installed_driver_version() -> Option<String> {
     let script = r#"
         $paths = @(
-            @{Path='HKLM:\SYSTEM\CurrentControlSet\Services\amdkmdag\Global'; Name='DisplayVersion'},
-            @{Path='HKLM:\SOFTWARE\AMD\CN'; Name='DriverVersion'},
-            @{Path='HKLM:\SOFTWARE\AMD\CN'; Name='SoftwareVersion'}
+            @{Path='HKLM:\SYSTEM\CurrentControlSet\Services\qcomdisp\Global'; Name='DisplayVersion'},
+            @{Path='HKLM:\SYSTEM\CurrentControlSet\Services\qcomdisp'; Name='DisplayVersion'}
         )
         foreach ($p in $paths) {
             $val = (Get-ItemProperty -Path $p.Path -Name $p.Name -ErrorAction SilentlyContinue).($p.Name)
@@ -212,23 +200,23 @@ mod tests {
 
     #[test]
     fn backend_kind_is_correct() {
-        let b = AmdGpuBackend::new();
-        assert_eq!(b.kind(), BackendKind::AmdGpu);
+        let b = QualcommGpuBackend::new();
+        assert_eq!(b.kind(), BackendKind::QualcommGpu);
     }
 
     #[test]
     fn display_name_is_non_empty() {
-        let b = AmdGpuBackend::new();
+        let b = QualcommGpuBackend::new();
         assert!(!b.display_name().is_empty());
     }
 
     #[tokio::test]
     async fn apply_refuses_unknown_target_version() {
-        let backend = AmdGpuBackend::new();
+        let backend = QualcommGpuBackend::new();
         let candidate = UpdateCandidate {
-            id: PackageId::new(BackendKind::AmdGpu, WINGET_PACKAGE_ID),
-            name: "AMD Driver".into(),
-            installed: Version::parse("23.10.1"),
+            id: PackageId::new(BackendKind::QualcommGpu, "Qualcomm.AdrenoDriver"),
+            name: "Qualcomm Adreno Driver".into(),
+            installed: Version::parse("1.0.0"),
             available: Version::parse(""),
             size_bytes: None,
             expected_sha256: None,
