@@ -86,6 +86,14 @@ export interface Config {
   disabled_backends: string[];
   profiles: Profile[];
   restore_point: boolean;
+  scan_interval_hours: number;
+  concurrency: number;
+  proxy_url: string | null;
+  auto_apply: boolean;
+  notifications: boolean;
+  skip_prerelease: boolean;
+  max_retries: number;
+  backend_timeout_secs: number;
 }
 
 export interface HistoryEntryDto {

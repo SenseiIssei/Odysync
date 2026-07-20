@@ -9,7 +9,7 @@ use crate::model::BackendKind;
 use crate::policy::Policy;
 
 /// The full user configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct Config {
     pub policy: Policy,
@@ -19,6 +19,22 @@ pub struct Config {
     pub profiles: Vec<Profile>,
     /// Take a system restore point (Windows) before applying anything.
     pub restore_point: bool,
+    /// Scan interval in hours for background scanning (0 = manual only).
+    pub scan_interval_hours: u32,
+    /// Max concurrent backend scans/applys.
+    pub concurrency: u32,
+    /// HTTP proxy URL for web crawlers and registry requests.
+    pub proxy_url: Option<String>,
+    /// Automatically apply updates after scanning (dangerous).
+    pub auto_apply: bool,
+    /// Show desktop notifications for scan results and apply completion.
+    pub notifications: bool,
+    /// Skip pre-release versions (alias for policy.stable_only, kept for UI).
+    pub skip_prerelease: bool,
+    /// Retry failed updates up to N times.
+    pub max_retries: u32,
+    /// Timeout for individual backend operations in seconds.
+    pub backend_timeout_secs: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -26,6 +42,25 @@ pub struct Config {
 pub struct Profile {
     pub name: String,
     pub packages: Vec<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            policy: Policy::default(),
+            disabled_backends: Vec::new(),
+            profiles: Vec::new(),
+            restore_point: true,
+            scan_interval_hours: 24,
+            concurrency: 4,
+            proxy_url: None,
+            auto_apply: false,
+            notifications: true,
+            skip_prerelease: true,
+            max_retries: 2,
+            backend_timeout_secs: 120,
+        }
+    }
 }
 
 impl Config {

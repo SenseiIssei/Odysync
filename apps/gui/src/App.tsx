@@ -919,6 +919,90 @@ function SettingsTab() {
         <Toggle label="Create restore point before apply" description="Windows only — creates a system restore point" checked={config.restore_point} onChange={(v) => updateConfig({ restore_point: v })} />
       </div>
 
+      <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4 space-y-4">
+        <h3 className="font-bold text-sm text-accent">Automation</h3>
+
+        <Toggle label="Auto-apply updates" description="Automatically apply all updates after scanning (dangerous)" checked={config.auto_apply} onChange={(v) => updateConfig({ auto_apply: v })} />
+        <Toggle label="Desktop notifications" description="Show notifications for scan results and apply completion" checked={config.notifications} onChange={(v) => updateConfig({ notifications: v })} />
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Scan interval (hours)</label>
+          <div className="flex items-center gap-3">
+            <input
+              type="number"
+              min={0}
+              max={168}
+              value={config.scan_interval_hours}
+              onChange={(e) => updateConfig({ scan_interval_hours: parseInt(e.target.value) || 0 })}
+              className="w-24 px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+            />
+            <span className="text-xs text-cyber-text-dim">0 = manual only</span>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Max retries</label>
+          <div className="flex items-center gap-3">
+            <input
+              type="number"
+              min={0}
+              max={10}
+              value={config.max_retries}
+              onChange={(e) => updateConfig({ max_retries: parseInt(e.target.value) || 0 })}
+              className="w-24 px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+            />
+            <span className="text-xs text-cyber-text-dim">Retry failed updates up to N times</span>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Backend timeout (seconds)</label>
+          <div className="flex items-center gap-3">
+            <input
+              type="number"
+              min={10}
+              max={600}
+              value={config.backend_timeout_secs}
+              onChange={(e) => updateConfig({ backend_timeout_secs: parseInt(e.target.value) || 120 })}
+              className="w-24 px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+            />
+            <span className="text-xs text-cyber-text-dim">Timeout for individual backend operations</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4 space-y-4">
+        <h3 className="font-bold text-sm text-accent">Network</h3>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">HTTP proxy URL</label>
+          <input
+            type="text"
+            value={config.proxy_url ?? ""}
+            onChange={(e) => updateConfig({ proxy_url: e.target.value || null })}
+            className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+            placeholder="http://proxy.example.com:8080"
+          />
+          <p className="text-xs text-cyber-text-dim mt-1">Used for web crawlers and registry requests. Leave empty for direct connection.</p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Concurrency</label>
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={1}
+              max={16}
+              value={config.concurrency}
+              onChange={(e) => updateConfig({ concurrency: parseInt(e.target.value) || 4 })}
+              className="flex-1 accent-cyan-400"
+            />
+            <span className="text-sm font-mono w-8 text-center text-accent">{config.concurrency}</span>
+            <span className="text-xs text-cyber-text-dim">Max concurrent backends</span>
+          </div>
+        </div>
+      </div>
+
       <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4">
         <h3 className="font-bold text-sm mb-2 text-accent">Excluded packages</h3>
         <textarea
