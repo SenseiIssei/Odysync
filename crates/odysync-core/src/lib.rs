@@ -15,6 +15,7 @@ pub mod proc;
 pub mod report;
 pub mod restore;
 pub mod runner;
+pub mod scan_cache;
 pub mod version;
 
 pub use backend::{ApplyPhase, ApplyProgress, Backend};
@@ -28,4 +29,5 @@ pub use policy::{Hold, Policy};
 pub use report::RunReport;
 pub use restore::RestorePointGuard;
 pub use runner::Runner;
+pub use scan_cache::ScanCache;
 pub use version::Version;
