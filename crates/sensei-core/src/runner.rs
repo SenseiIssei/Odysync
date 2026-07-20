@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use crate::backend::Backend;
 use crate::model::{ApplyOutcome, BackendKind, PlannedUpdate};
 use crate::report::RunReport;
+use crate::restore::RestorePointGuard;
 use crate::version::Version;
 
 /// Applies planned updates using the supplied backends.
@@ -33,7 +34,31 @@ impl<'a> Runner<'a> {
     /// A failure on one package does not stop the rest — an updater that gives
     /// up halfway leaves the machine in a less consistent state than one that
     /// finishes and reports.
-    pub async fn run(&self, plan: &[PlannedUpdate], report: &mut RunReport) {
+    ///
+    /// When `restore_point` is `true` and this is not a dry run, a system
+    /// restore point is created before the first apply (Windows only).
+    pub async fn run(
+        &self,
+        plan: &[PlannedUpdate],
+        report: &mut RunReport,
+        restore_point: bool,
+    ) {
+        let has_actionable = plan.iter().any(|p| p.is_actionable());
+
+        if restore_point && !self.dry_run && has_actionable {
+            match RestorePointGuard::new("Sensei's Updater").await {
+                Ok(guard) if guard.created() => {
+                    tracing::info!("system restore point created before apply batch");
+                }
+                Ok(_) => {
+                    tracing::info!("restore point not created (disabled or not elevated)");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "restore point creation error");
+                }
+            }
+        }
+
         for planned in plan {
             let candidate = &planned.candidate;
 

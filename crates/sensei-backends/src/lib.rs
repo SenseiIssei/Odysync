@@ -7,10 +7,15 @@
 //! [`detect_backends`] — nothing else in the codebase changes.
 
 pub mod apt;
+pub mod diagnostics;
 pub mod flatpak;
 pub mod homebrew;
+pub mod maintenance;
+pub mod scheduler;
 #[cfg(windows)]
 pub mod winget;
+#[cfg(windows)]
+pub mod windows_drivers;
 
 use sensei_core::backend::Backend;
 use sensei_core::config::Config;
@@ -23,6 +28,7 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
     {
         v.push(Box::new(winget::WingetBackend::new()));
         v.push(Box::new(winget::WingetBackend::store()));
+        v.push(Box::new(windows_drivers::WindowsDriverBackend::new()));
     }
 
     // Homebrew also runs on Linux, so it is not gated to macOS.
@@ -77,6 +83,7 @@ mod tests {
         {
             assert!(kinds.contains(&BackendKind::Winget));
             assert!(kinds.contains(&BackendKind::MsStore));
+            assert!(kinds.contains(&BackendKind::WindowsDrivers));
         }
     }
 

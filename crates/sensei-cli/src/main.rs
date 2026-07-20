@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use sensei_core::config::Config;
+use sensei_core::maintenance::MaintenanceKind;
 use sensei_core::model::UpdateCandidate;
 use sensei_core::platform;
 use sensei_core::report::RunReport;
@@ -70,9 +71,17 @@ enum Command {
         #[arg(long)]
         profile: Option<String>,
 
-        /// Write a JSON run report here.
+        /// Write a run report here (format determined by --report-format).
         #[arg(long)]
         report: Option<PathBuf>,
+
+        /// Report format: json or text.
+        #[arg(long, default_value = "json")]
+        report_format: ReportFormat,
+
+        /// Create a system restore point before applying (Windows).
+        #[arg(long)]
+        restore_point: bool,
     },
 
     /// List the package managers detected on this machine.
@@ -94,6 +103,89 @@ enum Command {
 
     /// Show the resolved configuration and where it lives.
     Config,
+
+    /// Run a system maintenance action (not a package update).
+    Maintain {
+        /// Which action to run.
+        #[arg(long = "action", value_enum)]
+        action: MaintenanceActionArg,
+    },
+
+    /// Schedule automatic update runs.
+    Schedule {
+        /// How often to run.
+        #[arg(long, value_enum)]
+        frequency: ScheduleFrequencyArg,
+        /// Time in 24-hour HH:MM format.
+        #[arg(long, default_value = "09:00")]
+        time: String,
+        /// Task name (for later removal).
+        #[arg(long, default_value = sensei_backends::scheduler::DEFAULT_TASK_NAME)]
+        task_name: String,
+        /// Extra arguments to pass to `sensei apply`.
+        #[arg(long = "arg")]
+        extra_args: Vec<String>,
+    },
+
+    /// Remove a scheduled task.
+    Unschedule {
+        /// Task name to remove.
+        #[arg(long, default_value = sensei_backends::scheduler::DEFAULT_TASK_NAME)]
+        task_name: String,
+    },
+
+    /// Create a diagnostics bundle for troubleshooting.
+    Diagnostics {
+        /// Output path for the zip bundle.
+        #[arg(long = "out", default_value = "sensei-diagnostics.zip")]
+        out: PathBuf,
+    },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum MaintenanceActionArg {
+    #[value(name = "temp-cleanup")]
+    TempCleanup,
+    #[value(name = "clean-recycle-bin")]
+    CleanRecycleBin,
+    #[value(name = "system-health")]
+    SystemHealth,
+    #[value(name = "startup-programs")]
+    StartupPrograms,
+}
+
+impl From<MaintenanceActionArg> for MaintenanceKind {
+    fn from(arg: MaintenanceActionArg) -> Self {
+        match arg {
+            MaintenanceActionArg::TempCleanup => MaintenanceKind::TempCleanup,
+            MaintenanceActionArg::CleanRecycleBin => MaintenanceKind::CleanRecycleBin,
+            MaintenanceActionArg::SystemHealth => MaintenanceKind::SystemHealth,
+            MaintenanceActionArg::StartupPrograms => MaintenanceKind::StartupPrograms,
+        }
+    }
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum ScheduleFrequencyArg {
+    #[value(name = "daily")]
+    Daily,
+    #[value(name = "weekly")]
+    Weekly,
+}
+
+impl From<ScheduleFrequencyArg> for sensei_backends::scheduler::ScheduleFrequency {
+    fn from(arg: ScheduleFrequencyArg) -> Self {
+        match arg {
+            ScheduleFrequencyArg::Daily => Self::Daily,
+            ScheduleFrequencyArg::Weekly => Self::Weekly,
+        }
+    }
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum ReportFormat {
+    Json,
+    Text,
 }
 
 #[tokio::main]
@@ -195,6 +287,8 @@ async fn run(cli: Cli) -> Result<u8> {
             only,
             profile,
             report: report_path,
+            report_format,
+            restore_point,
         } => {
             let backends = sensei_backends::detect_backends(&config).await;
             let mut candidates = scan_all(&backends).await;
@@ -225,7 +319,8 @@ async fn run(cli: Cli) -> Result<u8> {
             let refs: Vec<&dyn Backend> = backends.iter().map(|b| b.as_ref()).collect();
             let runner = Runner::new(refs, dry_run);
             let mut report = RunReport::new();
-            runner.run(&plan, &mut report).await;
+            let restore = restore_point || config.restore_point;
+            runner.run(&plan, &mut report, restore).await;
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -234,7 +329,11 @@ async fn run(cli: Cli) -> Result<u8> {
             }
 
             if let Some(path) = report_path {
-                std::fs::write(&path, serde_json::to_string_pretty(&report)?)
+                let text = match report_format {
+                    ReportFormat::Json => serde_json::to_string_pretty(&report)?,
+                    ReportFormat::Text => report.to_text(),
+                };
+                std::fs::write(&path, text)
                     .with_context(|| format!("writing report to {}", path.display()))?;
             }
 
@@ -290,6 +389,100 @@ async fn run(cli: Cli) -> Result<u8> {
                     })
                 );
                 println!("\n{}", serde_json::to_string_pretty(&config)?);
+            }
+            Ok(0)
+        }
+
+        Command::Maintain { action } => {
+            let kind: MaintenanceKind = action.into();
+            if cli.json {
+                let result = sensei_backends::maintenance::run_maintenance(kind)
+                    .await
+                    .context("running maintenance action")?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("{}", style.bold(&format!("Running: {kind}\n")));
+                let result = sensei_backends::maintenance::run_maintenance(kind)
+                    .await
+                    .context("running maintenance action")?;
+                if result.success {
+                    println!("  {} {}", style.green("ok"), result.summary);
+                } else {
+                    println!("  {} {}", style.red("!!"), result.summary);
+                }
+            }
+            Ok(0)
+        }
+
+        Command::Schedule {
+            frequency,
+            time,
+            task_name,
+            extra_args,
+        } => {
+            let spec = sensei_backends::scheduler::ScheduleSpec {
+                frequency: frequency.into(),
+                time,
+                task_name: task_name.clone(),
+                extra_args,
+            };
+            sensei_backends::scheduler::create_schedule(&spec)
+                .await
+                .context("creating scheduled task")?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "scheduled": true,
+                        "task_name": task_name,
+                        "frequency": spec.frequency.to_string(),
+                        "time": spec.time,
+                    }))?
+                );
+            } else {
+                println!(
+                    "Scheduled {} {} at {}.",
+                    spec.frequency, task_name, spec.time
+                );
+            }
+            Ok(0)
+        }
+
+        Command::Unschedule { task_name } => {
+            let existed = sensei_backends::scheduler::schedule_exists(&task_name).await;
+            if existed {
+                let _ = sensei_backends::scheduler::remove_schedule(&task_name)
+                    .await;
+            }
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "removed": existed,
+                        "task_name": task_name,
+                    }))?
+                );
+            } else if existed {
+                println!("Removed scheduled task: {task_name}");
+            } else {
+                println!("No scheduled task named '{task_name}' was found.");
+            }
+            Ok(0)
+        }
+
+        Command::Diagnostics { out } => {
+            sensei_backends::diagnostics::create_diagnostics(&out, &config, None)
+                .await
+                .with_context(|| format!("creating diagnostics bundle at {}", out.display()))?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "path": out.display().to_string(),
+                    }))?
+                );
+            } else {
+                println!("Diagnostics bundle written: {}", out.display());
             }
             Ok(0)
         }
