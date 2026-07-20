@@ -167,6 +167,38 @@ mod tests {
     }
 
     #[test]
+    fn detects_asus_from_asustek() {
+        assert_eq!(
+            OemManufacturer::from_manufacturer_string("ASUSTeK COMPUTER INC."),
+            OemManufacturer::Asus
+        );
+    }
+
+    #[test]
+    fn detects_gigabyte() {
+        assert_eq!(
+            OemManufacturer::from_manufacturer_string("Gigabyte Technology Co., Ltd."),
+            OemManufacturer::Gigabyte
+        );
+    }
+
+    #[test]
+    fn detects_acer() {
+        assert_eq!(
+            OemManufacturer::from_manufacturer_string("Acer Incorporated"),
+            OemManufacturer::Acer
+        );
+    }
+
+    #[test]
+    fn detects_razer() {
+        assert_eq!(
+            OemManufacturer::from_manufacturer_string("Razer Blade"),
+            OemManufacturer::Razer
+        );
+    }
+
+    #[test]
     fn unknown_for_unrecognized() {
         assert_eq!(
             OemManufacturer::from_manufacturer_string("Custom Builder"),
