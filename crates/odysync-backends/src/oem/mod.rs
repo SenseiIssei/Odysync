@@ -8,6 +8,10 @@ pub mod dell_command_update;
 pub mod hp_image_assistant;
 pub mod lenovo_system_update;
 pub mod msi_center;
+pub mod asus_armoury;
+pub mod gigabyte_control_center;
+pub mod acer_care_center;
+pub mod razer_synapse;
 
 use std::path::PathBuf;
 
@@ -103,6 +107,22 @@ pub fn oem_tool_path(oem: OemManufacturer) -> Option<PathBuf> {
         ],
         OemManufacturer::Msi => &[
             r"C:\Program Files\MSI\MSI Center\MSI Center.exe",
+        ],
+        OemManufacturer::Asus => &[
+            r"C:\Program Files\ASUS\ArmouryDevice\ArmouryCrateService.exe",
+            r"C:\Program Files (x86)\ASUS\ArmouryDevice\ArmouryCrateService.exe",
+        ],
+        OemManufacturer::Gigabyte => &[
+            r"C:\Program Files\Gigabyte\ControlCenter\GigabyteControlCenter.exe",
+            r"C:\Program Files (x86)\Gigabyte\ControlCenter\GigabyteControlCenter.exe",
+        ],
+        OemManufacturer::Acer => &[
+            r"C:\Program Files\Acer\CareCenter\CareCenter.exe",
+            r"C:\Program Files (x86)\Acer\CareCenter\CareCenter.exe",
+        ],
+        OemManufacturer::Razer => &[
+            r"C:\Program Files\Razer\Synapse\Synapse.exe",
+            r"C:\Program Files (x86)\Razer\Synapse\Synapse.exe",
         ],
         _ => return None,
     };
