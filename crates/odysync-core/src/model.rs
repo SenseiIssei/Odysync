@@ -178,6 +178,61 @@ impl PackageId {
             native: native.into(),
         }
     }
+
+    /// Validate the native package ID against shell injection and path traversal.
+    ///
+    /// Returns `Ok(())` if the ID is safe, or an `Error` describing the violation.
+    /// This should be called before passing the ID to any shell command.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        let id = &self.native;
+
+        if id.is_empty() {
+            return Err(crate::error::Error::invalid_package_id(
+                id,
+                "package ID is empty",
+            ));
+        }
+
+        if id.len() > 256 {
+            return Err(crate::error::Error::invalid_package_id(
+                id,
+                "package ID exceeds 256 characters",
+            ));
+        }
+
+        // Shell metacharacters that could enable command injection.
+        const FORBIDDEN: &[char] = &[';', '&', '|', '`', '$', '(', ')', '{', '}', '<', '>', '\n', '\r', '\0'];
+
+        if let Some(c) = id.chars().find(|c| FORBIDDEN.contains(c)) {
+            return Err(crate::error::Error::invalid_package_id(
+                id,
+                format!("package ID contains forbidden character: {:?}", c),
+            ));
+        }
+
+        // Reject path traversal patterns.
+        if id.contains("..") {
+            return Err(crate::error::Error::invalid_package_id(
+                id,
+                "package ID contains path traversal sequence '..'",
+            ));
+        }
+
+        // Reject absolute paths (could be used to execute arbitrary binaries).
+        if id.starts_with('/') || (cfg!(windows) && id.len() >= 2 && id.as_bytes()[1] == b':') {
+            return Err(crate::error::Error::invalid_package_id(
+                id,
+                "package ID must not be an absolute path",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Like `validate` but returns a bool for convenience in tests.
+    pub fn is_valid(&self) -> bool {
+        self.validate().is_ok()
+    }
 }
 
 impl fmt::Display for PackageId {
@@ -283,5 +338,64 @@ pub struct PlannedUpdate {
 impl PlannedUpdate {
     pub fn is_actionable(&self) -> bool {
         self.blocked_by.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_package_ids_pass_validation() {
+        assert!(PackageId::new(BackendKind::Winget, "Mozilla.Firefox").is_valid());
+        assert!(PackageId::new(BackendKind::Apt, "firefox").is_valid());
+        assert!(PackageId::new(BackendKind::Flatpak, "org.mozilla.firefox").is_valid());
+        assert!(PackageId::new(BackendKind::Snap, "firefox").is_valid());
+        assert!(PackageId::new(BackendKind::Chocolatey, "7zip").is_valid());
+    }
+
+    #[test]
+    fn empty_id_fails_validation() {
+        assert!(!PackageId::new(BackendKind::Apt, "").is_valid());
+    }
+
+    #[test]
+    fn shell_metacharacters_fail_validation() {
+        assert!(!PackageId::new(BackendKind::Apt, "test; rm -rf /").is_valid());
+        assert!(!PackageId::new(BackendKind::Apt, "test && echo pwned").is_valid());
+        assert!(!PackageId::new(BackendKind::Apt, "test | cat").is_valid());
+        assert!(!PackageId::new(BackendKind::Apt, "$(whoami)").is_valid());
+        assert!(!PackageId::new(BackendKind::Apt, "`whoami`").is_valid());
+    }
+
+    #[test]
+    fn path_traversal_fails_validation() {
+        assert!(!PackageId::new(BackendKind::Apt, "../etc/passwd").is_valid());
+        assert!(!PackageId::new(BackendKind::Apt, "foo/../../bar").is_valid());
+    }
+
+    #[test]
+    fn absolute_path_fails_validation() {
+        assert!(!PackageId::new(BackendKind::Apt, "/usr/bin/firefox").is_valid());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_absolute_path_fails_validation() {
+        assert!(!PackageId::new(BackendKind::Winget, "C:\\Windows\\System32").is_valid());
+    }
+
+    #[test]
+    fn oversized_id_fails_validation() {
+        let long_id = "a".repeat(257);
+        assert!(!PackageId::new(BackendKind::Apt, &long_id).is_valid());
+    }
+
+    #[test]
+    fn validate_returns_descriptive_error() {
+        let id = PackageId::new(BackendKind::Apt, "test; rm -rf /");
+        let err = id.validate().unwrap_err();
+        assert!(matches!(err, crate::error::Error::InvalidPackageId { .. }));
+        assert!(err.to_string().contains("forbidden character"));
     }
 }

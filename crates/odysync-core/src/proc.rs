@@ -20,6 +20,12 @@ use tokio::process::Command;
 
 use crate::error::{Error, Result};
 
+/// Maximum output size per stream (stdout/stderr): 10 MiB.
+///
+/// Prevents memory exhaustion from a misbehaving package manager that
+/// writes unbounded output (e.g. verbose debug logging to stderr).
+const MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
+
 /// Windows `CREATE_NO_WINDOW`: run without allocating a console.
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -106,6 +112,7 @@ pub async fn run<S: AsRef<OsStr>>(program: &str, args: &[S], timeout: Duration) 
             if let Some(p) = stdout_pipe.as_mut() {
                 let mut raw = Vec::new();
                 p.read_to_end(&mut raw).await?;
+                truncate_output(&mut raw, program);
                 stdout = String::from_utf8_lossy(&raw).into_owned();
             }
             Ok::<_, std::io::Error>(stdout)
@@ -115,6 +122,7 @@ pub async fn run<S: AsRef<OsStr>>(program: &str, args: &[S], timeout: Duration) 
             if let Some(p) = stderr_pipe.as_mut() {
                 let mut raw = Vec::new();
                 p.read_to_end(&mut raw).await?;
+                truncate_output(&mut raw, program);
                 stderr = String::from_utf8_lossy(&raw).into_owned();
             }
             Ok::<_, std::io::Error>(stderr)
@@ -174,6 +182,19 @@ pub async fn powershell(script: &str, timeout: Duration) -> Result<Output> {
         timeout,
     )
     .await
+}
+
+/// Truncate output to `MAX_OUTPUT_BYTES`, logging a warning if truncation occurred.
+fn truncate_output(raw: &mut Vec<u8>, program: &str) {
+    if raw.len() > MAX_OUTPUT_BYTES {
+        tracing::warn!(
+            program = program,
+            original_len = raw.len(),
+            max = MAX_OUTPUT_BYTES,
+            "output truncated to prevent memory exhaustion"
+        );
+        raw.truncate(MAX_OUTPUT_BYTES);
+    }
 }
 
 #[cfg(test)]
@@ -246,5 +267,19 @@ mod tests {
         };
         assert!(exists(prog, &args).await);
         assert!(!exists("odysync-not-real-at-all", &["--version"]).await);
+    }
+
+    #[test]
+    fn truncate_output_cuts_at_max() {
+        let mut raw = vec![b'a'; MAX_OUTPUT_BYTES + 100];
+        truncate_output(&mut raw, "test");
+        assert_eq!(raw.len(), MAX_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn truncate_output_leaves_small_output_alone() {
+        let mut raw = vec![b'a'; 100];
+        truncate_output(&mut raw, "test");
+        assert_eq!(raw.len(), 100);
     }
 }
