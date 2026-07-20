@@ -46,6 +46,30 @@ pub enum BackendKind {
     Fwupd,
     /// macOS: firmware and system updates via softwareupdate.
     MacFirmware,
+    /// Linux: Snap packages.
+    Snap,
+    /// Linux: SUSE/openSUSE zypper.
+    Zypper,
+    /// Windows: Chocolatey package manager.
+    Chocolatey,
+    /// Windows: Scoop package manager (user-scoped).
+    Scoop,
+    /// Linux + macOS: Nix package manager.
+    Nix,
+    /// Linux: AppImage updates.
+    AppImage,
+    /// Windows: ASUS Armoury Crate (informational).
+    AsusArmoury,
+    /// Windows: Gigabyte Control Center (informational).
+    GigabyteControlCenter,
+    /// Windows: Acer Care Center (informational).
+    AcerCareCenter,
+    /// Windows: Razer Synapse (informational).
+    RazerSynapse,
+    /// Windows: Qualcomm Adreno GPU driver updates.
+    QualcommGpu,
+    /// Cross-platform: Virtualization guest tools (VBox/VMware/QEMU).
+    VirtualizationGuest,
 }
 
 impl BackendKind {
@@ -70,6 +94,18 @@ impl BackendKind {
             BackendKind::MsiCenter => "msi-center",
             BackendKind::Fwupd => "fwupd",
             BackendKind::MacFirmware => "mac-firmware",
+            BackendKind::Snap => "snap",
+            BackendKind::Zypper => "zypper",
+            BackendKind::Chocolatey => "chocolatey",
+            BackendKind::Scoop => "scoop",
+            BackendKind::Nix => "nix",
+            BackendKind::AppImage => "appimage",
+            BackendKind::AsusArmoury => "asus-armoury",
+            BackendKind::GigabyteControlCenter => "gigabyte-control-center",
+            BackendKind::AcerCareCenter => "acer-care-center",
+            BackendKind::RazerSynapse => "razer-synapse",
+            BackendKind::QualcommGpu => "qualcomm-gpu",
+            BackendKind::VirtualizationGuest => "virtualization-guest",
         }
     }
 
@@ -89,7 +125,16 @@ impl BackendKind {
             | BackendKind::LenovoSystemUpdate
             | BackendKind::MsiCenter
             | BackendKind::Fwupd
-            | BackendKind::MacFirmware => true,
+            | BackendKind::MacFirmware
+            | BackendKind::Snap
+            | BackendKind::Zypper
+            | BackendKind::Chocolatey
+            | BackendKind::AsusArmoury
+            | BackendKind::GigabyteControlCenter
+            | BackendKind::AcerCareCenter
+            | BackendKind::RazerSynapse
+            | BackendKind::QualcommGpu
+            | BackendKind::VirtualizationGuest => true,
             // winget machine-scope installs may prompt for UAC per package;
             // that is handled per-package, not as a blanket requirement.
             BackendKind::Winget => false,
@@ -97,12 +142,18 @@ impl BackendKind {
             BackendKind::MsStore => false,
             BackendKind::Homebrew => false,
             BackendKind::Flatpak => false,
+            BackendKind::Scoop => false,
+            BackendKind::Nix => false,
+            BackendKind::AppImage => false,
         }
     }
 
     /// Whether running this backend elevated actively breaks it.
     pub fn forbids_elevation(&self) -> bool {
-        matches!(self, BackendKind::MsStore | BackendKind::Homebrew)
+        matches!(
+            self,
+            BackendKind::MsStore | BackendKind::Homebrew | BackendKind::Scoop
+        )
     }
 }
 
