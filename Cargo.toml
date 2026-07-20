@@ -4,6 +4,7 @@ members = [
     "crates/odysync-core",
     "crates/odysync-verify",
     "crates/odysync-backends",
+    "crates/odysync-version-source",
     "crates/odysync-cli",
     "apps/gui/src-tauri",
 ]
@@ -20,6 +21,7 @@ authors = ["Jakob (SenseiIssei)"]
 odysync-core = { path = "crates/odysync-core" }
 odysync-verify = { path = "crates/odysync-verify" }
 odysync-backends = { path = "crates/odysync-backends" }
+odysync-version-source = { path = "crates/odysync-version-source" }
 
 anyhow = "1"
 thiserror = "2"
@@ -35,6 +37,8 @@ hex = "0.4"
 directories = "5"
 async-trait = "0.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+scraper = "0.20"
 
 [profile.release]
 opt-level = "z"
