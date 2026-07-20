@@ -7,6 +7,8 @@
 //! [`detect_backends`] — nothing else in the codebase changes.
 
 pub mod apt;
+pub mod appimage;
+pub mod chocolatey;
 pub mod diagnostics;
 pub mod dnf;
 pub mod flatpak;
@@ -14,10 +16,14 @@ pub mod homebrew;
 pub mod mac_firmware;
 pub mod mac_software_update;
 pub mod maintenance;
+pub mod nix;
 pub mod notifications;
 pub mod pacman;
 pub mod scheduler;
+pub mod scoop;
+pub mod snap;
 pub mod fwupd;
+pub mod zypper;
 #[cfg(windows)]
 pub mod winget;
 #[cfg(windows)]
@@ -45,18 +51,24 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
         v.push(Box::new(oem::hp_image_assistant::HpImageAssistantBackend::new()));
         v.push(Box::new(oem::lenovo_system_update::LenovoSystemUpdateBackend::new()));
         v.push(Box::new(oem::msi_center::MsiCenterBackend::new()));
+        v.push(Box::new(chocolatey::ChocolateyBackend::new()));
+        v.push(Box::new(scoop::ScoopBackend::new()));
     }
 
     // Homebrew also runs on Linux, so it is not gated to macOS.
     v.push(Box::new(homebrew::HomebrewBackend::new()));
     v.push(Box::new(apt::AptBackend::new()));
     v.push(Box::new(flatpak::FlatpakBackend::new()));
+    v.push(Box::new(nix::NixBackend::new()));
 
     #[cfg(target_os = "linux")]
     {
         v.push(Box::new(dnf::DnfBackend::new()));
         v.push(Box::new(pacman::PacmanBackend::new()));
         v.push(Box::new(fwupd::FwupdBackend::new()));
+        v.push(Box::new(snap::SnapBackend::new()));
+        v.push(Box::new(zypper::ZypperBackend::new()));
+        v.push(Box::new(appimage::AppImageBackend::new()));
     }
 
     #[cfg(target_os = "macos")]
@@ -120,6 +132,8 @@ mod tests {
             assert!(kinds.contains(&BackendKind::HpImageAssistant));
             assert!(kinds.contains(&BackendKind::LenovoSystemUpdate));
             assert!(kinds.contains(&BackendKind::MsiCenter));
+            assert!(kinds.contains(&BackendKind::Chocolatey));
+            assert!(kinds.contains(&BackendKind::Scoop));
         }
 
         #[cfg(target_os = "linux")]
@@ -127,6 +141,9 @@ mod tests {
             assert!(kinds.contains(&BackendKind::Dnf));
             assert!(kinds.contains(&BackendKind::Pacman));
             assert!(kinds.contains(&BackendKind::Fwupd));
+            assert!(kinds.contains(&BackendKind::Snap));
+            assert!(kinds.contains(&BackendKind::Zypper));
+            assert!(kinds.contains(&BackendKind::AppImage));
         }
 
         #[cfg(target_os = "macos")]

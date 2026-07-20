@@ -107,6 +107,18 @@ fn backend_kind_from_str(s: &str) -> Option<BackendKind> {
         "msi-center" => Some(BackendKind::MsiCenter),
         "fwupd" => Some(BackendKind::Fwupd),
         "mac-firmware" => Some(BackendKind::MacFirmware),
+        "snap" => Some(BackendKind::Snap),
+        "zypper" => Some(BackendKind::Zypper),
+        "chocolatey" => Some(BackendKind::Chocolatey),
+        "scoop" => Some(BackendKind::Scoop),
+        "nix" => Some(BackendKind::Nix),
+        "appimage" => Some(BackendKind::AppImage),
+        "asus-armoury" => Some(BackendKind::AsusArmoury),
+        "gigabyte-control-center" => Some(BackendKind::GigabyteControlCenter),
+        "acer-care-center" => Some(BackendKind::AcerCareCenter),
+        "razer-synapse" => Some(BackendKind::RazerSynapse),
+        "qualcomm-gpu" => Some(BackendKind::QualcommGpu),
+        "virtualization-guest" => Some(BackendKind::VirtualizationGuest),
         _ => None,
     }
 }
