@@ -5,6 +5,7 @@
 //! survives. Every safety decision belongs to the core, so the CLI and the
 //! forthcoming GUI cannot drift apart in what they consider safe.
 
+mod daemon;
 mod render;
 
 use std::path::PathBuf;
@@ -139,6 +140,25 @@ enum Command {
         /// Output path for the zip bundle.
         #[arg(long = "out", default_value = "sensei-diagnostics.zip")]
         out: PathBuf,
+    },
+
+    /// Run in the background, periodically scanning (and optionally applying) updates.
+    Daemon {
+        /// Check interval in minutes.
+        #[arg(long, default_value = "60")]
+        interval: u32,
+
+        /// Automatically apply updates without asking.
+        #[arg(long)]
+        apply: bool,
+
+        /// Create a restore point before auto-applying (Windows).
+        #[arg(long)]
+        restore_point: bool,
+
+        /// Run a single check and exit (for testing or scheduled invocations).
+        #[arg(long)]
+        once: bool,
     },
 }
 
@@ -485,6 +505,22 @@ async fn run(cli: Cli) -> Result<u8> {
                 println!("Diagnostics bundle written: {}", out.display());
             }
             Ok(0)
+        }
+
+        Command::Daemon {
+            interval,
+            apply,
+            restore_point,
+            once,
+        } => {
+            let opts = daemon::DaemonOpts {
+                interval_minutes: interval,
+                auto_apply: apply,
+                restore_point,
+                once,
+            };
+            let code = daemon::run(&opts, &config_path).await?;
+            Ok(code)
         }
     }
 }

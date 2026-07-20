@@ -5,7 +5,7 @@ use sensei_core::maintenance::MaintenanceKind;
 use sensei_core::model::{BackendKind, PackageId, UpdateCandidate};
 use sensei_core::report::RunReport;
 use sensei_core::runner::Runner;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 // ── DTOs for the frontend ────────────────────────────────────────────────────
 
@@ -357,4 +357,23 @@ pub async fn get_system_info() -> Result<SystemInfoDto, String> {
         elevated: sensei_core::platform::is_elevated(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
+}
+
+#[tauri::command]
+pub async fn background_scan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ScanResult, String> {
+    let result = scan(state).await?;
+
+    if !result.actionable.is_empty() {
+        let _ = app.emit(
+            "updates-available",
+            serde_json::json!({
+                "count": result.actionable.len(),
+            }),
+        );
+    }
+
+    Ok(result)
 }
