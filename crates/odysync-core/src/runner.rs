@@ -112,12 +112,7 @@ impl<'a> Runner<'a> {
                 "applying update"
             );
 
-            let outcome = match backend.apply(candidate).await {
-                Ok(()) => self.confirm(*backend, planned).await,
-                Err(e) => ApplyOutcome::Failed {
-                    detail: e.to_string(),
-                },
-            };
+            let outcome = self.apply_with_retry(*backend, planned).await;
 
             if !outcome.is_success() {
                 tracing::warn!(package = %candidate.id, ?outcome, "update did not succeed");
@@ -143,6 +138,48 @@ impl<'a> Runner<'a> {
         }
 
         report.finish();
+    }
+
+    /// Apply an update with retry logic for transient errors.
+    ///
+    /// Retries up to 2 times with exponential backoff (1s, 2s) when the
+    /// error is retryable (transient, timeout, certain I/O errors).
+    async fn apply_with_retry(
+        &self,
+        backend: &dyn Backend,
+        planned: &PlannedUpdate,
+    ) -> ApplyOutcome {
+        const MAX_RETRIES: u32 = 2;
+        let candidate = &planned.candidate;
+
+        for attempt in 0..=MAX_RETRIES {
+            match backend.apply(candidate).await {
+                Ok(()) => return self.confirm(backend, planned).await,
+                Err(e) => {
+                    if e.is_retryable() && attempt < MAX_RETRIES {
+                        let delay = std::time::Duration::from_secs(1 << attempt);
+                        tracing::warn!(
+                            package = %candidate.id,
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            delay_secs = delay.as_secs(),
+                            error = %e.sanitize(),
+                            "retrying transient error"
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    return ApplyOutcome::Failed {
+                        detail: e.sanitize(),
+                    };
+                }
+            }
+        }
+
+        // Unreachable: the loop always returns.
+        ApplyOutcome::Failed {
+            detail: "exhausted retries".into(),
+        }
     }
 
     /// Read the installed version back and check it matches what we asked for.

@@ -17,6 +17,7 @@ async-trait.workspace = true
 directories.workspace = true
 tracing.workspace = true
 tokio.workspace = true
+regex = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
