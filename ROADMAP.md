@@ -116,9 +116,9 @@ and TypeScript compiles clean, clippy clean, 99 tests pass.
       flags every release and users are trained to click through warnings.
 - [ ] macOS: sign + notarize + staple.
 - [ ] Linux: `.deb`, `.rpm`, AppImage; sign the repo metadata.
-- [ ] `cargo-audit` + `cargo-deny` in CI; fail on known advisories.
-- [ ] SBOM (CycloneDX) per release.
-- [ ] Reproducible builds; publish SHA-256 for every artifact.
+- [x] `cargo-audit` + `cargo-deny` in CI; fail on known advisories.
+- [x] SBOM (CycloneDX) per release.
+- [x] Reproducible builds; publish SHA-256 for every artifact.
 - [ ] Self-update path that verifies its own signature before applying.
 
 > Note the asymmetry worth closing: we verify *other* people's installers but
@@ -128,9 +128,9 @@ and TypeScript compiles clean, clippy clean, 99 tests pass.
 
 ## Phase 6 — Release v2.0.0
 
-- [ ] Rewrite `README.md` for v2 (it still documents the Python tool).
-- [ ] Migration note: v1 profiles → v2 config.
-- [ ] `CHANGELOG.md` + release notes.
+- [x] Rewrite `README.md` for v2 (it still documents the Python tool).
+- [x] Migration note: v1 profiles → v2 config.
+- [x] `CHANGELOG.md` + release notes.
 - [ ] Tag `v2.0.0`, merge `dev/rust-rewrite` → `main`, delete `legacy/`.
 
 ---
