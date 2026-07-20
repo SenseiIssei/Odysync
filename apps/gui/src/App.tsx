@@ -55,7 +55,7 @@ export default function App() {
         <div className="flex items-center gap-3">
           <Shield className="w-7 h-7 text-accent" />
           <div>
-            <h1 className="text-lg font-semibold">Sensei's Updater</h1>
+            <h1 className="text-lg font-semibold">Odysync</h1>
             <p className="text-xs text-gray-500 dark:text-gray-400">
               Safe, verified updates for your system
             </p>
@@ -440,7 +440,7 @@ function MaintenanceTab() {
 function ScheduleTab() {
   const [frequency, setFrequency] = useState("daily");
   const [time, setTime] = useState("09:00");
-  const [taskName, setTaskName] = useState("SenseisUpdater");
+  const [taskName, setTaskName] = useState("Odysync");
   const [scheduled, setScheduled] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);

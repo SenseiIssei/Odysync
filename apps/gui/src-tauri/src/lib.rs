@@ -1,4 +1,4 @@
-mod commands;
+﻿mod commands;
 mod state;
 mod tray;
 
@@ -44,5 +44,5 @@ pub fn run() {
             commands::background_scan,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Sensei's Updater GUI");
+        .expect("error while running Odysync GUI");
 }

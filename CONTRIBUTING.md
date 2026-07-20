@@ -1,6 +1,6 @@
-# Contributing
+﻿# Contributing
 
-Thank you for helping improve Sensei's Updater.
+Thank you for helping improve Odysync.
 
 ## Setup
 - Python 3.11+
@@ -8,7 +8,7 @@ Thank you for helping improve Sensei's Updater.
 - Install editable: `python -m pip install -e .`
 
 ## Run
-- Interactive: `python -m sensei_updater`
+- Interactive: `python -m odysync_updater`
 - Build EXE: `scripts/build_exe.ps1`
 
 ## Style

@@ -1,23 +1,23 @@
-[package]
-name = "sensei-gui"
+﻿[package]
+name = "odysync-gui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Sensei's Updater GUI (Tauri v2)"
+description = "Odysync GUI (Tauri v2)"
 
 [lib]
-name = "sensei_gui_lib"
+name = "odysync_gui_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-sensei-core = { workspace = true }
-sensei-backends = { workspace = true }
+odysync-core = { workspace = true }
+odysync-backends = { workspace = true }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"

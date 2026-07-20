@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/sensei-core",
-    "crates/sensei-verify",
-    "crates/sensei-backends",
-    "crates/sensei-cli",
+    "crates/odysync-core",
+    "crates/odysync-verify",
+    "crates/odysync-backends",
+    "crates/odysync-cli",
     "apps/gui/src-tauri",
 ]
 
@@ -13,13 +13,13 @@ version = "2.0.0-alpha.1"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
-repository = "https://github.com/SenseiIssei/SenseisUpdater"
+repository = "https://github.com/SenseiIssei/Odysync"
 authors = ["Jakob (SenseiIssei)"]
 
 [workspace.dependencies]
-sensei-core = { path = "crates/sensei-core" }
-sensei-verify = { path = "crates/sensei-verify" }
-sensei-backends = { path = "crates/sensei-backends" }
+odysync-core = { path = "crates/odysync-core" }
+odysync-verify = { path = "crates/odysync-verify" }
+odysync-backends = { path = "crates/odysync-backends" }
 
 anyhow = "1"
 thiserror = "2"

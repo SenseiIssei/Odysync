@@ -1,4 +1,4 @@
-use sensei_core::config::Config;
+﻿use odysync_core::config::Config;
 use std::sync::Mutex;
 
 pub struct AppState {

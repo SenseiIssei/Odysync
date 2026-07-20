@@ -1,4 +1,4 @@
-# Sensei's Updater v2 — Roadmap
+# Odysync v2 — Roadmap
 
 Status as of 2026-07-20. Branch: `dev/rust-rewrite`.
 
@@ -14,7 +14,7 @@ CI on Windows/macOS/Linux.
 
 Delivered: the safety policy, version algebra, planner, runner, verification
 crate, five backends (winget, msstore, homebrew, apt, flatpak), and the
-`sensei` CLI (`scan`, `apply`, `backends`, `hold`, `unhold`, `config`).
+`odysync` CLI (`scan`, `apply`, `backends`, `hold`, `unhold`, `config`).
 
 The four defects that corrupted installs are fixed and covered by regression
 tests. See `ARCHITECTURE.md` for where each guarantee is enforced.
@@ -49,10 +49,10 @@ tests. See `ARCHITECTURE.md` for where each guarantee is enforced.
 
 ### 2.4 Scheduling
 - [x] Task Scheduler (Windows), launchd (macOS), systemd timer (Linux).
-- [x] `sensei schedule --daily 09:00` / `sensei unschedule`.
+- [x] `odysync schedule --daily 09:00` / `odysync unschedule`.
 
 ### 2.5 Reporting
-- [x] Diagnostics bundle (`sensei diagnostics --out bundle.zip`).
+- [x] Diagnostics bundle (`odysync diagnostics --out bundle.zip`).
 - [x] Text report format alongside the existing JSON.
 
 **Exit criteria:** every v1 flag has a v2 equivalent; `legacy/` deleted.
@@ -67,7 +67,7 @@ tests. See `ARCHITECTURE.md` for where each guarantee is enforced.
 **Goal:** the modern, clean desktop app.
 
 ### 3.1 Shell
-- [x] Tauri v2 workspace member `apps/gui`, reusing `sensei-core` directly —
+- [x] Tauri v2 workspace member `apps/gui`, reusing `odysync-core` directly —
       the GUI is a front-end over the engine, never a reimplementation.
 - [x] React + TypeScript + Vite. Tauri commands wrap `scan` / `plan` / `apply`.
 - [x] Streaming progress: backend emits per-package events, UI subscribes.
@@ -99,7 +99,7 @@ and TypeScript compiles clean, clippy clean, 99 tests pass.
 
 ## Phase 4 — Background operation
 
-- [x] `sensei daemon` — periodic scan, no install without consent.
+- [x] `odysync daemon` — periodic scan, no install without consent.
 - [x] Native notification on updates found; deep-link into the GUI.
 - [x] Tray icon (Tauri), "scan now", "quit".
 - [ ] Idle/AC-power awareness; never scan on battery by default.
@@ -147,7 +147,7 @@ Worth stating plainly rather than discovering later:
 
 2. **We trust winget's manifest hashes.** winget verifies installer digests
    against its own manifest internally, but does not expose them, so
-   `sensei-verify` cannot independently re-check winget-sourced installers.
+   `odysync-verify` cannot independently re-check winget-sourced installers.
    `expected_sha256` is plumbed through and unused for that backend today.
    Closing this needs either a winget API change or our own catalog.
 

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Sensei's Updater will be documented in this file.
+All notable changes to Odysync will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -9,17 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Complete Rust rewrite of the Python toolchain
-- `sensei-core` crate: policy engine, version algebra, planner, runner, config
-- `sensei-verify` crate: installer digest and signature verification
-- `sensei-backends` crate: winget, msstore, Windows drivers, homebrew, apt, flatpak
-- `sensei-cli` crate: the `sensei` CLI (scan, apply, backends, hold, unhold, config, maintain, schedule, unschedule, diagnostics, daemon)
-- `sensei-gui` crate: Tauri v2 + React + TypeScript + TailwindCSS desktop GUI
+- `odysync-core` crate: policy engine, version algebra, planner, runner, config
+- `odysync-verify` crate: installer digest and signature verification
+- `odysync-backends` crate: winget, msstore, Windows drivers, homebrew, apt, flatpak
+- `odysync-cli` crate: the `odysync` CLI (scan, apply, backends, hold, unhold, config, maintain, schedule, unschedule, diagnostics, daemon)
+- `odysync-gui` crate: Tauri v2 + React + TypeScript + TailwindCSS desktop GUI
   - Updates tab: scan, select, apply with dry-run and restore point options
   - Maintenance tab: temp cleanup, recycle bin, system health, startup programs
   - Schedule tab: create/remove daily/weekly scheduled tasks
   - Settings tab: policy toggles, exclusions, backend status, config save
   - Dark/light mode with system-following default
-- `sensei daemon` command for background scan/apply loops
+- `odysync daemon` command for background scan/apply loops
 - System tray icon with Show/Scan/Quit menu
 - CI: cargo-audit, cargo-deny, CycloneDX SBOM generation
 - Release workflow: cross-platform CLI builds with SHA-256 checksums, Tauri GUI NSIS installer
@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Upgrade-scan cache with TTL (default 15 minutes), configurable via settings.
 - Profiles export/import via CLI and Menu.
 - Microsoft Store Library helper to open updates page.
-- Log files for every run in `%LOCALAPPDATA%\SenseiUpdater\logs\`.
+- Log files for every run in `%LOCALAPPDATA%\Odysync\logs\`.
 
 ### Changed
 - Faster, more resilient winget parsing with graceful timeouts and cache fallback.

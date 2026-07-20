@@ -1,10 +1,10 @@
-use crate::state::AppState;
+﻿use crate::state::AppState;
 use serde::{Deserialize, Serialize};
-use sensei_core::config::Config;
-use sensei_core::maintenance::MaintenanceKind;
-use sensei_core::model::{BackendKind, PackageId, UpdateCandidate};
-use sensei_core::report::RunReport;
-use sensei_core::runner::Runner;
+use odysync_core::config::Config;
+use odysync_core::maintenance::MaintenanceKind;
+use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
+use odysync_core::report::RunReport;
+use odysync_core::runner::Runner;
 use tauri::{AppHandle, Emitter, State};
 
 // ── DTOs for the frontend ────────────────────────────────────────────────────
@@ -103,7 +103,7 @@ fn backend_kind_from_str(s: &str) -> BackendKind {
 #[tauri::command]
 pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
     let config = state.config.lock().unwrap().clone();
-    let backends = sensei_backends::detect_backends(&config).await;
+    let backends = odysync_backends::detect_backends(&config).await;
 
     let mut actionable = Vec::new();
     let mut skipped = Vec::new();
@@ -150,8 +150,8 @@ pub async fn apply(
     state: State<'_, AppState>,
 ) -> Result<ApplyResultDto, String> {
     let mut config = state.config.lock().unwrap().clone();
-    config.policy.elevated = sensei_core::platform::is_elevated();
-    let backends = sensei_backends::detect_backends(&config).await;
+    config.policy.elevated = odysync_core::platform::is_elevated();
+    let backends = odysync_backends::detect_backends(&config).await;
 
     // Rebuild UpdateCandidates from the DTOs by re-scanning and matching.
     let mut candidates_to_apply: Vec<UpdateCandidate> = Vec::new();
@@ -198,7 +198,7 @@ pub async fn apply(
 #[tauri::command]
 pub async fn list_backends(state: State<'_, AppState>) -> Result<Vec<BackendDto>, String> {
     let config = state.config.lock().unwrap().clone();
-    let backends = sensei_backends::detect_backends(&config).await;
+    let backends = odysync_backends::detect_backends(&config).await;
 
     let mut result = Vec::new();
     for backend in &backends {
@@ -237,7 +237,7 @@ pub async fn hold(
     let kind = backend_kind_from_str(&request.backend);
     let id = PackageId::new(kind, request.id);
     config.policy.holds.retain(|h| h.package != id.to_string());
-    config.policy.holds.push(sensei_core::policy::Hold {
+    config.policy.holds.push(odysync_core::policy::Hold {
         package: id.to_string(),
         pin: None,
         note: None,
@@ -275,7 +275,7 @@ pub async fn run_maintenance(
         _ => return Err(format!("unknown maintenance action: {action}")),
     };
 
-    let result = sensei_backends::maintenance::run_maintenance(kind)
+    let result = odysync_backends::maintenance::run_maintenance(kind)
         .await
         .map_err(|e| e.to_string())?;
     Ok(result.summary)
@@ -295,7 +295,7 @@ pub async fn list_maintenance() -> Result<Vec<String>, String> {
 pub async fn create_schedule(
     request: ScheduleRequest,
 ) -> Result<String, String> {
-    use sensei_backends::scheduler::{create_schedule, ScheduleFrequency, ScheduleSpec};
+    use odysync_backends::scheduler::{create_schedule, ScheduleFrequency, ScheduleSpec};
 
     let freq = match request.frequency.as_str() {
         "daily" => ScheduleFrequency::Daily,
@@ -304,7 +304,7 @@ pub async fn create_schedule(
     };
 
     let task_name = request.task_name.unwrap_or_else(|| {
-        sensei_backends::scheduler::DEFAULT_TASK_NAME.to_string()
+        odysync_backends::scheduler::DEFAULT_TASK_NAME.to_string()
     });
 
     let spec = ScheduleSpec {
@@ -323,9 +323,9 @@ pub async fn create_schedule(
 
 #[tauri::command]
 pub async fn remove_schedule(task_name: String) -> Result<bool, String> {
-    let existed = sensei_backends::scheduler::schedule_exists(&task_name).await;
+    let existed = odysync_backends::scheduler::schedule_exists(&task_name).await;
     if existed {
-        sensei_backends::scheduler::remove_schedule(&task_name)
+        odysync_backends::scheduler::remove_schedule(&task_name)
             .await
             .map_err(|e| e.to_string())?;
     }
@@ -334,7 +334,7 @@ pub async fn remove_schedule(task_name: String) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn check_schedule(task_name: String) -> Result<bool, String> {
-    Ok(sensei_backends::scheduler::schedule_exists(&task_name).await)
+    Ok(odysync_backends::scheduler::schedule_exists(&task_name).await)
 }
 
 #[tauri::command]
@@ -344,7 +344,7 @@ pub async fn create_diagnostics(
 ) -> Result<(), String> {
     let config = state.config.lock().unwrap().clone();
     let path = std::path::PathBuf::from(out_path);
-    sensei_backends::diagnostics::create_diagnostics(&path, &config, None)
+    odysync_backends::diagnostics::create_diagnostics(&path, &config, None)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -353,8 +353,8 @@ pub async fn create_diagnostics(
 #[tauri::command]
 pub async fn get_system_info() -> Result<SystemInfoDto, String> {
     Ok(SystemInfoDto {
-        os: sensei_core::platform::os_label().to_string(),
-        elevated: sensei_core::platform::is_elevated(),
+        os: odysync_core::platform::os_label().to_string(),
+        elevated: odysync_core::platform::is_elevated(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
