@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { motion, AnimatePresence } from "framer-motion";
@@ -52,6 +52,41 @@ import type {
 } from "./types";
 import * as api from "./api";
 
+// ── Shared App State Context ─────────────────────────────────────────────────
+
+interface AppData {
+  sysInfo: SystemInfoDto | null;
+  backends: BackendDto[];
+  scanResult: ScanResult | null;
+  config: Config | null;
+  hardwareInfo: HardwareInfoDto | null;
+  packages: InstalledPackageDto[];
+  history: HistoryEntryDto[];
+  logs: LogEntryDto[];
+  startupPrograms: StartupProgramDto[];
+  backups: BackupDto[];
+  protectionEnabled: boolean;
+  scanning: boolean;
+  setScanResult: (r: ScanResult | null) => void;
+  setConfig: (c: Config | null) => void;
+  refreshScan: () => Promise<void>;
+  refreshHardware: () => Promise<void>;
+  refreshPackages: () => Promise<void>;
+  refreshHistory: () => Promise<void>;
+  refreshLogs: () => Promise<void>;
+  refreshStartup: () => Promise<void>;
+  refreshBackups: () => Promise<void>;
+  refreshConfig: () => Promise<void>;
+}
+
+const AppDataContext = createContext<AppData | null>(null);
+
+function useAppData(): AppData {
+  const ctx = useContext(AppDataContext);
+  if (!ctx) throw new Error("useAppData must be used within AppDataProvider");
+  return ctx;
+}
+
 type Tab =
   | "updates"
   | "maintenance"
@@ -97,21 +132,105 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const appWindow = useRef(getCurrentWindow());
 
+  // Shared state - persists across tab switches
+  const [sysInfo, setSysInfo] = useState<SystemInfoDto | null>(null);
+  const [backends, setBackends] = useState<BackendDto[]>([]);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [config, setConfig] = useState<Config | null>(null);
+  const [hardwareInfo, setHardwareInfo] = useState<HardwareInfoDto | null>(null);
+  const [packages, setPackages] = useState<InstalledPackageDto[]>([]);
+  const [history, setHistory] = useState<HistoryEntryDto[]>([]);
+  const [logs, setLogs] = useState<LogEntryDto[]>([]);
+  const [startupPrograms, setStartupPrograms] = useState<StartupProgramDto[]>([]);
+  const [backups, setBackups] = useState<BackupDto[]>([]);
+  const [protectionEnabled, setProtectionEnabled] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  // Refresh functions
+  const refreshScan = useCallback(async () => {
+    setScanning(true);
+    try {
+      const r = await api.scan();
+      setScanResult(r);
+    } catch (e) {
+      console.error("Scan failed:", e);
+    } finally {
+      setScanning(false);
+    }
+  }, []);
+
+  const refreshHardware = useCallback(async () => {
+    try { setHardwareInfo(await api.getHardwareInfo()); } catch (e) { console.error("Hardware:", e); }
+  }, []);
+
+  const refreshPackages = useCallback(async () => {
+    try { setPackages(await api.listInstalledPackages()); } catch (e) { console.error("Packages:", e); }
+  }, []);
+
+  const refreshHistory = useCallback(async () => {
+    try { setHistory(await api.getUpdateHistory()); } catch (e) { console.error("History:", e); }
+  }, []);
+
+  const refreshLogs = useCallback(async () => {
+    try { setLogs(await api.getLogs()); } catch (e) { console.error("Logs:", e); }
+  }, []);
+
+  const refreshStartup = useCallback(async () => {
+    try { setStartupPrograms(await api.listStartupPrograms()); } catch (e) { console.error("Startup:", e); }
+  }, []);
+
+  const refreshBackups = useCallback(async () => {
+    try {
+      const [b, p] = await Promise.all([
+        api.listBackups().catch(() => []),
+        api.isSystemProtectionEnabled().catch(() => false),
+      ]);
+      setBackups(b);
+      setProtectionEnabled(p);
+    } catch (e) { console.error("Backups:", e); }
+  }, []);
+
+  const refreshConfig = useCallback(async () => {
+    try { setConfig(await api.getConfig()); } catch (e) { console.error("Config:", e); }
+  }, []);
+
+  // Background load ALL data on app startup
+  useEffect(() => {
+    api.getSystemInfo().then(setSysInfo).catch(() => {});
+    api.listBackends().then(setBackends).catch(() => {});
+    refreshConfig();
+    refreshHardware();
+    refreshPackages();
+    refreshHistory();
+    refreshLogs();
+    refreshStartup();
+    refreshBackups();
+  }, []);
+
   useEffect(() => {
     const unlisten = listen("tray-scan", () => {
       setTab("updates");
+      refreshScan();
     });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
+    return () => { unlisten.then((fn) => fn()); };
+  }, [refreshScan]);
 
   const minimizeWindow = () => appWindow.current.minimize();
-  const closeWindow = () => appWindow.current.hide();
+  const closeWindow = () => api.quitApp();
+
+  const appData: AppData = {
+    sysInfo, backends, scanResult, config, hardwareInfo,
+    packages, history, logs, startupPrograms, backups,
+    protectionEnabled, scanning,
+    setScanResult, setConfig,
+    refreshScan, refreshHardware, refreshPackages,
+    refreshHistory, refreshLogs, refreshStartup, refreshBackups, refreshConfig,
+  };
 
   const navGroups = [...new Set(NAV_ITEMS.map((n) => n.group))];
 
   return (
+    <AppDataContext.Provider value={appData}>
     <div className="app-window h-screen flex flex-col text-cyber-text bg-cyber-bg grid-bg">
       {/* Custom Titlebar */}
       <div className="titlebar flex items-center justify-between px-4 py-2.5 border-b border-cyber-border bg-cyber-surface/80 backdrop-blur-sm">
@@ -152,7 +271,7 @@ export default function App() {
           <button
             onClick={closeWindow}
             className="p-1.5 rounded hover:bg-danger/20 text-cyber-text-dim hover:text-danger transition-all"
-            title="Close to tray"
+            title="Quit"
           >
             <X className="w-4 h-4" />
           </button>
@@ -234,6 +353,7 @@ export default function App() {
         </main>
       </div>
     </div>
+    </AppDataContext.Provider>
   );
 }
 
@@ -267,21 +387,12 @@ function AboutTab() {
 }
 
 function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
-  const [sysInfo, setSysInfo] = useState<SystemInfoDto | null>(null);
-  const [backends, setBackends] = useState<BackendDto[]>([]);
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
-  const [scanning, setScanning] = useState(false);
+  const { sysInfo, backends, scanResult, scanning, setScanResult } = useAppData();
   const [installing, setInstalling] = useState(false);
   const [autoMode, setAutoMode] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  useEffect(() => {
-    api.getSystemInfo().then(setSysInfo).catch(() => {});
-    api.listBackends().then(setBackends).catch(() => {});
-  }, []);
-
   const quickScan = async () => {
-    setScanning(true);
     setStatus(null);
     try {
       const r = await api.scan();
@@ -289,8 +400,6 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
       setStatus(`Found ${r.actionable.length} updates`);
     } catch (e) {
       setStatus(`Scan failed: ${String(e)}`);
-    } finally {
-      setScanning(false);
     }
   };
 
@@ -299,7 +408,6 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
     setInstalling(true);
     setStatus("Creating backup before installing...");
     try {
-      // Safety: create a restore point first
       await api.createBackup(`Odysync - Before bulk update ${new Date().toISOString()}`).catch(() => {});
       setStatus("Installing all updates...");
       await api.apply({ updates: scanResult.actionable, dry_run: false, restore_point: true });
@@ -454,48 +562,47 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
 }
 
 function UpdatesTab() {
-  const [scanning, setScanning] = useState(false);
+  const { scanResult, scanning, refreshScan, sysInfo } = useAppData();
   const [applying, setApplying] = useState(false);
-  const [result, setResult] = useState<ScanResult | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResultDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [dryRun, setDryRun] = useState(false);
   const [restorePoint, setRestorePoint] = useState(false);
-  const [sysInfo, setSysInfo] = useState<SystemInfoDto | null>(null);
   const [progress, setProgress] = useState<{ package: string; current: number; total: number } | null>(null);
 
   useEffect(() => {
-    api.getSystemInfo().then(setSysInfo).catch(() => {});
     const unlisten = listen<{ package: string; current: number; total: number }>("apply-progress", (e) => {
       setProgress(e.payload);
     });
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  // Sync selected set when scan result changes
+  useEffect(() => {
+    if (scanResult) {
+      setSelected(new Set(scanResult.actionable.map((u) => u.id)));
+    }
+  }, [scanResult]);
+
   const doScan = useCallback(async () => {
-    setScanning(true);
     setError(null);
     setApplyResult(null);
     setProgress(null);
     try {
-      const r = await api.scan();
-      setResult(r);
-      setSelected(new Set(r.actionable.map((u) => u.id)));
+      await refreshScan();
     } catch (e) {
       setError(String(e));
-    } finally {
-      setScanning(false);
     }
-  }, []);
+  }, [refreshScan]);
 
   const doApply = useCallback(async () => {
-    if (!result) return;
+    if (!scanResult) return;
     setApplying(true);
     setError(null);
     setProgress(null);
     try {
-      const updates = result.actionable.filter((u) => selected.has(u.id));
+      const updates = scanResult.actionable.filter((u) => selected.has(u.id));
       const r = await api.apply({ updates, dry_run: dryRun, restore_point: restorePoint });
       setApplyResult(r);
       setProgress(null);
@@ -504,7 +611,7 @@ function UpdatesTab() {
     } finally {
       setApplying(false);
     }
-  }, [result, selected, dryRun, restorePoint]);
+  }, [scanResult, selected, dryRun, restorePoint]);
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -516,11 +623,11 @@ function UpdatesTab() {
   };
 
   const toggleAll = () => {
-    if (!result) return;
-    if (selected.size === result.actionable.length) {
+    if (!scanResult) return;
+    if (selected.size === scanResult.actionable.length) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(result.actionable.map((u) => u.id)));
+      setSelected(new Set(scanResult.actionable.map((u) => u.id)));
     }
   };
 
@@ -548,7 +655,7 @@ function UpdatesTab() {
           {scanning ? "Scanning..." : "Scan for Updates"}
         </motion.button>
 
-        {result && result.actionable.length > 0 && (
+        {scanResult && scanResult.actionable.length > 0 && (
           <>
             <motion.button
               whileHover={{ scale: 1.02 }}
@@ -641,36 +748,36 @@ function UpdatesTab() {
         </motion.div>
       )}
 
-      {result && (
+      {scanResult && (
         <div className="space-y-2">
-          {result.actionable.length > 0 && (
+          {scanResult.actionable.length > 0 && (
             <>
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-sm">
-                  {result.actionable.length} update{result.actionable.length !== 1 ? "s" : ""} available
+                  {scanResult.actionable.length} update{scanResult.actionable.length !== 1 ? "s" : ""} available
                 </h3>
                 <button onClick={toggleAll} className="text-xs text-accent hover:underline">
-                  {selected.size === result.actionable.length ? "Deselect all" : "Select all"}
+                  {selected.size === scanResult.actionable.length ? "Deselect all" : "Select all"}
                 </button>
               </div>
-              {result.actionable.map((u, i) => (
+              {scanResult.actionable.map((u, i) => (
                 <UpdateCard key={u.id} update={u} checked={selected.has(u.id)} onToggle={() => toggleSelect(u.id)} index={i} />
               ))}
             </>
           )}
 
-          {result.skipped.length > 0 && (
+          {scanResult.skipped.length > 0 && (
             <>
               <h3 className="font-bold text-sm pt-4 text-cyber-text-dim">
-                {result.skipped.length} skipped by policy
+                {scanResult.skipped.length} skipped by policy
               </h3>
-              {result.skipped.map((s) => (
+              {scanResult.skipped.map((s) => (
                 <SkippedCard key={s.id} skipped={s} />
               ))}
             </>
           )}
 
-          {result.total === 0 && (
+          {scanResult.total === 0 && (
             <div className="text-center py-12">
               <CheckCircle className="w-12 h-12 mx-auto mb-3 text-success glow-green" />
               <p className="text-sm text-cyber-text-dim">Everything is up to date!</p>
@@ -679,7 +786,7 @@ function UpdatesTab() {
         </div>
       )}
 
-      {!result && !scanning && !error && (
+      {!scanResult && !scanning && !error && (
         <div className="text-center py-12">
           <Package className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
           <p className="text-sm text-cyber-text-dim">Click "Scan for Updates" to check for available updates.</p>
@@ -951,15 +1058,9 @@ function ScheduleTab() {
 }
 
 function SettingsTab() {
-  const [config, setConfig] = useState<Config | null>(null);
-  const [backends, setBackends] = useState<BackendDto[]>([]);
+  const { config, setConfig, backends } = useAppData();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    api.getConfig().then(setConfig).catch(setError);
-    api.listBackends().then(setBackends).catch(() => {});
-  }, []);
 
   const updateConfig = (patch: Partial<Config>) => {
     if (!config) return;
@@ -1178,14 +1279,10 @@ function Toggle({ label, description, checked, onChange }: { label: string; desc
 // ── History Tab ──────────────────────────────────────────────────────────────
 
 function HistoryTab() {
-  const [entries, setEntries] = useState<HistoryEntryDto[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { history, refreshHistory } = useAppData();
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    api.getUpdateHistory().then(setEntries).catch(() => {}).finally(() => setLoading(false));
-  }, []);
-
+  const entries = history;
   const filtered = entries.filter((e) =>
     e.package.toLowerCase().includes(search.toLowerCase()) ||
     e.backend.toLowerCase().includes(search.toLowerCase())
@@ -1202,7 +1299,7 @@ function HistoryTab() {
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={() => { api.clearUpdateHistory(); setEntries([]); }}
+            onClick={() => { api.clearUpdateHistory(); refreshHistory(); }}
             className="px-3 py-1.5 rounded-lg border border-danger/30 text-danger text-xs hover:bg-danger/10 transition-all"
           >
             Clear History
@@ -1226,16 +1323,14 @@ function HistoryTab() {
         className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-surface text-sm focus:border-accent"
       />
 
-      {loading && <div className="text-center py-8 text-cyber-text-dim">Loading history...</div>}
-
-      {!loading && entries.length === 0 && (
+      {entries.length === 0 && (
         <div className="text-center py-12">
           <History className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
           <p className="text-sm text-cyber-text-dim">No update history yet.</p>
         </div>
       )}
 
-      {!loading && filtered.length > 0 && (
+      {filtered.length > 0 && (
         <div className="space-y-1">
           {filtered.map((e, i) => (
             <motion.div
@@ -1273,14 +1368,9 @@ function HistoryTab() {
 // ── Packages Tab ─────────────────────────────────────────────────────────────
 
 function PackagesTab() {
-  const [packages, setPackages] = useState<InstalledPackageDto[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { packages } = useAppData();
   const [search, setSearch] = useState("");
   const [backendFilter, setBackendFilter] = useState("");
-
-  useEffect(() => {
-    api.listInstalledPackages().then(setPackages).catch(() => {}).finally(() => setLoading(false));
-  }, []);
 
   const backends = [...new Set(packages.map((p) => p.backend))];
 
@@ -1311,16 +1401,14 @@ function PackagesTab() {
         </select>
       </div>
 
-      {loading && <div className="text-center py-8 text-cyber-text-dim">Scanning installed packages...</div>}
-
-      {!loading && filtered.length === 0 && (
+      {packages.length === 0 && (
         <div className="text-center py-12">
           <Layers className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
           <p className="text-sm text-cyber-text-dim">No packages found.</p>
         </div>
       )}
 
-      {!loading && filtered.length > 0 && (
+      {filtered.length > 0 && (
         <div className="space-y-1">
           <div className="text-xs text-cyber-text-dim mb-2">{filtered.length} packages</div>
           {filtered.map((p, i) => (
@@ -1348,15 +1436,11 @@ function PackagesTab() {
 // ── Hardware Tab ─────────────────────────────────────────────────────────────
 
 function HardwareTab() {
-  const [info, setInfo] = useState<HardwareInfoDto | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { hardwareInfo } = useAppData();
 
-  useEffect(() => {
-    api.getHardwareInfo().then(setInfo).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+  if (!hardwareInfo) return <div className="text-center py-12 text-cyber-text-dim">Detecting hardware...</div>;
 
-  if (loading) return <div className="text-center py-12 text-cyber-text-dim">Detecting hardware...</div>;
-  if (!info) return <div className="text-center py-12 text-danger">Failed to get hardware info.</div>;
+  const info = hardwareInfo;
 
   const cards = [
     { label: "CPU", value: info.cpu, sub: `${info.cpu_cores} cores`, icon: <Cpu className="w-5 h-5" /> },
@@ -1425,13 +1509,8 @@ function HardwareTab() {
 // ── Logs Tab ─────────────────────────────────────────────────────────────────
 
 function LogsTab() {
-  const [logs, setLogs] = useState<LogEntryDto[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { logs, refreshLogs } = useAppData();
   const [levelFilter, setLevelFilter] = useState("");
-
-  useEffect(() => {
-    api.getLogs().then(setLogs).catch(() => {}).finally(() => setLoading(false));
-  }, []);
 
   const levels = [...new Set(logs.map((l) => l.level))];
   const filtered = levelFilter === "" ? logs : logs.filter((l) => l.level === levelFilter);
@@ -1448,7 +1527,7 @@ function LogsTab() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-glow-cyan">Log Viewer</h1>
         <button
-          onClick={() => api.getLogs().then(setLogs)}
+          onClick={() => refreshLogs()}
           className="px-3 py-1.5 rounded-lg border border-cyber-border text-xs hover:bg-cyber-surface-2 transition-all"
         >
           Refresh
@@ -1475,16 +1554,14 @@ function LogsTab() {
         </div>
       )}
 
-      {loading && <div className="text-center py-8 text-cyber-text-dim">Loading logs...</div>}
-
-      {!loading && filtered.length === 0 && (
+      {filtered.length === 0 && (
         <div className="text-center py-12">
           <ScrollText className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
           <p className="text-sm text-cyber-text-dim">No logs available.</p>
         </div>
       )}
 
-      {!loading && filtered.length > 0 && (
+      {filtered.length > 0 && (
         <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4 max-h-[60vh] overflow-y-auto font-mono text-xs space-y-1">
           {filtered.map((l, i) => (
             <div key={i} className="flex gap-3">
@@ -1764,26 +1841,20 @@ function OfflineTab() {
 // ── Startup Programs Tab ─────────────────────────────────────────────────────
 
 function StartupTab() {
-  const [programs, setPrograms] = useState<StartupProgramDto[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { startupPrograms, refreshStartup } = useAppData();
   const [toggling, setToggling] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-
-  const refresh = () => {
-    api.listStartupPrograms().then(setPrograms).catch(() => {}).finally(() => setLoading(false));
-  };
-
-  useEffect(refresh, []);
 
   const toggle = async (name: string, location: string, enable: boolean) => {
     setToggling(name);
     try {
       await api.toggleStartupProgram(name, location, enable);
-      refresh();
+      refreshStartup();
     } catch {}
     setToggling(null);
   };
 
+  const programs = startupPrograms;
   const filtered = programs.filter((p) =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
     p.command.toLowerCase().includes(search.toLowerCase())
@@ -1822,9 +1893,7 @@ function StartupTab() {
         placeholder="Search startup programs..."
       />
 
-      {loading && <div className="text-center py-8 text-cyber-text-dim">Loading startup programs...</div>}
-
-      {!loading && filtered.length === 0 && (
+      {filtered.length === 0 && (
         <div className="text-center py-8">
           <Power className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
           <p className="text-sm text-cyber-text-dim">No startup programs found.</p>
@@ -1867,26 +1936,11 @@ function StartupTab() {
 // ── Backup Tab ───────────────────────────────────────────────────────────────
 
 function BackupTab() {
-  const [backups, setBackups] = useState<BackupDto[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { backups, protectionEnabled, refreshBackups } = useAppData();
   const [creating, setCreating] = useState(false);
   const [backupName, setBackupName] = useState("");
-  const [protectionEnabled, setProtectionEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-
-  const refresh = () => {
-    Promise.all([
-      api.listBackups().catch(() => []),
-      api.isSystemProtectionEnabled().catch(() => false),
-    ]).then(([b, p]) => {
-      setBackups(b);
-      setProtectionEnabled(p);
-      setLoading(false);
-    });
-  };
-
-  useEffect(refresh, []);
 
   const createBackup = async () => {
     setCreating(true);
@@ -1897,7 +1951,7 @@ function BackupTab() {
       await api.createBackup(name);
       setSuccess("Backup created successfully!");
       setBackupName("");
-      refresh();
+      refreshBackups();
     } catch (e) {
       setError(String(e));
     }
@@ -1911,7 +1965,7 @@ function BackupTab() {
         Create and manage system restore points. Always create a backup before bulk updates.
       </p>
 
-      {!protectionEnabled && !loading && (
+      {!protectionEnabled && (
         <div className="flex items-center gap-2 text-xs text-warning bg-warning/5 rounded-lg px-4 py-3 border border-warning/30">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           System Protection is disabled. Enable it in Windows System Properties to use restore points.
@@ -1953,16 +2007,14 @@ function BackupTab() {
         )}
       </div>
 
-      {loading && <div className="text-center py-8 text-cyber-text-dim">Loading backups...</div>}
-
-      {!loading && backups.length === 0 && (
+      {backups.length === 0 && (
         <div className="text-center py-8">
           <DatabaseBackup className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
           <p className="text-sm text-cyber-text-dim">No restore points found. Create one above to get started.</p>
         </div>
       )}
 
-      {!loading && backups.length > 0 && (
+      {backups.length > 0 && (
         <div className="space-y-1">
           <h3 className="text-sm font-bold text-accent mb-2">Existing Restore Points</h3>
           {backups.map((b, i) => (
