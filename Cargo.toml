@@ -5,6 +5,7 @@ members = [
     "crates/sensei-verify",
     "crates/sensei-backends",
     "crates/sensei-cli",
+    "apps/gui/src-tauri",
 ]
 
 [workspace.package]

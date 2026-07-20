@@ -151,9 +151,9 @@ Worth stating plainly rather than discovering later:
    the newest formula version; we verify convergence afterwards rather than
    pinning up front. Divergence is reported, not prevented.
 
-4. **`is_elevated()` shells out to `net session` on Windows.** Correct and
-   dependency-free, but a process spawn. Once the `windows` crate arrives in
-   Phase 2.1, switch to a direct token check.
+4. **`is_elevated()` uses a direct token check on Windows.** Fixed in Phase 2 —
+   uses `OpenProcessToken` + `GetTokenInformation` via the `windows` crate instead
+   of shelling out to `net session`.
 
 5. **Store apps are listed but rarely updatable** from a non-interactive
    context; Microsoft increasingly routes these through the Store app itself.
