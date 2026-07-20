@@ -15,6 +15,8 @@ import type {
   ProfileDto,
   OfflineCacheStatusDto,
   OfflineManifestEntryDto,
+  StartupProgramDto,
+  BackupDto,
 } from "./types";
 
 export async function scan(): Promise<ScanResult> {
@@ -143,4 +145,36 @@ export async function downloadOfflineInstaller(
 
 export async function verifyOfflineCache(): Promise<boolean[]> {
   return invoke<boolean[]>("verify_offline_cache");
+}
+
+export async function restartAsAdmin(): Promise<void> {
+  return invoke<void>("restart_as_admin");
+}
+
+export async function listStartupPrograms(): Promise<StartupProgramDto[]> {
+  return invoke<StartupProgramDto[]>("list_startup_programs");
+}
+
+export async function toggleStartupProgram(name: string, location: string, enable: boolean): Promise<void> {
+  return invoke<void>("toggle_startup_program", { name, location, enable });
+}
+
+export async function listBackups(): Promise<BackupDto[]> {
+  return invoke<BackupDto[]>("list_backups");
+}
+
+export async function createBackup(description: string): Promise<void> {
+  return invoke<void>("create_backup", { description });
+}
+
+export async function restoreBackup(sequenceNumber: number): Promise<void> {
+  return invoke<void>("restore_backup", { sequenceNumber });
+}
+
+export async function deleteBackup(sequenceNumber: number): Promise<void> {
+  return invoke<void>("delete_backup", { sequenceNumber });
+}
+
+export async function isSystemProtectionEnabled(): Promise<boolean> {
+  return invoke<boolean>("is_system_protection_enabled");
 }

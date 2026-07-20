@@ -158,3 +158,17 @@ export interface OfflineManifestEntryDto {
   size_bytes: number;
   cached_at: string;
 }
+
+export interface StartupProgramDto {
+  name: string;
+  command: string;
+  location: string;
+  enabled: boolean;
+}
+
+export interface BackupDto {
+  name: string;
+  created_at: string;
+  size_bytes: number;
+  backup_type: string;
+}

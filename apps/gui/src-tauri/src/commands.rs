@@ -524,7 +524,7 @@ pub async fn get_hardware_info() -> Result<HardwareInfoDto, String> {
 
     let cpu = if cfg!(windows) {
         let out = proc::run("powershell", &["-NoProfile", "-Command",
-            "Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name"], std::time::Duration::from_secs(10)).await;
+            "(Get-CimInstance Win32_Processor).Name"], std::time::Duration::from_secs(10)).await;
         match out {
             Ok(o) => o.stdout.trim().to_string(),
             Err(_) => "Unknown".to_string(),
@@ -539,9 +539,14 @@ pub async fn get_hardware_info() -> Result<HardwareInfoDto, String> {
 
     let total_memory_gb = if cfg!(windows) {
         let out = proc::run("powershell", &["-NoProfile", "-Command",
-            "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB"], std::time::Duration::from_secs(10)).await;
+            "[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)"], std::time::Duration::from_secs(10)).await;
         match out {
-            Ok(o) => o.stdout.trim().parse::<f64>().unwrap_or(0.0),
+            Ok(o) => {
+                let trimmed = o.stdout.trim();
+                // Handle locale-specific decimal separators (comma vs dot)
+                let normalized = trimmed.replace(',', ".");
+                normalized.parse::<f64>().unwrap_or(0.0)
+            }
             Err(_) => 0.0,
         }
     } else {
@@ -550,15 +555,32 @@ pub async fn get_hardware_info() -> Result<HardwareInfoDto, String> {
 
     let gpu = if cfg!(windows) {
         let out = proc::run("powershell", &["-NoProfile", "-Command",
-            "Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, AdapterCompatibility | ConvertTo-Json"], std::time::Duration::from_secs(10)).await;
+            "Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, AdapterCompatibility | ConvertTo-Json -Depth 2"], std::time::Duration::from_secs(10)).await;
         match out {
             Ok(o) => {
-                let gpus: Vec<Win32Gpu> = serde_json::from_str(&o.stdout).unwrap_or_default();
-                gpus.into_iter().map(|g| GpuInfoDto {
-                    name: g.name.unwrap_or_default(),
-                    driver_version: g.driver_version.unwrap_or_default(),
-                    vendor: g.adapter_compatibility.unwrap_or_default(),
-                }).collect()
+                let stdout = o.stdout.trim();
+                if stdout.is_empty() {
+                    Vec::new()
+                } else if stdout.starts_with('[') {
+                    let gpus: Vec<Win32Gpu> = serde_json::from_str(stdout).unwrap_or_default();
+                    gpus.into_iter().map(|g| GpuInfoDto {
+                        name: g.name.unwrap_or_default(),
+                        driver_version: g.driver_version.unwrap_or_default(),
+                        vendor: g.adapter_compatibility.unwrap_or_default(),
+                    }).collect()
+                } else {
+                    // Single GPU - ConvertTo-Json returns an object, not array
+                    let g: Win32Gpu = serde_json::from_str(stdout).unwrap_or(Win32Gpu {
+                        name: None,
+                        driver_version: None,
+                        adapter_compatibility: None,
+                    });
+                    vec![GpuInfoDto {
+                        name: g.name.unwrap_or_default(),
+                        driver_version: g.driver_version.unwrap_or_default(),
+                        vendor: g.adapter_compatibility.unwrap_or_default(),
+                    }]
+                }
             }
             Err(_) => Vec::new(),
         }
@@ -568,15 +590,33 @@ pub async fn get_hardware_info() -> Result<HardwareInfoDto, String> {
 
     let disks = if cfg!(windows) {
         let out = proc::run("powershell", &["-NoProfile", "-Command",
-            "Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID, Size, FileSystem | ConvertTo-Json"], std::time::Duration::from_secs(10)).await;
+            "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID, VolumeName, Size, FileSystem | ConvertTo-Json -Depth 2"], std::time::Duration::from_secs(10)).await;
         match out {
             Ok(o) => {
-                let disks: Vec<Win32Disk> = serde_json::from_str(&o.stdout).unwrap_or_default();
-                disks.into_iter().map(|d| DiskInfoDto {
-                    name: d.device_id.unwrap_or_default(),
-                    size_gb: d.size.map(|s| s / 1_073_741_824.0).unwrap_or(0.0),
-                    filesystem: d.filesystem.unwrap_or_default(),
-                }).collect()
+                let stdout = o.stdout.trim();
+                if stdout.is_empty() {
+                    Vec::new()
+                } else if stdout.starts_with('[') {
+                    let disks: Vec<Win32Disk> = serde_json::from_str(stdout).unwrap_or_default();
+                    disks.into_iter().map(|d| DiskInfoDto {
+                        name: format!("{} {}", d.device_id.unwrap_or_default(), d.volume_name.unwrap_or_default().trim()).trim().to_string(),
+                        size_gb: d.size.map(|s| (s / 1_073_741_824.0 * 100.0).round() / 100.0).unwrap_or(0.0),
+                        filesystem: d.filesystem.unwrap_or_default(),
+                    }).collect()
+                } else {
+                    // Single disk - ConvertTo-Json returns an object
+                    let d: Win32Disk = serde_json::from_str(stdout).unwrap_or(Win32Disk {
+                        device_id: None,
+                        volume_name: None,
+                        size: None,
+                        filesystem: None,
+                    });
+                    vec![DiskInfoDto {
+                        name: format!("{} {}", d.device_id.unwrap_or_default(), d.volume_name.unwrap_or_default().trim()).trim().to_string(),
+                        size_gb: d.size.map(|s| (s / 1_073_741_824.0 * 100.0).round() / 100.0).unwrap_or(0.0),
+                        filesystem: d.filesystem.unwrap_or_default(),
+                    }]
+                }
             }
             Err(_) => Vec::new(),
         }
@@ -604,6 +644,7 @@ struct Win32Gpu {
 #[derive(serde::Deserialize)]
 struct Win32Disk {
     device_id: Option<String>,
+    volume_name: Option<String>,
     size: Option<f64>,
     filesystem: Option<String>,
 }
@@ -840,4 +881,371 @@ pub async fn verify_offline_cache() -> Result<Vec<bool>, String> {
         results.push(ok);
     }
     Ok(results)
+}
+
+// ── Run as Admin ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn restart_as_admin(app: AppHandle) -> Result<(), String> {
+    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_path = current_exe.to_string_lossy().to_string();
+
+    // Use ShellExecuteW with "runas" verb to elevate
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use std::ffi::OsStr;
+
+        let verb: Vec<u16> = OsStr::new("runas").encode_wide().chain(std::iter::once(0)).collect();
+        let file: Vec<u16> = OsStr::new(&exe_path).encode_wide().chain(std::iter::once(0)).collect();
+        let params: Vec<u16> = OsStr::new("").encode_wide().chain(std::iter::once(0)).collect();
+
+        unsafe {
+            extern "system" {
+                fn ShellExecuteW(
+                    hwnd: *mut std::ffi::c_void,
+                    operation: *const u16,
+                    file: *const u16,
+                    parameters: *const u16,
+                    directory: *const u16,
+                    show_cmd: i32,
+                ) -> *mut std::ffi::c_void;
+            }
+
+            let result = ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                file.as_ptr(),
+                params.as_ptr(),
+                std::ptr::null(),
+                1, // SW_SHOWNORMAL
+            );
+
+            // ShellExecuteW returns > 32 on success
+            let hinstance = result as isize;
+            if hinstance <= 32 {
+                return Err(format!("Failed to elevate: error code {}", hinstance));
+            }
+        }
+
+        // Exit the current process - the elevated one will take over
+        app.exit(0);
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("Admin restart is only available on Windows".to_string())
+    }
+}
+
+// ── Startup Programs Management ──────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct StartupProgramDto {
+    pub name: String,
+    pub command: String,
+    pub location: String,
+    pub enabled: bool,
+}
+
+#[tauri::command]
+pub async fn list_startup_programs() -> Result<Vec<StartupProgramDto>, String> {
+    #[cfg(windows)]
+    {
+        let script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$result = @()
+
+# From registry HKCU
+$regPaths = @(
+    'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
+    'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
+)
+foreach ($path in $regPaths) {
+    if (Test-Path $path) {
+        $props = Get-ItemProperty $path
+        $props.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object {
+            $result += [PSCustomObject]@{
+                Name = $_.Name
+                Command = $_.Value
+                Location = $path
+                Enabled = $true
+            }
+        }
+    }
+}
+
+# From registry RunOnce (disabled = not in Run)
+$disabledPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+if (Test-Path $disabledPath) {
+    $disabled = Get-ItemProperty $disabledPath
+    $disabled.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object {
+        # Binary value: first byte 0x02 = enabled, 0x03 = disabled
+        $isEnabled = $_.Value[0] -ne 3
+        $result | Where-Object { $_.Name -eq $_.Name } | ForEach-Object { $_.Enabled = $isEnabled }
+    }
+}
+
+# From Startup folder
+$startupFolders = @(
+    [Environment]::GetFolderPath('Startup'),
+    "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
+)
+foreach ($folder in $startupFolders) {
+    if (Test-Path $folder) {
+        Get-ChildItem $folder -File | ForEach-Object {
+            $result += [PSCustomObject]@{
+                Name = $_.BaseName
+                Command = $_.FullName
+                Location = $folder
+                Enabled = $true
+            }
+        }
+    }
+}
+
+$result | Sort-Object Name | ConvertTo-Json -Depth 2
+"#;
+        let out = proc::powershell(script, std::time::Duration::from_secs(30)).await
+            .map_err(|e| e.to_string())?;
+        let stdout = out.stdout.trim();
+        if stdout.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Handle single vs array
+        if stdout.starts_with('[') {
+            let programs: Vec<StartupProgramJson> = serde_json::from_str(stdout).map_err(|e| e.to_string())?;
+            Ok(programs.into_iter().map(|p| StartupProgramDto {
+                name: p.name,
+                command: p.command,
+                location: p.location,
+                enabled: p.enabled,
+            }).collect())
+        } else {
+            let p: StartupProgramJson = serde_json::from_str(stdout).map_err(|e| e.to_string())?;
+            Ok(vec![StartupProgramDto {
+                name: p.name,
+                command: p.command,
+                location: p.location,
+                enabled: p.enabled,
+            }])
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct StartupProgramJson {
+    name: String,
+    command: String,
+    location: String,
+    enabled: bool,
+}
+
+#[tauri::command]
+pub async fn toggle_startup_program(name: String, location: String, enable: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let script = format!(r#"
+$ErrorActionPreference = 'Stop'
+$name = '{name}'
+$location = '{location}'
+
+if ($location -like 'HKCU:*' -or $location -like 'HKLM:*') {{
+    $approvedPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+    if (-not (Test-Path $approvedPath)) {{
+        New-Item -Path $approvedPath -Force | Out-Null
+    }}
+    $key = Get-Item $approvedPath -ErrorAction SilentlyContinue
+    if ($key) {{
+        if ($enable) {{
+            Set-ItemProperty -Path $approvedPath -Name $name -Value ([byte[]](0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00)) -ErrorAction SilentlyContinue
+        }} else {{
+            Set-ItemProperty -Path $approvedPath -Name $name -Value ([byte[]](0x03,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00)) -ErrorAction SilentlyContinue
+        }}
+    }}
+}} elseif ($location -like '*Start Menu*') {{
+    # For startup folder items, we can only remove/rename
+    $item = Get-ChildItem $location -Filter "$name*" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($item) {{
+        if ($enable) {{
+            # Rename back from .disabled
+            $disabled = Join-Path $location "$name.disabled.lnk"
+            if (Test-Path $disabled) {{
+                Rename-Item $disabled "$name.lnk" -Force
+            }}
+        }} else {{
+            $lnk = Join-Path $location "$name.lnk"
+            if (Test-Path $lnk) {{
+                Rename-Item $lnk "$name.disabled.lnk" -Force
+            }}
+        }}
+    }}
+}}
+Write-Output "OK"
+"#, name = name, location = location);
+
+        let out = proc::powershell(&script, std::time::Duration::from_secs(15)).await
+            .map_err(|e| e.to_string())?;
+        if out.stdout.contains("OK") {
+            Ok(())
+        } else {
+            Err("Failed to toggle startup program".to_string())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (name, location, enable);
+        Err("Startup program management is only available on Windows".to_string())
+    }
+}
+
+// ── Backup / Restore Points ──────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct BackupDto {
+    pub name: String,
+    pub created_at: String,
+    pub size_bytes: u64,
+    pub backup_type: String,
+}
+
+#[tauri::command]
+pub async fn list_backups() -> Result<Vec<BackupDto>, String> {
+    #[cfg(windows)]
+    {
+        // List system restore points
+        let script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+Get-ComputerRestorePoint | Select-Object Description, CreationTime, SequenceNumber | ConvertTo-Json -Depth 2
+"#;
+        let out = proc::powershell(script, std::time::Duration::from_secs(15)).await
+            .map_err(|e| e.to_string())?;
+        let stdout = out.stdout.trim();
+        if stdout.is_empty() {
+            return Ok(Vec::new());
+        }
+        if stdout.starts_with('[') {
+            let points: Vec<RestorePointJson> = serde_json::from_str(stdout).map_err(|e| e.to_string())?;
+            Ok(points.into_iter().map(|p| BackupDto {
+                name: p.description,
+                created_at: p.creation_time,
+                size_bytes: 0,
+                backup_type: "System Restore Point".to_string(),
+            }).collect())
+        } else {
+            let p: RestorePointJson = serde_json::from_str(stdout).map_err(|e| e.to_string())?;
+            Ok(vec![BackupDto {
+                name: p.description,
+                created_at: p.creation_time,
+                size_bytes: 0,
+                backup_type: "System Restore Point".to_string(),
+            }])
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct RestorePointJson {
+    description: String,
+    creation_time: String,
+}
+
+#[tauri::command]
+pub async fn create_backup(description: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let script = format!(r#"
+$ErrorActionPreference = 'Stop'
+Checkpoint-Computer -Description '{desc}' -RestorePointType 'MODIFY_SETTINGS'
+Write-Output "OK"
+"#, desc = description.replace("'", "''"));
+        let out = proc::powershell(&script, std::time::Duration::from_secs(60)).await
+            .map_err(|e| e.to_string())?;
+        if out.stdout.contains("OK") {
+            Ok(())
+        } else {
+            Err("Failed to create restore point. Make sure System Protection is enabled.".to_string())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = description;
+        Err("System restore points are only available on Windows".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn restore_backup(sequence_number: i64) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let script = format!(r#"
+$ErrorActionPreference = 'Stop'
+Restore-Computer -RestorePoint {seq}
+Write-Output "OK"
+"#, seq = sequence_number);
+        let out = proc::powershell(&script, std::time::Duration::from_secs(120)).await
+            .map_err(|e| e.to_string())?;
+        if out.stdout.contains("OK") {
+            Ok(())
+        } else {
+            Err("Failed to restore from restore point".to_string())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = sequence_number;
+        Err("System restore is only available on Windows".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn delete_backup(sequence_number: i64) -> Result<(), String> {
+    // Windows doesn't support deleting individual restore points via PowerShell
+    // But we can use vssadmin to delete shadow copies
+    #[cfg(windows)]
+    {
+        let script = format!(r#"
+$ErrorActionPreference = 'Stop'
+vssadmin delete shadows /Shadow={{ShadowID}} /Quiet
+"#);
+        let _ = script;
+        let _ = sequence_number;
+        Err("Individual restore point deletion is not supported by Windows. Use 'System Protection' settings to manage restore points.".to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = sequence_number;
+        Err("Not available on this platform".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn is_system_protection_enabled() -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        let script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$sysDrive = $env:SystemDrive
+$shadowCopy = Get-WmiObject Win32_ShadowCopy -ErrorAction SilentlyContinue
+$restoreEnabled = (Get-ComputerRestorePoint -ErrorAction SilentlyContinue) -ne $null
+if ($restoreEnabled) { Write-Output "true" } else { Write-Output "false" }
+"#;
+        let out = proc::powershell(script, std::time::Duration::from_secs(10)).await
+            .map_err(|e| e.to_string())?;
+        Ok(out.stdout.trim() == "true")
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
 }
