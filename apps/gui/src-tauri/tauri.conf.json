@@ -12,13 +12,16 @@
     "windows": [
       {
         "title": "Odysync",
-        "width": 1000,
-        "height": 700,
-        "minWidth": 720,
-        "minHeight": 500,
+        "width": 1100,
+        "height": 750,
+        "minWidth": 800,
+        "minHeight": 550,
         "resizable": true,
         "fullscreen": false,
-        "center": true
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true
       }
     ],
     "security": {
