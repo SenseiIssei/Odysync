@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a problem with Sensei's Updater
+description: Report a problem with Odysync
 title: "[Bug] "
 labels: ["type:bug"]
 body:

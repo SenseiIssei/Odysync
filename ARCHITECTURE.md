@@ -23,16 +23,16 @@ The workspace is deliberately layered so that safety rules cannot be bypassed
 by a backend, and so the CLI and the (Phase 2) Tauri GUI share one brain.
 
 ```
-sensei-core       domain model, version algebra, safety policy, planner, runner
+odysync-core       domain model, version algebra, safety policy, planner, runner
   └─ no knowledge of any specific package manager; pure and fully unit-tested
 
-sensei-verify     SHA-256 integrity + platform code-signature verification
+odysync-verify     SHA-256 integrity + platform code-signature verification
   └─ Authenticode (Windows), codesign (macOS), repo-signed (Linux)
 
-sensei-backends   package manager integrations
+odysync-backends   package manager integrations
   └─ winget, msstore, homebrew, apt, flatpak
 
-sensei-cli        `sensei` binary — argument parsing and rendering only
+odysync-cli        `odysync` binary — argument parsing and rendering only
 ```
 
 Dependencies point one direction only: `cli -> backends -> core`. A backend

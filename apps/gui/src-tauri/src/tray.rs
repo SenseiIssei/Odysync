@@ -1,4 +1,4 @@
-//! System tray icon with menu for background operation.
+﻿//! System tray icon with menu for background operation.
 //!
 //! The tray lets the user open the window, scan for updates, or quit.
 //! When the window is closed, the app continues running in the tray
@@ -11,7 +11,7 @@ use tauri::{
 };
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show Sensei's Updater", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show Odysync", true, None::<&str>)?;
     let scan = MenuItem::with_id(app, "scan", "Scan for Updates", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
@@ -19,7 +19,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 
     TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("Sensei's Updater")
+        .tooltip("Odysync")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {

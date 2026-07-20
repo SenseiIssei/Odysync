@@ -38,14 +38,14 @@ jobs:
         run: cargo test --workspace --lib
 
       - name: Build release (CLI only)
-        run: cargo build --release -p sensei-cli
+        run: cargo build --release -p odysync-cli
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sensei-${{ matrix.os }}
+          name: odysync-${{ matrix.os }}
           path: |
-            target/release/sensei
-            target/release/sensei.exe
+            target/release/odysync
+            target/release/odysync.exe
           if-no-files-found: warn
 
   audit:

@@ -1,0 +1,25 @@
+﻿[package]
+name = "odysync-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Command line interface for Odysync"
+
+[[bin]]
+name = "odysync"
+path = "src/main.rs"
+
+[dependencies]
+odysync-core.workspace = true
+odysync-backends.workspace = true
+clap.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }

@@ -1,7 +1,7 @@
 {
-  "productName": "Sensei's Updater",
+  "productName": "Odysync",
   "version": "2.0.0-alpha.1",
-  "identifier": "com.senseiissei.updater",
+  "identifier": "com.senseiissei.odysync",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "Sensei's Updater",
+        "title": "Odysync",
         "width": 1000,
         "height": 700,
         "minWidth": 720,

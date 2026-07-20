@@ -1,0 +1,17 @@
+﻿[package]
+name = "odysync-verify"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Integrity and code-signature verification for downloaded installers"
+
+[dependencies]
+odysync-core.workspace = true
+sha2.workspace = true
+hex.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+serde.workspace = true

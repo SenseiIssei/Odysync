@@ -1,5 +1,5 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    sensei_gui_lib::run()
+    odysync_gui_lib::run()
 }

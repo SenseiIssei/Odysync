@@ -2483,6 +2483,86 @@ dependencies = [
 ]
 
 [[package]]
+name = "odysync-backends"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures",
+ "odysync-core",
+ "odysync-verify",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "unicode-width",
+ "windows 0.62.2",
+ "zip",
+]
+
+[[package]]
+name = "odysync-cli"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "futures",
+ "odysync-backends",
+ "odysync-core",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "odysync-core"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "directories",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "odysync-gui"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "chrono",
+ "odysync-backends",
+ "odysync-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-shell",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "odysync-verify"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "hex",
+ "odysync-core",
+ "serde",
+ "sha2",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3142,86 +3222,6 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 dependencies = [
  "serde",
  "serde_core",
-]
-
-[[package]]
-name = "sensei-backends"
-version = "2.0.0-alpha.1"
-dependencies = [
- "async-trait",
- "chrono",
- "futures",
- "sensei-core",
- "sensei-verify",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "unicode-width",
- "windows 0.62.2",
- "zip",
-]
-
-[[package]]
-name = "sensei-cli"
-version = "2.0.0-alpha.1"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "futures",
- "sensei-backends",
- "sensei-core",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "sensei-core"
-version = "2.0.0-alpha.1"
-dependencies = [
- "async-trait",
- "chrono",
- "directories",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "sensei-gui"
-version = "2.0.0-alpha.1"
-dependencies = [
- "chrono",
- "sensei-backends",
- "sensei-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-shell",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "sensei-verify"
-version = "2.0.0-alpha.1"
-dependencies = [
- "hex",
- "sensei-core",
- "serde",
- "sha2",
- "tokio",
- "tracing",
 ]
 
 [[package]]

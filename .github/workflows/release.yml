@@ -16,14 +16,14 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact: sensei.exe
-            archive: sensei-windows-x86_64.zip
+            artifact: odysync.exe
+            archive: odysync-windows-x86_64.zip
           - os: ubuntu-latest
-            artifact: sensei
-            archive: sensei-linux-x86_64.tar.gz
+            artifact: odysync
+            archive: odysync-linux-x86_64.tar.gz
           - os: macos-latest
-            artifact: sensei
-            archive: sensei-macos-x86_64.tar.gz
+            artifact: odysync
+            archive: odysync-macos-x86_64.tar.gz
 
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release -p sensei-cli
+        run: cargo build --release -p odysync-cli
 
       - name: Archive (Windows)
         if: matrix.os == 'windows-latest'
@@ -89,7 +89,7 @@ jobs:
       - name: Upload NSIS installer
         uses: actions/upload-artifact@v4
         with:
-          name: sensei-gui-windows
+          name: odysync-gui-windows
           path: |
             apps/gui/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: warn
@@ -106,17 +106,17 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: sensei-windows-x86_64.zip
+          name: odysync-windows-x86_64.zip
           path: artifacts
 
       - uses: actions/download-artifact@v4
         with:
-          name: sensei-linux-x86_64.tar.gz
+          name: odysync-linux-x86_64.tar.gz
           path: artifacts
 
       - uses: actions/download-artifact@v4
         with:
-          name: sensei-macos-x86_64.tar.gz
+          name: odysync-macos-x86_64.tar.gz
           path: artifacts
 
       - name: Publish GitHub Release
