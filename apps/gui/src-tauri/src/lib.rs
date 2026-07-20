@@ -52,6 +52,11 @@ pub fn run() {
             commands::delete_profile,
             commands::get_offline_cache_status,
             commands::clear_offline_cache,
+            commands::list_offline_cache,
+            commands::clear_offline_manifest,
+            commands::remove_offline_entry,
+            commands::download_offline_installer,
+            commands::verify_offline_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Odysync GUI");

@@ -148,3 +148,13 @@ export interface OfflineCacheStatusDto {
   entry_count: number;
   cache_size_bytes: number;
 }
+
+export interface OfflineManifestEntryDto {
+  package_id: string;
+  backend: string;
+  version: string;
+  filename: string;
+  sha256: string;
+  size_bytes: number;
+  cached_at: string;
+}

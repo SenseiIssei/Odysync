@@ -2644,14 +2644,19 @@ dependencies = [
 name = "odysync-backends"
 version = "2.0.0-alpha.1"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
+ "directories",
  "futures",
+ "hex",
  "odysync-core",
  "odysync-verify",
  "regex",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tracing",
  "unicode-width",

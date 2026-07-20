@@ -41,6 +41,7 @@ import type {
   LogEntryDto,
   ProfileDto,
   OfflineCacheStatusDto,
+  OfflineManifestEntryDto,
 } from "./types";
 import * as api from "./api";
 
@@ -1530,10 +1531,20 @@ function ProfilesTab() {
 
 function OfflineTab() {
   const [status, setStatus] = useState<OfflineCacheStatusDto | null>(null);
+  const [entries, setEntries] = useState<OfflineManifestEntryDto[]>([]);
   const [loading, setLoading] = useState(true);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResults, setVerifyResults] = useState<boolean[]>([]);
 
   const refresh = () => {
-    api.getOfflineCacheStatus().then(setStatus).catch(() => {}).finally(() => setLoading(false));
+    Promise.all([
+      api.getOfflineCacheStatus().catch(() => null),
+      api.listOfflineCache().catch(() => []),
+    ]).then(([s, e]) => {
+      setStatus(s);
+      setEntries(e);
+      setLoading(false);
+    });
   };
 
   useEffect(refresh, []);
@@ -1544,8 +1555,17 @@ function OfflineTab() {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
+  const verify = async () => {
+    setVerifying(true);
+    try {
+      const results = await api.verifyOfflineCache();
+      setVerifyResults(results);
+    } catch {}
+    setVerifying(false);
+  };
+
   return (
-    <div className="max-w-2xl mx-auto space-y-4">
+    <div className="max-w-3xl mx-auto space-y-4">
       <h1 className="text-2xl font-bold text-glow-cyan">Offline Mode</h1>
       <p className="text-sm text-cyber-text-dim">
         Manage cached driver and software installers for updating systems without internet access.
@@ -1568,21 +1588,69 @@ function OfflineTab() {
             </div>
           </div>
 
-          {status.entry_count > 0 && (
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => { api.clearOfflineCache(); refresh(); }}
-              className="px-4 py-2 rounded-lg border border-danger/30 text-danger text-sm font-medium hover:bg-danger/10 transition-all"
-            >
-              Clear Cache
-            </motion.button>
+          {entries.length > 0 && (
+            <>
+              <div className="flex gap-3">
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={verify}
+                  disabled={verifying}
+                  className="px-4 py-2 rounded-lg border border-accent/30 text-accent text-sm font-medium hover:bg-accent/10 transition-all disabled:opacity-50"
+                >
+                  {verifying ? "Verifying..." : "Verify Integrity"}
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => { api.clearOfflineManifest(); setEntries([]); setVerifyResults([]); refresh(); }}
+                  className="px-4 py-2 rounded-lg border border-danger/30 text-danger text-sm font-medium hover:bg-danger/10 transition-all"
+                >
+                  Clear All
+                </motion.button>
+              </div>
+
+              <div className="space-y-1">
+                {entries.map((e, i) => (
+                  <motion.div
+                    key={`${e.backend}-${e.package_id}`}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: Math.min(i * 0.02, 0.3) }}
+                    className="flex items-center gap-3 p-3 rounded-lg bg-cyber-surface border border-cyber-border text-xs"
+                  >
+                    {verifyResults.length > 0 && (
+                      verifyResults[i] ? (
+                        <CheckCircle className="w-4 h-4 text-success flex-shrink-0" />
+                      ) : (
+                        <XCircle className="w-4 h-4 text-danger flex-shrink-0" />
+                      )
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-cyber-text truncate">{e.package_id}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyber-bg text-cyber-text-dim font-mono">{e.backend}</span>
+                      </div>
+                      <div className="text-cyber-text-faint mt-0.5">
+                        v{e.version} · {formatBytes(e.size_bytes)} · {new Date(e.cached_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { api.removeOfflineEntry(e.package_id, e.backend); setEntries(entries.filter((x) => x.package_id !== e.package_id || x.backend !== e.backend)); }}
+                      className="text-danger hover:underline flex-shrink-0"
+                    >
+                      Remove
+                    </button>
+                  </motion.div>
+                ))}
+              </div>
+            </>
           )}
 
-          {status.entry_count === 0 && (
+          {entries.length === 0 && (
             <div className="text-center py-8">
               <WifiOff className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
-              <p className="text-sm text-cyber-text-dim">No cached installers. Run a scan to populate the cache.</p>
+              <p className="text-sm text-cyber-text-dim">No cached installers. Download installers from the Updates page to populate the cache.</p>
             </div>
           )}
         </>
