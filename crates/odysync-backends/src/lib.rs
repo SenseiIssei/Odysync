@@ -8,13 +8,16 @@
 
 pub mod apt;
 pub mod diagnostics;
+pub mod dnf;
 pub mod flatpak;
 pub mod homebrew;
+pub mod mac_firmware;
+pub mod mac_software_update;
 pub mod maintenance;
 pub mod notifications;
+pub mod pacman;
 pub mod scheduler;
 pub mod fwupd;
-pub mod mac_firmware;
 #[cfg(windows)]
 pub mod winget;
 #[cfg(windows)]
@@ -51,12 +54,15 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
 
     #[cfg(target_os = "linux")]
     {
+        v.push(Box::new(dnf::DnfBackend::new()));
+        v.push(Box::new(pacman::PacmanBackend::new()));
         v.push(Box::new(fwupd::FwupdBackend::new()));
     }
 
     #[cfg(target_os = "macos")]
     {
         v.push(Box::new(mac_firmware::MacFirmwareBackend::new()));
+        v.push(Box::new(mac_software_update::MacSoftwareUpdateBackend::new()));
     }
 
     v
@@ -118,12 +124,15 @@ mod tests {
 
         #[cfg(target_os = "linux")]
         {
+            assert!(kinds.contains(&BackendKind::Dnf));
+            assert!(kinds.contains(&BackendKind::Pacman));
             assert!(kinds.contains(&BackendKind::Fwupd));
         }
 
         #[cfg(target_os = "macos")]
         {
             assert!(kinds.contains(&BackendKind::MacFirmware));
+            assert!(kinds.contains(&BackendKind::MacSoftwareUpdate));
         }
     }
 
