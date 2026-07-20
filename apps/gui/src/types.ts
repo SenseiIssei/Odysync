@@ -64,16 +64,26 @@ export interface ScheduleRequest {
   task_name: string | null;
 }
 
+export interface Hold {
+  package: string;
+  pin: string | null;
+  note: string | null;
+}
+
+export interface Profile {
+  name: string;
+  packages: string[];
+}
+
 export interface Config {
   policy: {
     stable_only: boolean;
     require_known_versions: boolean;
     elevated: boolean;
     exclude: string[];
-    holds: string[];
-    pins: Record<string, string>;
+    holds: Hold[];
   };
   disabled_backends: string[];
-  profiles: Record<string, string[]>;
+  profiles: Profile[];
   restore_point: boolean;
 }

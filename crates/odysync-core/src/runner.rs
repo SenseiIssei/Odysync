@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use crate::backend::Backend;
+use crate::history::UpdateHistory;
 use crate::model::{ApplyOutcome, BackendKind, PlannedUpdate};
 use crate::report::RunReport;
 use crate::restore::RestorePointGuard;
@@ -18,6 +19,7 @@ use crate::version::Version;
 pub struct Runner<'a> {
     backends: HashMap<BackendKind, &'a dyn Backend>,
     dry_run: bool,
+    history: Option<UpdateHistory>,
 }
 
 impl<'a> Runner<'a> {
@@ -25,7 +27,14 @@ impl<'a> Runner<'a> {
         Self {
             backends: backends.into_iter().map(|b| (b.kind(), b)).collect(),
             dry_run,
+            history: None,
         }
+    }
+
+    /// Enable persistent update history recording.
+    pub fn with_history(mut self, history: UpdateHistory) -> Self {
+        self.history = Some(history);
+        self
     }
 
     /// Apply every actionable entry in `plan`, in order.
@@ -38,7 +47,7 @@ impl<'a> Runner<'a> {
     /// When `restore_point` is `true` and this is not a dry run, a system
     /// restore point is created before the first apply (Windows only).
     pub async fn run(
-        &self,
+        &mut self,
         plan: &[PlannedUpdate],
         report: &mut RunReport,
         restore_point: bool,
@@ -114,7 +123,23 @@ impl<'a> Runner<'a> {
                 tracing::warn!(package = %candidate.id, ?outcome, "update did not succeed");
             }
 
+            if let Some(history) = &mut self.history {
+                history.record(
+                    &candidate.id,
+                    &candidate.name,
+                    candidate.installed.raw(),
+                    candidate.available.raw(),
+                    &outcome,
+                );
+            }
+
             report.push(candidate.id.clone(), candidate.name.clone(), outcome);
+        }
+
+        if let Some(history) = &self.history {
+            if let Err(e) = history.save() {
+                tracing::warn!(error = %e, "failed to save update history");
+            }
         }
 
         report.finish();

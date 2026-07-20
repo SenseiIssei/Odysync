@@ -40,13 +40,15 @@ pub async fn run(opts: &DaemonOpts, config_path: &std::path::Path) -> Result<u8>
         let plan = config.policy.plan(candidates);
         let actionable = plan.iter().filter(|p| p.is_actionable()).count();
 
+        let mut failed_count = 0u8;
+
         if actionable > 0 {
             tracing::info!(count = actionable, "updates available");
 
             if opts.auto_apply {
                 tracing::info!("auto-applying updates");
                 let refs: Vec<&dyn Backend> = backends.iter().map(|b| b.as_ref()).collect();
-                let runner = Runner::new(refs, false);
+                let mut runner = Runner::new(refs, false);
                 let mut report = RunReport::new();
                 let restore = opts.restore_point || config.restore_point;
                 runner.run(&plan, &mut report, restore).await;
@@ -61,7 +63,11 @@ pub async fn run(opts: &DaemonOpts, config_path: &std::path::Path) -> Result<u8>
                 );
 
                 if report.failed() > 0 {
-                    return Ok(1);
+                    failed_count = 1;
+                    tracing::warn!(
+                        failed = report.failed(),
+                        "some updates failed; will retry on next interval"
+                    );
                 }
             } else {
                 tracing::info!("{actionable} updates available; use --apply to install automatically");
@@ -71,7 +77,7 @@ pub async fn run(opts: &DaemonOpts, config_path: &std::path::Path) -> Result<u8>
         }
 
         if opts.once {
-            return Ok(0);
+            return Ok(failed_count);
         }
 
         tracing::debug!(secs = interval.as_secs(), "sleeping until next check");

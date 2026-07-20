@@ -90,6 +90,13 @@ impl Backend for FlatpakBackend {
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
+        if !candidate.available.is_known() {
+            return Err(Error::Verification {
+                package: candidate.id.to_string(),
+                detail: "refusing to install without an exact target version".into(),
+            });
+        }
+
         let out = proc::run(
             "flatpak",
             &["update", "-y", "--noninteractive", &candidate.id.native],
@@ -191,5 +198,20 @@ mod tests {
     #[test]
     fn blank_lines_are_skipped() {
         assert!(parse_columns("\n\n   \n").is_empty());
+    }
+
+    #[tokio::test]
+    async fn apply_refuses_without_a_known_target_version() {
+        let backend = FlatpakBackend::new();
+        let candidate = UpdateCandidate {
+            id: PackageId::new(BackendKind::Flatpak, "org.example.App"),
+            name: "Example".into(),
+            installed: Version::parse("1.0"),
+            available: Version::parse(""),
+            size_bytes: None,
+            expected_sha256: None,
+        };
+        let err = backend.apply(&candidate).await.unwrap_err();
+        assert!(matches!(err, Error::Verification { .. }));
     }
 }

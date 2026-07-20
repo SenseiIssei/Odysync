@@ -11,11 +11,17 @@ pub mod diagnostics;
 pub mod flatpak;
 pub mod homebrew;
 pub mod maintenance;
+pub mod notifications;
 pub mod scheduler;
+pub mod fwupd;
+pub mod mac_firmware;
 #[cfg(windows)]
 pub mod winget;
 #[cfg(windows)]
 pub mod windows_drivers;
+pub mod gpu;
+#[cfg(windows)]
+pub mod oem;
 
 use odysync_core::backend::Backend;
 use odysync_core::config::Config;
@@ -29,12 +35,29 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
         v.push(Box::new(winget::WingetBackend::new()));
         v.push(Box::new(winget::WingetBackend::store()));
         v.push(Box::new(windows_drivers::WindowsDriverBackend::new()));
+        v.push(Box::new(gpu::nvidia_gpu::NvidiaGpuBackend::new()));
+        v.push(Box::new(gpu::amd_gpu::AmdGpuBackend::new()));
+        v.push(Box::new(gpu::intel_gpu::IntelGpuBackend::new()));
+        v.push(Box::new(oem::dell_command_update::DellCommandUpdateBackend::new()));
+        v.push(Box::new(oem::hp_image_assistant::HpImageAssistantBackend::new()));
+        v.push(Box::new(oem::lenovo_system_update::LenovoSystemUpdateBackend::new()));
+        v.push(Box::new(oem::msi_center::MsiCenterBackend::new()));
     }
 
     // Homebrew also runs on Linux, so it is not gated to macOS.
     v.push(Box::new(homebrew::HomebrewBackend::new()));
     v.push(Box::new(apt::AptBackend::new()));
     v.push(Box::new(flatpak::FlatpakBackend::new()));
+
+    #[cfg(target_os = "linux")]
+    {
+        v.push(Box::new(fwupd::FwupdBackend::new()));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        v.push(Box::new(mac_firmware::MacFirmwareBackend::new()));
+    }
 
     v
 }
@@ -84,6 +107,23 @@ mod tests {
             assert!(kinds.contains(&BackendKind::Winget));
             assert!(kinds.contains(&BackendKind::MsStore));
             assert!(kinds.contains(&BackendKind::WindowsDrivers));
+            assert!(kinds.contains(&BackendKind::NvidiaGpu));
+            assert!(kinds.contains(&BackendKind::AmdGpu));
+            assert!(kinds.contains(&BackendKind::IntelGpu));
+            assert!(kinds.contains(&BackendKind::DellCommandUpdate));
+            assert!(kinds.contains(&BackendKind::HpImageAssistant));
+            assert!(kinds.contains(&BackendKind::LenovoSystemUpdate));
+            assert!(kinds.contains(&BackendKind::MsiCenter));
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            assert!(kinds.contains(&BackendKind::Fwupd));
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            assert!(kinds.contains(&BackendKind::MacFirmware));
         }
     }
 

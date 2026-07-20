@@ -28,6 +28,24 @@ pub enum BackendKind {
     Pacman,
     /// Linux: Flatpak.
     Flatpak,
+    /// Windows: NVIDIA GPU driver updates.
+    NvidiaGpu,
+    /// Windows: AMD GPU driver updates.
+    AmdGpu,
+    /// Windows: Intel GPU/Arc driver updates.
+    IntelGpu,
+    /// Windows: Dell Command Update (dcu-cli.exe).
+    DellCommandUpdate,
+    /// Windows: HP Image Assistant.
+    HpImageAssistant,
+    /// Windows: Lenovo System Update / SUHelper.
+    LenovoSystemUpdate,
+    /// Windows: MSI Center (informational + Windows Update fallback).
+    MsiCenter,
+    /// Linux: fwupd / LVFS firmware updates.
+    Fwupd,
+    /// macOS: firmware and system updates via softwareupdate.
+    MacFirmware,
 }
 
 impl BackendKind {
@@ -43,6 +61,15 @@ impl BackendKind {
             BackendKind::Dnf => "dnf",
             BackendKind::Pacman => "pacman",
             BackendKind::Flatpak => "flatpak",
+            BackendKind::NvidiaGpu => "nvidia-gpu",
+            BackendKind::AmdGpu => "amd-gpu",
+            BackendKind::IntelGpu => "intel-gpu",
+            BackendKind::DellCommandUpdate => "dell-command-update",
+            BackendKind::HpImageAssistant => "hp-image-assistant",
+            BackendKind::LenovoSystemUpdate => "lenovo-system-update",
+            BackendKind::MsiCenter => "msi-center",
+            BackendKind::Fwupd => "fwupd",
+            BackendKind::MacFirmware => "mac-firmware",
         }
     }
 
@@ -53,7 +80,16 @@ impl BackendKind {
             | BackendKind::Apt
             | BackendKind::Dnf
             | BackendKind::Pacman
-            | BackendKind::MacSoftwareUpdate => true,
+            | BackendKind::MacSoftwareUpdate
+            | BackendKind::NvidiaGpu
+            | BackendKind::AmdGpu
+            | BackendKind::IntelGpu
+            | BackendKind::DellCommandUpdate
+            | BackendKind::HpImageAssistant
+            | BackendKind::LenovoSystemUpdate
+            | BackendKind::MsiCenter
+            | BackendKind::Fwupd
+            | BackendKind::MacFirmware => true,
             // winget machine-scope installs may prompt for UAC per package;
             // that is handled per-package, not as a blanket requirement.
             BackendKind::Winget => false,

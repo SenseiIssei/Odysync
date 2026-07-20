@@ -2491,6 +2491,7 @@ dependencies = [
  "futures",
  "odysync-core",
  "odysync-verify",
+ "regex",
  "serde",
  "serde_json",
  "tokio",
@@ -2525,6 +2526,7 @@ dependencies = [
  "directories",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -2536,6 +2538,7 @@ name = "odysync-gui"
 version = "2.0.0-alpha.1"
 dependencies = [
  "chrono",
+ "futures",
  "odysync-backends",
  "odysync-core",
  "serde",
