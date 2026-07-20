@@ -4,9 +4,19 @@ use odysync_core::config::Config;
 use odysync_core::maintenance::MaintenanceKind;
 use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::report::RunReport;
-use odysync_core::runner::Runner;
-use odysync_core::Backend;
+use odysync_core::runner::{ProgressEmitter, ProgressEvent, Runner};
 use tauri::{AppHandle, Emitter, State};
+
+/// Bridge between the Runner's progress events and Tauri's event system.
+struct TauriProgressEmitter {
+    app: AppHandle,
+}
+
+impl ProgressEmitter for TauriProgressEmitter {
+    fn emit_progress(&self, event: ProgressEvent) {
+        let _ = self.app.emit("apply-progress", &event);
+    }
+}
 
 // ── DTOs for the frontend ────────────────────────────────────────────────────
 
@@ -141,6 +151,8 @@ pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
 
     let mut actionable = Vec::new();
     let mut skipped = Vec::new();
+    let mut scan_cache = state.scan_cache.lock().unwrap();
+    scan_cache.clear();
 
     for (i, (kind_id, result)) in results.into_iter().enumerate() {
         let candidates = match result {
@@ -150,6 +162,8 @@ pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
                 continue;
             }
         };
+        // Cache candidates for apply so we don't re-scan.
+        scan_cache.insert(kind_id.clone(), candidates.clone());
         let plan = config.policy.plan(candidates);
 
         for entry in &plan {
@@ -186,36 +200,42 @@ pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
 
 #[tauri::command]
 pub async fn apply(
+    app: AppHandle,
     request: ApplyRequest,
     state: State<'_, AppState>,
 ) -> Result<ApplyResultDto, String> {
     let mut config = state.config.lock().unwrap().clone();
     config.policy.elevated = odysync_core::platform::is_elevated();
-    let backends = odysync_backends::detect_backends(&config).await;
 
-    // Rebuild UpdateCandidates from the DTOs by re-scanning and matching.
+    // Use cached scan results instead of re-scanning.
+    let cache = state.scan_cache.lock().unwrap().clone();
+
     let mut candidates_to_apply: Vec<UpdateCandidate> = Vec::new();
-    for backend in &backends {
-        let candidates = backend.scan().await.map_err(|e| e.to_string())?;
-        for req_update in &request.updates {
-            let Some(req_kind) = backend_kind_from_str(&req_update.backend) else {
-                return Err(format!("unknown backend: {}", req_update.backend));
-            };
-            if backend.kind() != req_kind {
-                continue;
-            }
-            for c in &candidates {
-                if c.id.to_string() == req_update.id {
-                    candidates_to_apply.push(c.clone());
-                }
+    for req_update in &request.updates {
+        let Some(candidates) = cache.get(&req_update.backend) else {
+            continue;
+        };
+        for c in candidates {
+            if c.id.to_string() == req_update.id {
+                candidates_to_apply.push(c.clone());
             }
         }
     }
 
+    if candidates_to_apply.is_empty() {
+        return Err("no matching candidates found in scan cache — please scan first".into());
+    }
+
+    // Detect backends for applying.
+    let backends = odysync_backends::detect_backends(&config).await;
+
     let plan = config.policy.plan(candidates_to_apply);
     let mut runner = Runner::new(backends.iter().map(|b| b.as_ref()), request.dry_run);
+
+    // Emit progress events during apply.
+    let emitter = TauriProgressEmitter { app: app.clone() };
     let mut report = RunReport::new();
-    runner.run(&plan, &mut report, request.restore_point).await;
+    runner.run_with_progress(&plan, &mut report, request.restore_point, Some(&emitter)).await;
     report.finish();
 
     let entries: Vec<ApplyEntryDto> = report

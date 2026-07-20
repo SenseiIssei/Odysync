@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "odysync-gui"
 version.workspace = true
 edition.workspace = true
