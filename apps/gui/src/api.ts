@@ -14,6 +14,7 @@ import type {
   LogEntryDto,
   ProfileDto,
   OfflineCacheStatusDto,
+  OfflineManifestEntryDto,
 } from "./types";
 
 export async function scan(): Promise<ScanResult> {
@@ -110,4 +111,36 @@ export async function getOfflineCacheStatus(): Promise<OfflineCacheStatusDto> {
 
 export async function clearOfflineCache(): Promise<void> {
   return invoke<void>("clear_offline_cache");
+}
+
+export async function listOfflineCache(): Promise<OfflineManifestEntryDto[]> {
+  return invoke<OfflineManifestEntryDto[]>("list_offline_cache");
+}
+
+export async function clearOfflineManifest(): Promise<void> {
+  return invoke<void>("clear_offline_manifest");
+}
+
+export async function removeOfflineEntry(packageId: string, backend: string): Promise<void> {
+  return invoke<void>("remove_offline_entry", { packageId, backend });
+}
+
+export async function downloadOfflineInstaller(
+  url: string,
+  packageId: string,
+  backend: string,
+  version: string,
+  expectedSha256?: string,
+): Promise<void> {
+  return invoke<void>("download_offline_installer", {
+    url,
+    packageId,
+    backend,
+    version,
+    expectedSha256: expectedSha256 ?? null,
+  });
+}
+
+export async function verifyOfflineCache(): Promise<boolean[]> {
+  return invoke<boolean[]>("verify_offline_cache");
 }

@@ -773,3 +773,71 @@ pub async fn clear_offline_cache() -> Result<(), String> {
     }
     Ok(())
 }
+
+// ── Offline Cache Manager ────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct OfflineManifestEntryDto {
+    pub package_id: String,
+    pub backend: String,
+    pub version: String,
+    pub filename: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub cached_at: String,
+}
+
+#[tauri::command]
+pub async fn list_offline_cache() -> Result<Vec<OfflineManifestEntryDto>, String> {
+    let manifest = odysync_backends::offline::CacheManifest::load();
+    Ok(manifest.entries.iter().map(|e| OfflineManifestEntryDto {
+        package_id: e.package_id.clone(),
+        backend: e.backend.clone(),
+        version: e.version.clone(),
+        filename: e.filename.clone(),
+        sha256: e.sha256.clone(),
+        size_bytes: e.size_bytes,
+        cached_at: e.cached_at.clone(),
+    }).collect())
+}
+
+#[tauri::command]
+pub async fn clear_offline_manifest() -> Result<(), String> {
+    let mut manifest = odysync_backends::offline::CacheManifest::load();
+    manifest.clear().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn remove_offline_entry(package_id: String, backend: String) -> Result<(), String> {
+    let mut manifest = odysync_backends::offline::CacheManifest::load();
+    manifest.remove(&package_id, &backend).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn download_offline_installer(
+    url: String,
+    package_id: String,
+    backend: String,
+    version: String,
+    expected_sha256: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let config = state.config.lock().unwrap().clone();
+    let proxy = config.proxy_url.as_deref();
+    odysync_backends::offline::download_and_cache(
+        &url, &package_id, &backend, &version,
+        expected_sha256.as_deref(), proxy,
+    ).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn verify_offline_cache() -> Result<Vec<bool>, String> {
+    let manifest = odysync_backends::offline::CacheManifest::load();
+    let mut results = Vec::new();
+    for entry in &manifest.entries {
+        let ok = odysync_backends::offline::verify_cached_file(entry).await
+            .unwrap_or(false);
+        results.push(ok);
+    }
+    Ok(results)
+}
