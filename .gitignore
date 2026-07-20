@@ -1,3 +1,11 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node / GUI (Phase 2)
+node_modules/
+dist/
+
 # Python
 __pycache__/
 *.pyc
