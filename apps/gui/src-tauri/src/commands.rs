@@ -827,7 +827,7 @@ pub async fn download_offline_installer(
     odysync_backends::offline::download_and_cache(
         &url, &package_id, &backend, &version,
         expected_sha256.as_deref(), proxy,
-    ).await.map_err(|e| e.to_string())
+    ).await.map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
