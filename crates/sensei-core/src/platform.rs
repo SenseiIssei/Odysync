@@ -7,23 +7,39 @@
 /// install state.
 #[cfg(windows)]
 pub fn is_elevated() -> bool {
-    // Probing the token directly would need the windows crate; `net session`
-    // fails for non-elevated callers and needs no extra dependency. It is a
-    // cheap, well-defined check that has behaved consistently since XP.
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // SAFETY: GetCurrentProcess returns a pseudo-handle that is always valid.
+    let mut token: HANDLE = Default::default();
+    let ok = unsafe {
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)
+    };
+    if ok.is_err() {
+        return false;
+    }
 
-    Command::new("net")
-        .args(["session"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    // SAFETY: token is a valid handle from OpenProcessToken. The buffer is a
+    // TOKEN_ELEVATION struct, which is what TokenElevation expects.
+    let mut elevation = TOKEN_ELEVATION::default();
+    let ok = unsafe {
+        GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut _),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut 0u32,
+        )
+    };
+
+    // SAFETY: token is a valid handle; CloseHandle on a pseudo-handle is a no-op
+    // but we call it for correctness.
+    unsafe { _ = windows::Win32::Foundation::CloseHandle(token) };
+
+    ok.is_ok() && elevation.TokenIsElevated != 0
 }
 
 #[cfg(not(windows))]

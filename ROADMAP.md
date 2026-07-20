@@ -27,10 +27,10 @@ tests. See `ARCHITECTURE.md` for where each guarantee is enforced.
 `legacy/`.
 
 ### 2.1 Driver updates
-- [ ] Replace PSWindowsUpdate with the **Windows Update Agent COM API**
+- [x] Replace PSWindowsUpdate with the **Windows Update Agent COM API**
       (`IUpdateSession` / `IUpdateSearcher`) via the `windows` crate.
-- [ ] Driver-only search filter (`Type='Driver'`), surfaced as `BackendKind::WindowsDrivers`.
-- [ ] Report reboot-required through `RunReport::reboot_required`.
+- [x] Driver-only search filter (`Type='Driver'`), surfaced as `BackendKind::WindowsDrivers`.
+- [x] Report reboot-required through `RunReport::reboot_required`.
 
 > **Why change:** v1 installed a third-party PowerShell module from PSGallery
 > at runtime, as Administrator, trusting the repository — a supply-chain hole
@@ -38,24 +38,27 @@ tests. See `ARCHITECTURE.md` for where each guarantee is enforced.
 > considerably faster. This is a real dependency reduction, not a refactor.
 
 ### 2.2 Restore points
-- [ ] Implement the `restore-point` config flag (currently parsed, unimplemented).
-- [ ] `SRSetRestorePoint` via COM; skip gracefully when System Protection is off.
-- [ ] Create once per run, before the first apply — not per package.
+- [x] Implement the `restore-point` config flag (currently parsed, unimplemented).
+- [x] `SRSetRestorePoint` via COM; skip gracefully when System Protection is off.
+- [x] Create once per run, before the first apply — not per package.
 
 ### 2.3 Maintenance actions
-- [ ] Temp cleanup, Recycle Bin, DISM/SFC health, startup-programs viewer.
-- [ ] Model as a `Maintenance` trait separate from `Backend` — these are not
+- [x] Temp cleanup, Recycle Bin, DISM/SFC health, startup-programs viewer.
+- [x] Model as a `Maintenance` trait separate from `Backend` — these are not
       package updates and should not flow through the update policy.
 
 ### 2.4 Scheduling
-- [ ] Task Scheduler (Windows), launchd (macOS), systemd timer (Linux).
-- [ ] `sensei schedule --daily 09:00` / `sensei unschedule`.
+- [x] Task Scheduler (Windows), launchd (macOS), systemd timer (Linux).
+- [x] `sensei schedule --daily 09:00` / `sensei unschedule`.
 
 ### 2.5 Reporting
-- [ ] Diagnostics bundle (`sensei diagnostics --out bundle.zip`).
-- [ ] Text report format alongside the existing JSON.
+- [x] Diagnostics bundle (`sensei diagnostics --out bundle.zip`).
+- [x] Text report format alongside the existing JSON.
 
 **Exit criteria:** every v1 flag has a v2 equivalent; `legacy/` deleted.
+
+**Status:** All Phase 2 features implemented. 110 tests pass, clippy-clean.
+`legacy/` deletion remains as a follow-up cleanup task.
 
 ---
 

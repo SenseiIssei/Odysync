@@ -33,6 +33,7 @@ sha2 = "0.10"
 hex = "0.4"
 directories = "5"
 async-trait = "0.1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [profile.release]
 opt-level = "z"
