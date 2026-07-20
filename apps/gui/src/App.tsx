@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   RefreshCw,
   Download,
@@ -8,14 +10,22 @@ import {
   Calendar,
   Stethoscope,
   Shield,
-  Sun,
-  Moon,
   Package,
   AlertTriangle,
   CheckCircle,
   XCircle,
   Clock,
   HardDrive,
+  Minus,
+  X,
+  Activity,
+  History,
+  Cpu,
+  ScrollText,
+  Layers,
+  WifiOff,
+  Info,
+  Zap,
 } from "lucide-react";
 import "./App.css";
 import type {
@@ -28,17 +38,46 @@ import type {
 } from "./types";
 import * as api from "./api";
 
-type Tab = "updates" | "maintenance" | "schedule" | "settings";
+type Tab =
+  | "updates"
+  | "maintenance"
+  | "schedule"
+  | "settings"
+  | "dashboard"
+  | "history"
+  | "packages"
+  | "hardware"
+  | "logs"
+  | "profiles"
+  | "offline"
+  | "about";
+
+interface NavItem {
+  id: Tab;
+  label: string;
+  icon: React.ReactNode;
+  group: string;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { id: "dashboard", label: "Dashboard", icon: <Activity className="w-4 h-4" />, group: "Overview" },
+  { id: "updates", label: "Updates", icon: <Package className="w-4 h-4" />, group: "Overview" },
+  { id: "history", label: "History", icon: <History className="w-4 h-4" />, group: "Overview" },
+  { id: "packages", label: "Packages", icon: <Layers className="w-4 h-4" />, group: "Overview" },
+  { id: "hardware", label: "Hardware", icon: <Cpu className="w-4 h-4" />, group: "System" },
+  { id: "maintenance", label: "Maintenance", icon: <Wrench className="w-4 h-4" />, group: "System" },
+  { id: "logs", label: "Logs", icon: <ScrollText className="w-4 h-4" />, group: "System" },
+  { id: "schedule", label: "Schedule", icon: <Calendar className="w-4 h-4" />, group: "Automation" },
+  { id: "profiles", label: "Profiles", icon: <Layers className="w-4 h-4" />, group: "Automation" },
+  { id: "offline", label: "Offline", icon: <WifiOff className="w-4 h-4" />, group: "Automation" },
+  { id: "settings", label: "Settings", icon: <Settings className="w-4 h-4" />, group: "Config" },
+  { id: "about", label: "About", icon: <Info className="w-4 h-4" />, group: "Config" },
+];
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("updates");
-  const [dark, setDark] = useState(
-    () => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true,
-  );
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-  }, [dark]);
+  const [tab, setTab] = useState<Tab>("dashboard");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const appWindow = useRef(getCurrentWindow());
 
   useEffect(() => {
     const unlisten = listen("tray-scan", () => {
@@ -49,67 +88,269 @@ export default function App() {
     };
   }, []);
 
+  const minimizeWindow = () => appWindow.current.minimize();
+  const closeWindow = () => appWindow.current.hide();
+
+  const navGroups = [...new Set(NAV_ITEMS.map((n) => n.group))];
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+    <div className="app-window h-screen flex flex-col text-cyber-text bg-cyber-bg grid-bg">
+      {/* Custom Titlebar */}
+      <div className="titlebar flex items-center justify-between px-4 py-2.5 border-b border-cyber-border bg-cyber-surface/80 backdrop-blur-sm">
         <div className="flex items-center gap-3">
-          <Shield className="w-7 h-7 text-accent" />
-          <div>
-            <h1 className="text-lg font-semibold">Odysync</h1>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Safe, verified updates for your system
-            </p>
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="text-cyber-text-dim hover:text-accent transition-colors p-1"
+            title="Toggle sidebar"
+          >
+            <motion.div animate={{ rotate: sidebarOpen ? 0 : 180 }}>
+              <Layers className="w-4 h-4" />
+            </motion.div>
+          </button>
+          <div className="flex items-center gap-2">
+            <Shield className="w-5 h-5 text-accent text-glow-cyan" />
+            <span className="text-sm font-bold tracking-wide">ODYSYNC</span>
+            <span className="text-xs text-cyber-text-faint">v2.0</span>
           </div>
         </div>
-        <button
-          onClick={() => setDark(!dark)}
-          className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          title={dark ? "Switch to light mode" : "Switch to dark mode"}
-        >
-          {dark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-        </button>
-      </header>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={minimizeWindow}
+            className="p-1.5 rounded hover:bg-cyber-surface-2 text-cyber-text-dim hover:text-accent transition-all"
+            title="Minimize"
+          >
+            <Minus className="w-4 h-4" />
+          </button>
+          <button
+            onClick={closeWindow}
+            className="p-1.5 rounded hover:bg-danger/20 text-cyber-text-dim hover:text-danger transition-all"
+            title="Close to tray"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
 
-      <nav className="flex gap-1 px-6 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <TabButton active={tab === "updates"} onClick={() => setTab("updates")} icon={<Package className="w-4 h-4" />} label="Updates" />
-        <TabButton active={tab === "maintenance"} onClick={() => setTab("maintenance")} icon={<Wrench className="w-4 h-4" />} label="Maintenance" />
-        <TabButton active={tab === "schedule"} onClick={() => setTab("schedule")} icon={<Calendar className="w-4 h-4" />} label="Schedule" />
-        <TabButton active={tab === "settings"} onClick={() => setTab("settings")} icon={<Settings className="w-4 h-4" />} label="Settings" />
-      </nav>
+      {/* Main layout */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
+        <AnimatePresence mode="sync">
+          {sidebarOpen && (
+            <motion.nav
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 200, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="border-r border-cyber-border bg-cyber-surface/50 overflow-hidden flex-shrink-0"
+            >
+              <div className="w-[200px] py-3 overflow-y-auto h-full">
+                {navGroups.map((group) => (
+                  <div key={group} className="mb-3">
+                    <div className="px-4 mb-1.5 text-[10px] uppercase tracking-widest text-cyber-text-faint font-bold">
+                      {group}
+                    </div>
+                    {NAV_ITEMS.filter((n) => n.group === group).map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => setTab(item.id)}
+                        className={`relative w-full flex items-center gap-3 px-4 py-2 text-sm transition-all ${
+                          tab === item.id
+                            ? "text-accent text-glow-cyan"
+                            : "text-cyber-text-dim hover:text-cyber-text hover:bg-cyber-surface-2"
+                        }`}
+                      >
+                        {tab === item.id && (
+                          <motion.div
+                            layoutId="sidebar-active"
+                            className="absolute left-0 top-0 bottom-0 w-[2px] bg-accent glow-cyan"
+                          />
+                        )}
+                        {item.icon}
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </motion.nav>
+          )}
+        </AnimatePresence>
 
-      <main className="flex-1 overflow-y-auto p-6">
-        {tab === "updates" && <UpdatesTab />}
-        {tab === "maintenance" && <MaintenanceTab />}
-        {tab === "schedule" && <ScheduleTab />}
-        {tab === "settings" && <SettingsTab />}
-      </main>
+        {/* Content area */}
+        <main className="flex-1 overflow-y-auto">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={tab}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="p-6"
+            >
+              {tab === "dashboard" && <DashboardTab onNavigate={setTab} />}
+              {tab === "updates" && <UpdatesTab />}
+              {tab === "maintenance" && <MaintenanceTab />}
+              {tab === "schedule" && <ScheduleTab />}
+              {tab === "settings" && <SettingsTab />}
+              {tab === "history" && <PlaceholderTab icon={<History className="w-12 h-12" />} title="Update History" desc="Detailed update history with search and filters — coming in Phase 5." />}
+              {tab === "packages" && <PlaceholderTab icon={<Layers className="w-12 h-12" />} title="Package Browser" desc="Browse and manage all installed packages — coming in Phase 5." />}
+              {tab === "hardware" && <PlaceholderTab icon={<Cpu className="w-12 h-12" />} title="Hardware Info" desc="CPU, GPU, RAM, disks with driver status — coming in Phase 5." />}
+              {tab === "logs" && <PlaceholderTab icon={<ScrollText className="w-12 h-12" />} title="Log Viewer" desc="Real-time log stream and diagnostics — coming in Phase 5." />}
+              {tab === "profiles" && <PlaceholderTab icon={<Layers className="w-12 h-12" />} title="Profile Manager" desc="Create and manage update profiles — coming in Phase 5." />}
+              {tab === "offline" && <PlaceholderTab icon={<WifiOff className="w-12 h-12" />} title="Offline Mode" desc="Manage cached driver installers for offline use — coming in Phase 7." />}
+              {tab === "about" && <AboutTab />}
+            </motion.div>
+          </AnimatePresence>
+        </main>
+      </div>
     </div>
   );
 }
 
-function TabButton({
-  active,
-  onClick,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
+function PlaceholderTab({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
   return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-        active
-          ? "bg-accent text-white"
-          : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-      }`}
-    >
-      {icon}
-      {label}
-    </button>
+    <div className="max-w-2xl mx-auto text-center py-16">
+      <div className="text-cyber-text-faint mb-4 flex justify-center">{icon}</div>
+      <h2 className="text-lg font-bold text-cyber-text mb-2">{title}</h2>
+      <p className="text-sm text-cyber-text-dim">{desc}</p>
+    </div>
+  );
+}
+
+function AboutTab() {
+  return (
+    <div className="max-w-2xl mx-auto space-y-4">
+      <div className="text-center py-8">
+        <Shield className="w-16 h-16 mx-auto mb-4 text-accent text-glow-cyan" />
+        <h2 className="text-2xl font-bold text-glow-cyan">Odysync</h2>
+        <p className="text-sm text-cyber-text-dim mt-1">v2.0.0-alpha.1</p>
+        <p className="text-xs text-cyber-text-faint mt-2">Safe, verified updates for your system</p>
+      </div>
+      <div className="gradient-border p-4 space-y-2">
+        <h3 className="text-sm font-bold text-accent">Changelog</h3>
+        <div className="text-xs text-cyber-text-dim space-y-1 font-mono">
+          <div><span className="text-success">+</span> 30+ backends (winget, chocolatey, scoop, pip, cargo, npm...)</div>
+          <div><span className="text-success">+</span> Cyberpunk UI with Framer Motion animations</div>
+          <div><span className="text-success">+</span> Hybrid version discovery (online registry + vendor scraping)</div>
+          <div><span className="text-success">+</span> Offline mode with driver cache</div>
+          <div><span className="text-success">+</span> Error retry with exponential backoff</div>
+          <div><span className="text-success">+</span> PackageId validation & output limits</div>
+          <div><span className="text-success">+</span> Scan caching with TTL</div>
+        </div>
+      </div>
+      <div className="text-center text-xs text-cyber-text-faint">
+        <p>Built with Tauri, React, Rust, and lots of caffeine.</p>
+        <p className="mt-1">github.com/SenseiIssei/Odysync</p>
+      </div>
+    </div>
+  );
+}
+
+function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+  const [sysInfo, setSysInfo] = useState<SystemInfoDto | null>(null);
+  const [backends, setBackends] = useState<BackendDto[]>([]);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [scanning, setScanning] = useState(false);
+
+  useEffect(() => {
+    api.getSystemInfo().then(setSysInfo).catch(() => {});
+    api.listBackends().then(setBackends).catch(() => {});
+  }, []);
+
+  const quickScan = async () => {
+    setScanning(true);
+    try {
+      const r = await api.scan();
+      setScanResult(r);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const availableCount = backends.filter((b) => b.available).length;
+  const updateCount = scanResult?.actionable.length ?? 0;
+
+  const stats = [
+    { label: "Updates Available", value: scanning ? "..." : String(updateCount), icon: <Package className="w-5 h-5" />, color: "text-accent", glow: "glow-cyan" },
+    { label: "Backends Active", value: `${availableCount}/${backends.length}`, icon: <Zap className="w-5 h-5" />, color: "text-purple-neon", glow: "glow-purple" },
+    { label: "System", value: sysInfo?.os ?? "Detecting...", icon: <Cpu className="w-5 h-5" />, color: "text-success", glow: "glow-green" },
+    { label: "Elevation", value: sysInfo?.elevated ? "Elevated" : "User", icon: <Shield className="w-5 h-5" />, color: sysInfo?.elevated ? "text-warning" : "text-cyber-text-dim", glow: "" },
+  ];
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-glow-cyan">Dashboard</h1>
+        <p className="text-sm text-cyber-text-dim mt-1">System overview at a glance</p>
+      </div>
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {stats.map((stat, i) => (
+          <motion.div
+            key={stat.label}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05 }}
+            className={`relative p-4 rounded-xl bg-cyber-surface border border-cyber-border ${stat.glow}`}
+          >
+            <div className={`${stat.color} mb-2`}>{stat.icon}</div>
+            <div className="text-xl font-bold">{stat.value}</div>
+            <div className="text-xs text-cyber-text-dim mt-0.5">{stat.label}</div>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Quick actions */}
+      <div className="flex gap-3">
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={quickScan}
+          disabled={scanning}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-accent/10 border border-accent/30 text-accent font-medium text-sm hover:bg-accent/20 disabled:opacity-50 transition-all glow-cyan"
+        >
+          <RefreshCw className={`w-4 h-4 ${scanning ? "animate-spin" : ""}`} />
+          {scanning ? "Scanning..." : "Quick Scan"}
+        </motion.button>
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={() => onNavigate("updates")}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-cyber-surface border border-cyber-border text-cyber-text font-medium text-sm hover:border-accent/30 transition-all"
+        >
+          <Package className="w-4 h-4" />
+          View Updates
+        </motion.button>
+      </div>
+
+      {/* Backend status */}
+      <div className="rounded-xl bg-cyber-surface border border-cyber-border p-4">
+        <h3 className="text-sm font-bold mb-3 flex items-center gap-2">
+          <Zap className="w-4 h-4 text-accent" />
+          Backend Status
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+          {backends.length === 0 && (
+            <div className="text-xs text-cyber-text-faint col-span-full py-4 text-center">Loading backends...</div>
+          )}
+          {backends.map((b, i) => (
+            <motion.div
+              key={b.kind}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: i * 0.02 }}
+              className="flex items-center justify-between text-xs px-3 py-2 rounded-lg bg-cyber-bg/50 border border-cyber-border"
+            >
+              <span className="truncate text-cyber-text-dim">{b.name}</span>
+              <span className={`w-2 h-2 rounded-full ${b.available ? "bg-success glow-green" : "bg-cyber-text-faint"}`} />
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -123,15 +364,21 @@ function UpdatesTab() {
   const [dryRun, setDryRun] = useState(false);
   const [restorePoint, setRestorePoint] = useState(false);
   const [sysInfo, setSysInfo] = useState<SystemInfoDto | null>(null);
+  const [progress, setProgress] = useState<{ package: string; current: number; total: number } | null>(null);
 
   useEffect(() => {
     api.getSystemInfo().then(setSysInfo).catch(() => {});
+    const unlisten = listen<{ package: string; current: number; total: number }>("apply-progress", (e) => {
+      setProgress(e.payload);
+    });
+    return () => { unlisten.then((fn) => fn()); };
   }, []);
 
   const doScan = useCallback(async () => {
     setScanning(true);
     setError(null);
     setApplyResult(null);
+    setProgress(null);
     try {
       const r = await api.scan();
       setResult(r);
@@ -147,14 +394,12 @@ function UpdatesTab() {
     if (!result) return;
     setApplying(true);
     setError(null);
+    setProgress(null);
     try {
       const updates = result.actionable.filter((u) => selected.has(u.id));
-      const r = await api.apply({
-        updates,
-        dry_run: dryRun,
-        restore_point: restorePoint,
-      });
+      const r = await api.apply({ updates, dry_run: dryRun, restore_point: restorePoint });
       setApplyResult(r);
+      setProgress(null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -183,87 +428,118 @@ function UpdatesTab() {
   return (
     <div className="max-w-4xl mx-auto space-y-4">
       {sysInfo && (
-        <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 px-4 py-3">
-          <span>OS: {sysInfo.os}</span>
+        <div className="flex items-center gap-4 text-xs text-cyber-text-dim bg-cyber-surface rounded-lg border border-cyber-border px-4 py-3">
+          <span className="text-accent">{sysInfo.os}</span>
           <span>v{sysInfo.version}</span>
-          <span className={sysInfo.elevated ? "text-amber-600 dark:text-amber-400" : ""}>
+          <span className={sysInfo.elevated ? "text-warning" : "text-cyber-text-faint"}>
             {sysInfo.elevated ? "Elevated" : "Unelevated"}
           </span>
         </div>
       )}
 
-      <div className="flex items-center gap-3">
-        <button
+      <div className="flex items-center gap-3 flex-wrap">
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
           onClick={doScan}
           disabled={scanning}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-white font-medium text-sm hover:bg-accent-hover disabled:opacity-50 transition-colors"
+          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-accent/10 border border-accent/30 text-accent font-medium text-sm hover:bg-accent/20 disabled:opacity-50 transition-all glow-cyan"
         >
           <RefreshCw className={`w-4 h-4 ${scanning ? "animate-spin" : ""}`} />
           {scanning ? "Scanning..." : "Scan for Updates"}
-        </button>
+        </motion.button>
 
         {result && result.actionable.length > 0 && (
           <>
-            <button
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               onClick={doApply}
               disabled={applying || selected.size === 0}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white font-medium text-sm hover:bg-green-700 disabled:opacity-50 transition-colors"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-success/10 border border-success/30 text-success font-medium text-sm hover:bg-success/20 disabled:opacity-50 transition-all glow-green"
             >
               <Download className={`w-4 h-4 ${applying ? "animate-pulse" : ""}`} />
-              {applying
-                ? "Applying..."
-                : `Apply ${selected.size} Update${selected.size !== 1 ? "s" : ""}`}
-            </button>
+              {applying ? "Applying..." : `Apply ${selected.size} Update${selected.size !== 1 ? "s" : ""}`}
+            </motion.button>
 
-            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="rounded" />
+            <label className="flex items-center gap-2 text-xs text-cyber-text-dim cursor-pointer">
+              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="accent-accent" />
               Dry run
             </label>
 
-            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <input type="checkbox" checked={restorePoint} onChange={(e) => setRestorePoint(e.target.checked)} className="rounded" />
+            <label className="flex items-center gap-2 text-xs text-cyber-text-dim cursor-pointer">
+              <input type="checkbox" checked={restorePoint} onChange={(e) => setRestorePoint(e.target.checked)} className="accent-accent" />
               Restore point
             </label>
           </>
         )}
       </div>
 
+      {/* Progress bar */}
+      {applying && progress && (
+        <motion.div
+          initial={{ opacity: 0, y: -5 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-lg border border-accent/30 bg-accent/5 p-4 scan-overlay"
+        >
+          <div className="flex items-center justify-between text-xs mb-2">
+            <span className="text-accent">{progress.package}</span>
+            <span className="text-cyber-text-dim">{progress.current}/{progress.total}</span>
+          </div>
+          <div className="h-1.5 bg-cyber-bg rounded-full overflow-hidden">
+            <motion.div
+              className="h-full bg-accent glow-cyan"
+              animate={{ width: `${(progress.current / progress.total) * 100}%` }}
+              transition={{ duration: 0.3 }}
+            />
+          </div>
+        </motion.div>
+      )}
+
       {error && (
-        <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 rounded-lg px-4 py-3 border border-red-200 dark:border-red-900">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex items-center gap-2 text-xs text-danger bg-danger/5 rounded-lg px-4 py-3 border border-danger/30 glow-red"
+        >
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           {error}
-        </div>
+        </motion.div>
       )}
 
       {applyResult && (
-        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 space-y-3">
-          <h3 className="font-semibold text-sm">Apply Results</h3>
-          <div className="flex gap-6 text-sm">
-            <span className="text-green-600 dark:text-green-400">{applyResult.updated} updated</span>
-            <span className="text-red-600 dark:text-red-400">{applyResult.failed} failed</span>
-            <span className="text-gray-500">{applyResult.skipped} skipped</span>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-lg border border-cyber-border bg-cyber-surface p-4 space-y-3"
+        >
+          <h3 className="font-bold text-sm text-accent">Apply Results</h3>
+          <div className="flex gap-6 text-xs">
+            <span className="text-success">{applyResult.updated} updated</span>
+            <span className="text-danger">{applyResult.failed} failed</span>
+            <span className="text-cyber-text-dim">{applyResult.skipped} skipped</span>
             {applyResult.reboot_required && (
-              <span className="text-amber-600 dark:text-amber-400 font-medium">Reboot required</span>
+              <span className="text-warning font-medium">Reboot required</span>
             )}
           </div>
           {applyResult.entries.length > 0 && (
             <div className="space-y-1">
               {applyResult.entries.map((e, i) => (
-                <div key={i} className="flex items-center gap-2 text-sm py-1 border-t border-gray-100 dark:border-gray-800">
+                <div key={i} className="flex items-center gap-2 text-xs py-1 border-t border-cyber-border">
                   {e.outcome.includes("Updated") ? (
-                    <CheckCircle className="w-4 h-4 text-green-500" />
+                    <CheckCircle className="w-4 h-4 text-success" />
                   ) : e.outcome.includes("Failed") ? (
-                    <XCircle className="w-4 h-4 text-red-500" />
+                    <XCircle className="w-4 h-4 text-danger" />
                   ) : (
-                    <Clock className="w-4 h-4 text-gray-400" />
+                    <Clock className="w-4 h-4 text-cyber-text-faint" />
                   )}
-                  <span className="flex-1">{e.name}</span>
-                  <span className="text-gray-500 text-xs">{e.outcome}</span>
+                  <span className="flex-1 text-cyber-text">{e.name}</span>
+                  <span className="text-cyber-text-faint">{e.outcome}</span>
                 </div>
               ))}
             </div>
           )}
-        </div>
+        </motion.div>
       )}
 
       {result && (
@@ -271,22 +547,22 @@ function UpdatesTab() {
           {result.actionable.length > 0 && (
             <>
               <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-sm">
+                <h3 className="font-bold text-sm">
                   {result.actionable.length} update{result.actionable.length !== 1 ? "s" : ""} available
                 </h3>
                 <button onClick={toggleAll} className="text-xs text-accent hover:underline">
                   {selected.size === result.actionable.length ? "Deselect all" : "Select all"}
                 </button>
               </div>
-              {result.actionable.map((u) => (
-                <UpdateCard key={u.id} update={u} checked={selected.has(u.id)} onToggle={() => toggleSelect(u.id)} />
+              {result.actionable.map((u, i) => (
+                <UpdateCard key={u.id} update={u} checked={selected.has(u.id)} onToggle={() => toggleSelect(u.id)} index={i} />
               ))}
             </>
           )}
 
           {result.skipped.length > 0 && (
             <>
-              <h3 className="font-semibold text-sm pt-4 text-gray-500">
+              <h3 className="font-bold text-sm pt-4 text-cyber-text-dim">
                 {result.skipped.length} skipped by policy
               </h3>
               {result.skipped.map((s) => (
@@ -296,46 +572,48 @@ function UpdatesTab() {
           )}
 
           {result.total === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <CheckCircle className="w-12 h-12 mx-auto mb-3 text-green-500" />
-              <p className="text-sm">Everything is up to date!</p>
+            <div className="text-center py-12">
+              <CheckCircle className="w-12 h-12 mx-auto mb-3 text-success glow-green" />
+              <p className="text-sm text-cyber-text-dim">Everything is up to date!</p>
             </div>
           )}
         </div>
       )}
 
       {!result && !scanning && !error && (
-        <div className="text-center py-12 text-gray-400">
-          <Package className="w-12 h-12 mx-auto mb-3" />
-          <p className="text-sm">Click "Scan for Updates" to check for available updates.</p>
+        <div className="text-center py-12">
+          <Package className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
+          <p className="text-sm text-cyber-text-dim">Click "Scan for Updates" to check for available updates.</p>
         </div>
       )}
     </div>
   );
 }
 
-function UpdateCard({
-  update,
-  checked,
-  onToggle,
-}: {
-  update: UpdateDto;
-  checked: boolean;
-  onToggle: () => void;
-}) {
+function UpdateCard({ update, checked, onToggle, index }: { update: UpdateDto; checked: boolean; onToggle: () => void; index: number }) {
   return (
-    <label className="flex items-start gap-3 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 cursor-pointer hover:border-accent transition-colors">
-      <input type="checkbox" checked={checked} onChange={onToggle} className="mt-1 rounded" />
+    <motion.label
+      initial={{ opacity: 0, x: -10 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: index * 0.03 }}
+      whileHover={{ scale: 1.01 }}
+      className={`flex items-start gap-3 p-4 rounded-lg border cursor-pointer transition-all ${
+        checked
+          ? "bg-accent/5 border-accent/30 glow-cyan"
+          : "bg-cyber-surface border-cyber-border hover:border-cyber-border-bright"
+      }`}
+    >
+      <input type="checkbox" checked={checked} onChange={onToggle} className="mt-1 accent-accent" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm truncate">{update.name}</span>
-          <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500">
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyber-bg text-cyber-text-dim font-mono">
             {update.backend}
           </span>
         </div>
-        <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400">
-          <span>
-            {update.installed} {"->"} <span className="text-accent font-medium">{update.available}</span>
+        <div className="flex items-center gap-3 mt-1 text-xs text-cyber-text-dim">
+          <span className="font-mono">
+            {update.installed} <span className="text-cyber-text-faint">-&gt;</span> <span className="text-accent font-medium">{update.available}</span>
           </span>
           {update.size_bytes != null && update.size_bytes > 0 && (
             <span className="flex items-center gap-1">
@@ -345,17 +623,17 @@ function UpdateCard({
           )}
         </div>
       </div>
-    </label>
+    </motion.label>
   );
 }
 
 function SkippedCard({ skipped }: { skipped: { backend: string; id: string; name: string; reason: string } }) {
   return (
-    <div className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-800">
-      <Clock className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" />
+    <div className="flex items-start gap-3 p-3 bg-cyber-surface/50 rounded-lg border border-cyber-border">
+      <Clock className="w-4 h-4 text-cyber-text-faint mt-0.5 flex-shrink-0" />
       <div className="flex-1 min-w-0">
-        <span className="text-sm font-medium">{skipped.name}</span>
-        <p className="text-xs text-gray-500 mt-0.5">Skipped: {skipped.reason}</p>
+        <span className="text-sm font-medium text-cyber-text-dim">{skipped.name}</span>
+        <p className="text-xs text-cyber-text-faint mt-0.5">Skipped: {skipped.reason}</p>
       </div>
     </div>
   );
@@ -396,39 +674,53 @@ function MaintenanceTab() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
-      <h2 className="text-lg font-semibold">System Maintenance</h2>
-      <p className="text-sm text-gray-500 dark:text-gray-400">
+      <h1 className="text-2xl font-bold text-glow-cyan">System Maintenance</h1>
+      <p className="text-sm text-cyber-text-dim">
         These actions are not package updates — they clean and inspect your system.
       </p>
 
       <div className="grid gap-3">
-        {actions.map((a) => (
-          <div key={a.id} className="flex items-center gap-4 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
+        {actions.map((a, i) => (
+          <motion.div
+            key={a.id}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05 }}
+            className="flex items-center gap-4 p-4 rounded-lg bg-cyber-surface border border-cyber-border hover:border-accent/20 transition-all"
+          >
             <div className="text-accent">{a.icon}</div>
             <div className="flex-1">
               <h3 className="font-medium text-sm">{a.label}</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">{a.desc}</p>
+              <p className="text-xs text-cyber-text-dim">{a.desc}</p>
             </div>
-            <button
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={() => runAction(a.id)}
               disabled={running !== null}
-              className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover disabled:opacity-50 transition-colors"
+              className="px-4 py-1.5 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50 transition-all"
             >
-              {running === a.id ? "Running..." : "Run"}
-            </button>
-          </div>
+              {running === a.id ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : "Run"}
+            </motion.button>
+          </motion.div>
         ))}
       </div>
 
       {result && (
-        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4">
-          <h3 className="font-semibold text-sm mb-2">Result</h3>
-          <pre className="text-xs whitespace-pre-wrap text-gray-600 dark:text-gray-400">{result}</pre>
-        </div>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="rounded-lg border border-cyber-border bg-cyber-surface p-4"
+        >
+          <h3 className="font-bold text-sm mb-2 text-accent">Result</h3>
+          <pre className="text-xs whitespace-pre-wrap text-cyber-text-dim font-mono">{result}</pre>
+        </motion.div>
       )}
 
       {error && (
-        <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 rounded-lg px-4 py-3 border border-red-200 dark:border-red-900">
+        <div className="flex items-center gap-2 text-xs text-danger bg-danger/5 rounded-lg px-4 py-3 border border-danger/30 glow-red">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           {error}
         </div>
@@ -475,18 +767,18 @@ function ScheduleTab() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
-      <h2 className="text-lg font-semibold">Scheduled Updates</h2>
-      <p className="text-sm text-gray-500 dark:text-gray-400">
+      <h1 className="text-2xl font-bold text-glow-cyan">Scheduled Updates</h1>
+      <p className="text-sm text-cyber-text-dim">
         Automatically scan and apply updates on a schedule.
       </p>
 
-      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 space-y-4">
+      <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4 space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1">Frequency</label>
           <select
             value={frequency}
             onChange={(e) => setFrequency(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm"
+            className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
           >
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
@@ -499,7 +791,7 @@ function ScheduleTab() {
             type="time"
             value={time}
             onChange={(e) => setTime(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm"
+            className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
           />
         </div>
 
@@ -509,7 +801,7 @@ function ScheduleTab() {
             type="text"
             value={taskName}
             onChange={(e) => setTaskName(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm"
+            className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
           />
         </div>
 
@@ -517,8 +809,8 @@ function ScheduleTab() {
           <span
             className={`px-2 py-0.5 rounded-full text-xs font-medium ${
               scheduled
-                ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                : "bg-gray-100 text-gray-500 dark:bg-gray-800"
+                ? "bg-success/20 text-success glow-green"
+                : "bg-cyber-bg text-cyber-text-faint"
             }`}
           >
             {scheduled ? "Scheduled" : "Not scheduled"}
@@ -526,28 +818,32 @@ function ScheduleTab() {
         </div>
 
         <div className="flex gap-3">
-          <button
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={create}
-            className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors"
+            className="px-5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 transition-all glow-cyan"
           >
             Create Schedule
-          </button>
-          <button
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={remove}
-            className="px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-sm font-medium hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            className="px-5 py-2 rounded-lg border border-cyber-border text-sm font-medium hover:bg-cyber-surface-2 transition-all"
           >
             Remove
-          </button>
+          </motion.button>
         </div>
       </div>
 
       {message && (
-        <div className="text-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 rounded-lg px-4 py-3">
+        <div className="text-sm text-success bg-success/5 rounded-lg px-4 py-3 border border-success/30">
           {message}
         </div>
       )}
       {error && (
-        <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 rounded-lg px-4 py-3 border border-red-200 dark:border-red-900">
+        <div className="flex items-center gap-2 text-xs text-danger bg-danger/5 rounded-lg px-4 py-3 border border-danger/30 glow-red">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           {error}
         </div>
@@ -590,24 +886,24 @@ function SettingsTab() {
     }
   };
 
-  if (!config) return <div className="text-center py-12 text-gray-400">Loading config...</div>;
+  if (!config) return <div className="text-center py-12 text-cyber-text-dim">Loading config...</div>;
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
-      <h2 className="text-lg font-semibold">Settings</h2>
+      <h1 className="text-2xl font-bold text-glow-cyan">Settings</h1>
 
       {backends.length > 0 && (
-        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4">
-          <h3 className="font-medium text-sm mb-3">Backends</h3>
-          <div className="space-y-2">
+        <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4">
+          <h3 className="font-bold text-sm mb-3 text-accent">Backends</h3>
+          <div className="space-y-1.5">
             {backends.map((b) => (
-              <div key={b.kind} className="flex items-center justify-between text-sm">
-                <span>{b.name}</span>
+              <div key={b.kind} className="flex items-center justify-between text-xs">
+                <span className="text-cyber-text-dim">{b.name}</span>
                 <span
-                  className={`text-xs px-2 py-0.5 rounded-full ${
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
                     b.available
-                      ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                      : "bg-gray-100 text-gray-400 dark:bg-gray-800"
+                      ? "bg-success/20 text-success"
+                      : "bg-cyber-bg text-cyber-text-faint"
                   }`}
                 >
                   {b.available ? "Available" : "Unavailable"}
@@ -618,37 +914,17 @@ function SettingsTab() {
         </div>
       )}
 
-      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 space-y-4">
-        <h3 className="font-medium text-sm">Policy</h3>
+      <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4 space-y-4">
+        <h3 className="font-bold text-sm text-accent">Policy</h3>
 
-        <Toggle
-          label="Stable releases only"
-          description="Block pre-release versions"
-          checked={config.policy.stable_only}
-          onChange={(v) => updatePolicy({ stable_only: v })}
-        />
-        <Toggle
-          label="Require known versions"
-          description="Refuse updates with unparseable version strings"
-          checked={config.policy.require_known_versions}
-          onChange={(v) => updatePolicy({ require_known_versions: v })}
-        />
-        <Toggle
-          label="Allow elevated installs"
-          description="Permit updates that require admin/root"
-          checked={config.policy.elevated}
-          onChange={(v) => updatePolicy({ elevated: v })}
-        />
-        <Toggle
-          label="Create restore point before apply"
-          description="Windows only — creates a system restore point"
-          checked={config.restore_point}
-          onChange={(v) => updateConfig({ restore_point: v })}
-        />
+        <Toggle label="Stable releases only" description="Block pre-release versions" checked={config.policy.stable_only} onChange={(v) => updatePolicy({ stable_only: v })} />
+        <Toggle label="Require known versions" description="Refuse updates with unparseable version strings" checked={config.policy.require_known_versions} onChange={(v) => updatePolicy({ require_known_versions: v })} />
+        <Toggle label="Allow elevated installs" description="Permit updates that require admin/root" checked={config.policy.elevated} onChange={(v) => updatePolicy({ elevated: v })} />
+        <Toggle label="Create restore point before apply" description="Windows only — creates a system restore point" checked={config.restore_point} onChange={(v) => updateConfig({ restore_point: v })} />
       </div>
 
-      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4">
-        <h3 className="font-medium text-sm mb-2">Excluded packages</h3>
+      <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4">
+        <h3 className="font-bold text-sm mb-2 text-accent">Excluded packages</h3>
         <textarea
           value={config.policy.exclude.join("\n")}
           onChange={(e) =>
@@ -657,28 +933,34 @@ function SettingsTab() {
             })
           }
           rows={4}
-          className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm font-mono"
+          className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm font-mono focus:border-accent"
           placeholder="One package ID per line"
         />
       </div>
 
       <div className="flex items-center gap-3">
-        <button
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
           onClick={save}
-          className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors"
+          className="px-5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 transition-all glow-cyan"
         >
           Save Settings
-        </button>
+        </motion.button>
         {saved && (
-          <span className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
+          <motion.span
+            initial={{ opacity: 0, x: -5 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="text-sm text-success flex items-center gap-1"
+          >
             <CheckCircle className="w-4 h-4" />
             Saved
-          </span>
+          </motion.span>
         )}
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 rounded-lg px-4 py-3 border border-red-200 dark:border-red-900">
+        <div className="flex items-center gap-2 text-xs text-danger bg-danger/5 rounded-lg px-4 py-3 border border-danger/30 glow-red">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           {error}
         </div>
@@ -687,33 +969,23 @@ function SettingsTab() {
   );
 }
 
-function Toggle({
-  label,
-  description,
-  checked,
-  onChange,
-}: {
-  label: string;
-  description: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
+function Toggle({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="flex items-center justify-between cursor-pointer">
       <div>
         <div className="text-sm font-medium">{label}</div>
-        <div className="text-xs text-gray-500 dark:text-gray-400">{description}</div>
+        <div className="text-xs text-cyber-text-dim">{description}</div>
       </div>
       <button
         onClick={() => onChange(!checked)}
-        className={`relative w-11 h-6 rounded-full transition-colors ${
-          checked ? "bg-accent" : "bg-gray-300 dark:bg-gray-700"
+        className={`relative w-11 h-6 rounded-full transition-all ${
+          checked ? "bg-accent/30 glow-cyan" : "bg-cyber-bg border border-cyber-border"
         }`}
       >
-        <span
-          className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-            checked ? "translate-x-5" : ""
-          }`}
+        <motion.span
+          animate={{ x: checked ? 20 : 2 }}
+          transition={{ type: "spring", stiffness: 500, damping: 30 }}
+          className={`absolute top-0.5 w-5 h-5 rounded-full ${checked ? "bg-accent" : "bg-cyber-text-faint"}`}
         />
       </button>
     </label>
