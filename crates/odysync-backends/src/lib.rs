@@ -13,6 +13,8 @@ pub mod diagnostics;
 pub mod dnf;
 pub mod flatpak;
 pub mod homebrew;
+pub mod lang_backends;
+pub mod firmware_backends;
 pub mod mac_firmware;
 pub mod mac_software_update;
 pub mod maintenance;
@@ -60,6 +62,26 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
         v.push(Box::new(chocolatey::ChocolateyBackend::new()));
         v.push(Box::new(scoop::ScoopBackend::new()));
         v.push(Box::new(virtualization_guest::VirtualizationGuestBackend::new()));
+    }
+
+    // Language runtime package managers (cross-platform)
+    v.push(Box::new(lang_backends::PipBackend::new()));
+    v.push(Box::new(lang_backends::CargoBackend::new()));
+    v.push(Box::new(lang_backends::NpmBackend::new()));
+    v.push(Box::new(lang_backends::GoBackend::new()));
+    v.push(Box::new(lang_backends::DotnetToolBackend::new()));
+    v.push(Box::new(lang_backends::VscodeExtensionBackend::new()));
+    v.push(Box::new(lang_backends::JetbrainsPluginBackend::new()));
+
+    #[cfg(windows)]
+    {
+        v.push(Box::new(lang_backends::PowerShellModuleBackend::new()));
+        v.push(Box::new(lang_backends::WindowsOptionalFeatureBackend::new()));
+        v.push(Box::new(lang_backends::NvidiaGeForceExperienceBackend::new()));
+        v.push(Box::new(lang_backends::IntelDsaBackend::new()));
+        v.push(Box::new(firmware_backends::DellFirmwareBackend::new()));
+        v.push(Box::new(firmware_backends::HpFirmwareBackend::new()));
+        v.push(Box::new(firmware_backends::LenovoFirmwareBackend::new()));
     }
 
     // Homebrew also runs on Linux, so it is not gated to macOS.
@@ -147,6 +169,20 @@ mod tests {
             assert!(kinds.contains(&BackendKind::Chocolatey));
             assert!(kinds.contains(&BackendKind::Scoop));
             assert!(kinds.contains(&BackendKind::VirtualizationGuest));
+        assert!(kinds.contains(&BackendKind::Pip));
+        assert!(kinds.contains(&BackendKind::Cargo));
+        assert!(kinds.contains(&BackendKind::Npm));
+        assert!(kinds.contains(&BackendKind::Go));
+        assert!(kinds.contains(&BackendKind::DotnetTool));
+        assert!(kinds.contains(&BackendKind::VscodeExtension));
+        assert!(kinds.contains(&BackendKind::PowerShellModule));
+        assert!(kinds.contains(&BackendKind::NvidiaGeForceExperience));
+        assert!(kinds.contains(&BackendKind::IntelDsa));
+        assert!(kinds.contains(&BackendKind::JetbrainsPlugin));
+        assert!(kinds.contains(&BackendKind::WindowsOptionalFeature));
+        assert!(kinds.contains(&BackendKind::DellFirmware));
+        assert!(kinds.contains(&BackendKind::HpFirmware));
+        assert!(kinds.contains(&BackendKind::LenovoFirmware));
         }
 
         #[cfg(target_os = "linux")]
