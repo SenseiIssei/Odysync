@@ -35,6 +35,12 @@ import type {
   SystemInfoDto,
   ApplyResultDto,
   Config,
+  HistoryEntryDto,
+  HardwareInfoDto,
+  InstalledPackageDto,
+  LogEntryDto,
+  ProfileDto,
+  OfflineCacheStatusDto,
 } from "./types";
 import * as api from "./api";
 
@@ -192,27 +198,17 @@ export default function App() {
               {tab === "maintenance" && <MaintenanceTab />}
               {tab === "schedule" && <ScheduleTab />}
               {tab === "settings" && <SettingsTab />}
-              {tab === "history" && <PlaceholderTab icon={<History className="w-12 h-12" />} title="Update History" desc="Detailed update history with search and filters — coming in Phase 5." />}
-              {tab === "packages" && <PlaceholderTab icon={<Layers className="w-12 h-12" />} title="Package Browser" desc="Browse and manage all installed packages — coming in Phase 5." />}
-              {tab === "hardware" && <PlaceholderTab icon={<Cpu className="w-12 h-12" />} title="Hardware Info" desc="CPU, GPU, RAM, disks with driver status — coming in Phase 5." />}
-              {tab === "logs" && <PlaceholderTab icon={<ScrollText className="w-12 h-12" />} title="Log Viewer" desc="Real-time log stream and diagnostics — coming in Phase 5." />}
-              {tab === "profiles" && <PlaceholderTab icon={<Layers className="w-12 h-12" />} title="Profile Manager" desc="Create and manage update profiles — coming in Phase 5." />}
-              {tab === "offline" && <PlaceholderTab icon={<WifiOff className="w-12 h-12" />} title="Offline Mode" desc="Manage cached driver installers for offline use — coming in Phase 7." />}
+              {tab === "history" && <HistoryTab />}
+              {tab === "packages" && <PackagesTab />}
+              {tab === "hardware" && <HardwareTab />}
+              {tab === "logs" && <LogsTab />}
+              {tab === "profiles" && <ProfilesTab />}
+              {tab === "offline" && <OfflineTab />}
               {tab === "about" && <AboutTab />}
             </motion.div>
           </AnimatePresence>
         </main>
       </div>
-    </div>
-  );
-}
-
-function PlaceholderTab({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
-  return (
-    <div className="max-w-2xl mx-auto text-center py-16">
-      <div className="text-cyber-text-faint mb-4 flex justify-center">{icon}</div>
-      <h2 className="text-lg font-bold text-cyber-text mb-2">{title}</h2>
-      <p className="text-sm text-cyber-text-dim">{desc}</p>
     </div>
   );
 }
@@ -989,5 +985,524 @@ function Toggle({ label, description, checked, onChange }: { label: string; desc
         />
       </button>
     </label>
+  );
+}
+
+// ── History Tab ──────────────────────────────────────────────────────────────
+
+function HistoryTab() {
+  const [entries, setEntries] = useState<HistoryEntryDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    api.getUpdateHistory().then(setEntries).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const filtered = entries.filter((e) =>
+    e.package.toLowerCase().includes(search.toLowerCase()) ||
+    e.backend.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const successCount = entries.filter((e) => e.outcome.includes("Updated")).length;
+  const failCount = entries.filter((e) => e.outcome.includes("Failed")).length;
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-glow-cyan">Update History</h1>
+        {entries.length > 0 && (
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => { api.clearUpdateHistory(); setEntries([]); }}
+            className="px-3 py-1.5 rounded-lg border border-danger/30 text-danger text-xs hover:bg-danger/10 transition-all"
+          >
+            Clear History
+          </motion.button>
+        )}
+      </div>
+
+      {entries.length > 0 && (
+        <div className="flex gap-4 text-xs">
+          <span className="text-success">{successCount} successful</span>
+          <span className="text-danger">{failCount} failed</span>
+          <span className="text-cyber-text-dim">{entries.length} total</span>
+        </div>
+      )}
+
+      <input
+        type="text"
+        placeholder="Search history..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-surface text-sm focus:border-accent"
+      />
+
+      {loading && <div className="text-center py-8 text-cyber-text-dim">Loading history...</div>}
+
+      {!loading && entries.length === 0 && (
+        <div className="text-center py-12">
+          <History className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
+          <p className="text-sm text-cyber-text-dim">No update history yet.</p>
+        </div>
+      )}
+
+      {!loading && filtered.length > 0 && (
+        <div className="space-y-1">
+          {filtered.map((e, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: i * 0.02 }}
+              className="flex items-center gap-3 p-3 rounded-lg bg-cyber-surface border border-cyber-border text-xs"
+            >
+              {e.outcome.includes("Updated") ? (
+                <CheckCircle className="w-4 h-4 text-success flex-shrink-0" />
+              ) : e.outcome.includes("Failed") ? (
+                <XCircle className="w-4 h-4 text-danger flex-shrink-0" />
+              ) : (
+                <Clock className="w-4 h-4 text-cyber-text-faint flex-shrink-0" />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-cyber-text truncate">{e.package}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyber-bg text-cyber-text-dim font-mono">{e.backend}</span>
+                </div>
+                <div className="text-cyber-text-faint mt-0.5">
+                  {e.from_version} -&gt; {e.to_version} · {new Date(e.timestamp).toLocaleString()}
+                </div>
+              </div>
+              <span className="text-cyber-text-faint flex-shrink-0">{e.outcome}</span>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Packages Tab ─────────────────────────────────────────────────────────────
+
+function PackagesTab() {
+  const [packages, setPackages] = useState<InstalledPackageDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [backendFilter, setBackendFilter] = useState("");
+
+  useEffect(() => {
+    api.listInstalledPackages().then(setPackages).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const backends = [...new Set(packages.map((p) => p.backend))];
+
+  const filtered = packages.filter((p) =>
+    (p.name.toLowerCase().includes(search.toLowerCase()) || p.id.toLowerCase().includes(search.toLowerCase())) &&
+    (backendFilter === "" || p.backend === backendFilter)
+  );
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-4">
+      <h1 className="text-2xl font-bold text-glow-cyan">Installed Packages</h1>
+
+      <div className="flex gap-3 flex-wrap">
+        <input
+          type="text"
+          placeholder="Search packages..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 px-3 py-2 rounded-lg border border-cyber-border bg-cyber-surface text-sm focus:border-accent"
+        />
+        <select
+          value={backendFilter}
+          onChange={(e) => setBackendFilter(e.target.value)}
+          className="px-3 py-2 rounded-lg border border-cyber-border bg-cyber-surface text-sm focus:border-accent"
+        >
+          <option value="">All backends</option>
+          {backends.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+      </div>
+
+      {loading && <div className="text-center py-8 text-cyber-text-dim">Scanning installed packages...</div>}
+
+      {!loading && filtered.length === 0 && (
+        <div className="text-center py-12">
+          <Layers className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
+          <p className="text-sm text-cyber-text-dim">No packages found.</p>
+        </div>
+      )}
+
+      {!loading && filtered.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-xs text-cyber-text-dim mb-2">{filtered.length} packages</div>
+          {filtered.map((p, i) => (
+            <motion.div
+              key={`${p.backend}-${p.id}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: Math.min(i * 0.01, 0.5) }}
+              className="flex items-center gap-3 p-3 rounded-lg bg-cyber-surface border border-cyber-border text-xs hover:border-cyber-border-bright transition-all"
+            >
+              <Package className="w-4 h-4 text-accent flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="font-medium text-cyber-text">{p.name}</span>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyber-bg text-cyber-text-dim font-mono">{p.backend}</span>
+              <span className="text-cyber-text-dim font-mono flex-shrink-0">{p.version}</span>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Hardware Tab ─────────────────────────────────────────────────────────────
+
+function HardwareTab() {
+  const [info, setInfo] = useState<HardwareInfoDto | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.getHardwareInfo().then(setInfo).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div className="text-center py-12 text-cyber-text-dim">Detecting hardware...</div>;
+  if (!info) return <div className="text-center py-12 text-danger">Failed to get hardware info.</div>;
+
+  const cards = [
+    { label: "CPU", value: info.cpu, sub: `${info.cpu_cores} cores`, icon: <Cpu className="w-5 h-5" /> },
+    { label: "Memory", value: `${info.total_memory_gb.toFixed(1)} GB`, sub: "Total RAM", icon: <HardDrive className="w-5 h-5" /> },
+    { label: "OS", value: info.os, sub: "Operating System", icon: <Info className="w-5 h-5" /> },
+  ];
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <h1 className="text-2xl font-bold text-glow-cyan">Hardware Info</h1>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {cards.map((c, i) => (
+          <motion.div
+            key={c.label}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05 }}
+            className="p-4 rounded-xl bg-cyber-surface border border-cyber-border glow-cyan"
+          >
+            <div className="text-accent mb-2">{c.icon}</div>
+            <div className="text-sm font-bold truncate">{c.value}</div>
+            <div className="text-xs text-cyber-text-dim mt-0.5">{c.sub}</div>
+            <div className="text-[10px] text-cyber-text-faint mt-1 uppercase tracking-wider">{c.label}</div>
+          </motion.div>
+        ))}
+      </div>
+
+      {info.gpu.length > 0 && (
+        <div className="rounded-xl bg-cyber-surface border border-cyber-border p-4">
+          <h3 className="text-sm font-bold mb-3 text-accent">Graphics Cards</h3>
+          <div className="space-y-2">
+            {info.gpu.map((g, i) => (
+              <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-cyber-bg/50 border border-cyber-border text-xs">
+                <Zap className="w-4 h-4 text-purple-neon flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="font-medium text-cyber-text">{g.name}</div>
+                  <div className="text-cyber-text-faint">{g.vendor}</div>
+                </div>
+                <span className="text-cyber-text-dim font-mono">Driver: {g.driver_version}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {info.disks.length > 0 && (
+        <div className="rounded-xl bg-cyber-surface border border-cyber-border p-4">
+          <h3 className="text-sm font-bold mb-3 text-accent">Disks</h3>
+          <div className="space-y-2">
+            {info.disks.map((d, i) => (
+              <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-cyber-bg/50 border border-cyber-border text-xs">
+                <HardDrive className="w-4 h-4 text-success flex-shrink-0" />
+                <span className="font-medium text-cyber-text flex-1">{d.name}</span>
+                <span className="text-cyber-text-dim font-mono">{d.size_gb.toFixed(0)} GB</span>
+                <span className="text-cyber-text-faint">{d.filesystem}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Logs Tab ─────────────────────────────────────────────────────────────────
+
+function LogsTab() {
+  const [logs, setLogs] = useState<LogEntryDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [levelFilter, setLevelFilter] = useState("");
+
+  useEffect(() => {
+    api.getLogs().then(setLogs).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const levels = [...new Set(logs.map((l) => l.level))];
+  const filtered = levelFilter === "" ? logs : logs.filter((l) => l.level === levelFilter);
+
+  const levelColor = (level: string) => {
+    if (level.includes("ERROR") || level.includes("error") || level.includes("WARN")) return "text-warning";
+    if (level.includes("INFO") || level.includes("info")) return "text-accent";
+    if (level.includes("DEBUG") || level.includes("debug")) return "text-cyber-text-faint";
+    return "text-cyber-text-dim";
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-glow-cyan">Log Viewer</h1>
+        <button
+          onClick={() => api.getLogs().then(setLogs)}
+          className="px-3 py-1.5 rounded-lg border border-cyber-border text-xs hover:bg-cyber-surface-2 transition-all"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {levels.length > 0 && (
+        <div className="flex gap-2">
+          <button
+            onClick={() => setLevelFilter("")}
+            className={`px-3 py-1 rounded-full text-xs ${levelFilter === "" ? "bg-accent/20 text-accent" : "bg-cyber-surface text-cyber-text-dim"}`}
+          >
+            All
+          </button>
+          {levels.map((l) => (
+            <button
+              key={l}
+              onClick={() => setLevelFilter(l)}
+              className={`px-3 py-1 rounded-full text-xs ${levelFilter === l ? "bg-accent/20 text-accent" : "bg-cyber-surface text-cyber-text-dim"}`}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {loading && <div className="text-center py-8 text-cyber-text-dim">Loading logs...</div>}
+
+      {!loading && filtered.length === 0 && (
+        <div className="text-center py-12">
+          <ScrollText className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
+          <p className="text-sm text-cyber-text-dim">No logs available.</p>
+        </div>
+      )}
+
+      {!loading && filtered.length > 0 && (
+        <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4 max-h-[60vh] overflow-y-auto font-mono text-xs space-y-1">
+          {filtered.map((l, i) => (
+            <div key={i} className="flex gap-3">
+              {l.timestamp && <span className="text-cyber-text-faint flex-shrink-0">{l.timestamp}</span>}
+              <span className={`flex-shrink-0 ${levelColor(l.level)}`}>{l.level}</span>
+              <span className="text-cyber-text-dim break-all">{l.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Profiles Tab ─────────────────────────────────────────────────────────────
+
+function ProfilesTab() {
+  const [profiles, setProfiles] = useState<ProfileDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPackages, setNewPackages] = useState("");
+
+  const refresh = () => {
+    api.listProfiles().then(setProfiles).catch(() => {}).finally(() => setLoading(false));
+  };
+
+  useEffect(refresh, []);
+
+  const create = async () => {
+    if (!newName.trim()) return;
+    const pkgs = newPackages.split("\n").map((s) => s.trim()).filter(Boolean);
+    try {
+      await api.createProfile(newName.trim(), pkgs);
+      setNewName("");
+      setNewPackages("");
+      setShowCreate(false);
+      refresh();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const remove = async (name: string) => {
+    try {
+      await api.deleteProfile(name);
+      refresh();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-glow-cyan">Update Profiles</h1>
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={() => setShowCreate(!showCreate)}
+          className="px-4 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 transition-all glow-cyan"
+        >
+          {showCreate ? "Cancel" : "New Profile"}
+        </motion.button>
+      </div>
+
+      {showCreate && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-lg border border-cyber-border bg-cyber-surface p-4 space-y-3"
+        >
+          <div>
+            <label className="block text-sm font-medium mb-1">Profile name</label>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+              placeholder="e.g. Gaming, Development, Minimal"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Packages (one per line)</label>
+            <textarea
+              value={newPackages}
+              onChange={(e) => setNewPackages(e.target.value)}
+              rows={4}
+              className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm font-mono focus:border-accent"
+              placeholder={"Mozilla.Firefox\nGit.Git\nMicrosoft.VisualStudioCode"}
+            />
+          </div>
+          <button
+            onClick={create}
+            className="px-4 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 transition-all"
+          >
+            Create
+          </button>
+        </motion.div>
+      )}
+
+      {loading && <div className="text-center py-8 text-cyber-text-dim">Loading profiles...</div>}
+
+      {!loading && profiles.length === 0 && !showCreate && (
+        <div className="text-center py-12">
+          <Layers className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
+          <p className="text-sm text-cyber-text-dim">No profiles configured. Create one to group packages for targeted updates.</p>
+        </div>
+      )}
+
+      {!loading && profiles.length > 0 && (
+        <div className="space-y-2">
+          {profiles.map((p, i) => (
+            <motion.div
+              key={p.name}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className="rounded-lg border border-cyber-border bg-cyber-surface p-4"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-bold text-sm text-accent">{p.name}</h3>
+                <button
+                  onClick={() => remove(p.name)}
+                  className="text-xs text-danger hover:underline"
+                >
+                  Delete
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {p.packages.map((pkg) => (
+                  <span key={pkg} className="text-[10px] px-2 py-0.5 rounded-full bg-cyber-bg border border-cyber-border text-cyber-text-dim font-mono">
+                    {pkg}
+                  </span>
+                ))}
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Offline Tab ──────────────────────────────────────────────────────────────
+
+function OfflineTab() {
+  const [status, setStatus] = useState<OfflineCacheStatusDto | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = () => {
+    api.getOfflineCacheStatus().then(setStatus).catch(() => {}).finally(() => setLoading(false));
+  };
+
+  useEffect(refresh, []);
+
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-4">
+      <h1 className="text-2xl font-bold text-glow-cyan">Offline Mode</h1>
+      <p className="text-sm text-cyber-text-dim">
+        Manage cached driver and software installers for updating systems without internet access.
+      </p>
+
+      {loading && <div className="text-center py-8 text-cyber-text-dim">Checking cache...</div>}
+
+      {!loading && status && (
+        <>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-4 rounded-xl bg-cyber-surface border border-cyber-border glow-cyan">
+              <div className="text-accent mb-2"><WifiOff className="w-5 h-5" /></div>
+              <div className="text-xl font-bold">{status.entry_count}</div>
+              <div className="text-xs text-cyber-text-dim mt-0.5">Cached entries</div>
+            </div>
+            <div className="p-4 rounded-xl bg-cyber-surface border border-cyber-border glow-purple">
+              <div className="text-purple-neon mb-2"><HardDrive className="w-5 h-5" /></div>
+              <div className="text-xl font-bold">{formatBytes(status.cache_size_bytes)}</div>
+              <div className="text-xs text-cyber-text-dim mt-0.5">Cache size</div>
+            </div>
+          </div>
+
+          {status.entry_count > 0 && (
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => { api.clearOfflineCache(); refresh(); }}
+              className="px-4 py-2 rounded-lg border border-danger/30 text-danger text-sm font-medium hover:bg-danger/10 transition-all"
+            >
+              Clear Cache
+            </motion.button>
+          )}
+
+          {status.entry_count === 0 && (
+            <div className="text-center py-8">
+              <WifiOff className="w-12 h-12 mx-auto mb-3 text-cyber-text-faint" />
+              <p className="text-sm text-cyber-text-dim">No cached installers. Run a scan to populate the cache.</p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }

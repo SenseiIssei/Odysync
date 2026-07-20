@@ -2697,6 +2697,7 @@ name = "odysync-gui"
 version = "2.0.0-alpha.1"
 dependencies = [
  "chrono",
+ "directories",
  "futures",
  "odysync-backends",
  "odysync-core",
