@@ -28,6 +28,6 @@ pub use model::{ApplyOutcome, BackendKind, PackageId, PlannedUpdate, SkipReason,
 pub use policy::{Hold, Policy};
 pub use report::RunReport;
 pub use restore::RestorePointGuard;
-pub use runner::Runner;
+pub use runner::{Runner, ProgressEmitter, ProgressEvent};
 pub use scan_cache::ScanCache;
 pub use version::Version;

@@ -52,6 +52,21 @@ impl<'a> Runner<'a> {
         report: &mut RunReport,
         restore_point: bool,
     ) {
+        self.run_with_progress(plan, report, restore_point, None::<&dyn ProgressEmitter>).await;
+    }
+
+    /// Like [`run`](Self::run) but emits progress events via `emitter`.
+    ///
+    /// `emitter` is an optional trait object that the Tauri layer implements
+    /// to forward progress to the frontend. When `None`, behaves identically
+    /// to `run`.
+    pub async fn run_with_progress(
+        &mut self,
+        plan: &[PlannedUpdate],
+        report: &mut RunReport,
+        restore_point: bool,
+        emitter: Option<&dyn ProgressEmitter>,
+    ) {
         let has_actionable = plan.iter().any(|p| p.is_actionable());
 
         if restore_point && !self.dry_run && has_actionable {
@@ -67,6 +82,9 @@ impl<'a> Runner<'a> {
                 }
             }
         }
+
+        let total = plan.iter().filter(|p| p.is_actionable()).count();
+        let mut current = 0usize;
 
         for planned in plan {
             let candidate = &planned.candidate;
@@ -112,6 +130,16 @@ impl<'a> Runner<'a> {
                 "applying update"
             );
 
+            if let Some(emit) = emitter {
+                emit.emit_progress(ProgressEvent {
+                    package: candidate.name.clone(),
+                    current: current + 1,
+                    total,
+                    phase: "applying".to_string(),
+                    percent: None,
+                });
+            }
+
             let outcome = self.apply_with_retry(*backend, planned).await;
 
             if !outcome.is_success() {
@@ -129,6 +157,7 @@ impl<'a> Runner<'a> {
             }
 
             report.push(candidate.id.clone(), candidate.name.clone(), outcome);
+            current += 1;
         }
 
         if let Some(history) = &self.history {
@@ -228,4 +257,21 @@ impl<'a> Runner<'a> {
             }
         }
     }
+}
+
+/// A progress event emitted during apply, suitable for serialization to the frontend.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProgressEvent {
+    pub package: String,
+    pub current: usize,
+    pub total: usize,
+    pub phase: String,
+    pub percent: Option<u8>,
+}
+
+/// Trait for emitting progress events to the frontend.
+///
+/// The Tauri layer implements this to forward events via `app.emit()`.
+pub trait ProgressEmitter: Send + Sync {
+    fn emit_progress(&self, event: ProgressEvent);
 }
