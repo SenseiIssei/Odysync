@@ -70,6 +70,34 @@ pub enum BackendKind {
     QualcommGpu,
     /// Cross-platform: Virtualization guest tools (VBox/VMware/QEMU).
     VirtualizationGuest,
+    /// Cross-platform: Python pip packages.
+    Pip,
+    /// Cross-platform: Rust cargo install crates.
+    Cargo,
+    /// Cross-platform: Node.js npm global packages.
+    Npm,
+    /// Cross-platform: Go modules.
+    Go,
+    /// Cross-platform: .NET dotnet global tools.
+    DotnetTool,
+    /// Cross-platform: VS Code extensions.
+    VscodeExtension,
+    /// Cross-platform: PowerShell modules.
+    PowerShellModule,
+    /// Windows: NVIDIA GeForce Experience driver updates.
+    NvidiaGeForceExperience,
+    /// Windows: Intel Driver & Support Assistant.
+    IntelDsa,
+    /// Cross-platform: JetBrains IDE plugins.
+    JetbrainsPlugin,
+    /// Windows: Windows Optional Features.
+    WindowsOptionalFeature,
+    /// Windows: Dell firmware updates via dcu-cli.
+    DellFirmware,
+    /// Windows: HP firmware updates via HPIA.
+    HpFirmware,
+    /// Windows: Lenovo firmware updates via SUHelper.
+    LenovoFirmware,
 }
 
 impl BackendKind {
@@ -106,6 +134,20 @@ impl BackendKind {
             BackendKind::RazerSynapse => "razer-synapse",
             BackendKind::QualcommGpu => "qualcomm-gpu",
             BackendKind::VirtualizationGuest => "virtualization-guest",
+            BackendKind::Pip => "pip",
+            BackendKind::Cargo => "cargo",
+            BackendKind::Npm => "npm",
+            BackendKind::Go => "go",
+            BackendKind::DotnetTool => "dotnet-tool",
+            BackendKind::VscodeExtension => "vscode-extension",
+            BackendKind::PowerShellModule => "powershell-module",
+            BackendKind::NvidiaGeForceExperience => "nvidia-geforce-experience",
+            BackendKind::IntelDsa => "intel-dsa",
+            BackendKind::JetbrainsPlugin => "jetbrains-plugin",
+            BackendKind::WindowsOptionalFeature => "windows-optional-feature",
+            BackendKind::DellFirmware => "dell-firmware",
+            BackendKind::HpFirmware => "hp-firmware",
+            BackendKind::LenovoFirmware => "lenovo-firmware",
         }
     }
 
@@ -134,7 +176,13 @@ impl BackendKind {
             | BackendKind::AcerCareCenter
             | BackendKind::RazerSynapse
             | BackendKind::QualcommGpu
-            | BackendKind::VirtualizationGuest => true,
+            | BackendKind::VirtualizationGuest
+            | BackendKind::NvidiaGeForceExperience
+            | BackendKind::IntelDsa
+            | BackendKind::WindowsOptionalFeature
+            | BackendKind::DellFirmware
+            | BackendKind::HpFirmware
+            | BackendKind::LenovoFirmware => true,
             // winget machine-scope installs may prompt for UAC per package;
             // that is handled per-package, not as a blanket requirement.
             BackendKind::Winget => false,
@@ -145,6 +193,14 @@ impl BackendKind {
             BackendKind::Scoop => false,
             BackendKind::Nix => false,
             BackendKind::AppImage => false,
+            BackendKind::Pip => false,
+            BackendKind::Cargo => false,
+            BackendKind::Npm => false,
+            BackendKind::Go => false,
+            BackendKind::DotnetTool => false,
+            BackendKind::VscodeExtension => false,
+            BackendKind::PowerShellModule => false,
+            BackendKind::JetbrainsPlugin => false,
         }
     }
 
