@@ -78,15 +78,20 @@ impl Backend for WindowsDriverBackend {
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        // Driver versions are not easily queryable after install without
-        // enumerating PnP devices. We return the candidate's available version
-        // as the "confirmed" version, since the Windows Update Agent only
-        // reports success when the driver is actually installed.
-        if cfg!(windows) {
-            Ok(Some(candidate.available.raw().to_string()))
-        } else {
-            Ok(None)
+        // After installing, re-scan for driver updates. If the update ID is
+        // still listed as available, the install did not converge. If it is
+        // gone, the driver was installed successfully.
+        if !cfg!(windows) {
+            return Ok(None);
         }
+
+        let remaining = self.scan().await?;
+        if remaining.iter().any(|c| c.id.native == candidate.id.native) {
+            // Still pending — install did not converge
+            return Ok(None);
+        }
+        // No longer in the update list — installed successfully
+        Ok(Some(candidate.available.raw().to_string()))
     }
 }
 
@@ -176,12 +181,10 @@ async fn scan_drivers_com() -> Result<Vec<UpdateCandidate>> {
                 let rev = unsafe { identity.RevisionNumber() }.unwrap_or(0);
                 let driver_ver = format!("{raw_id}.{rev}");
 
-                let size: Option<u64> = unsafe { update.MaxDownloadSize() }
-                    .ok()
-                    .map(|d| {
-                        let ptr: *const u64 = &d as *const _ as *const u64;
-                        unsafe { ptr.read() }
-                    });
+                // MaxDownloadSize returns a DECIMAL, not a u64; reinterpreting its
+                // memory would be undefined behavior. Leave as None until proper
+                // DECIMAL conversion is implemented.
+                let size: Option<u64> = None;
 
                 candidates.push(UpdateCandidate {
                     id: PackageId::new(BackendKind::WindowsDrivers, format!("{raw_id}.{rev}")),
@@ -211,7 +214,6 @@ async fn scan_drivers_com() -> Result<Vec<UpdateCandidate>> {
 #[cfg(windows)]
 async fn install_driver_com(candidate: &UpdateCandidate) -> Result<()> {
     use windows::core::BSTR;
-    use windows::Win32::Foundation::VARIANT_BOOL;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED,
     };
@@ -321,11 +323,9 @@ async fn install_driver_com(candidate: &UpdateCandidate) -> Result<()> {
                     format!("could not set installer updates: {e}"),
                 ))?;
 
-            unsafe { installer.SetIsForced(VARIANT_BOOL::from(true)) }
-                .map_err(|e| Error::parse(
-                    "Windows Update Agent",
-                    format!("could not set IsForced: {e}"),
-                ))?;
+            // Do not force-install: let the Windows Update Agent apply its
+            // own compatibility checks. SetIsForced(true) would bypass them
+            // and could install drivers that don't match the hardware.
 
             let install_result = unsafe { installer.Install() }
                 .map_err(|e| Error::parse(

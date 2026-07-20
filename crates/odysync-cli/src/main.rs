@@ -337,7 +337,7 @@ async fn run(cli: Cli) -> Result<u8> {
             }
 
             let refs: Vec<&dyn Backend> = backends.iter().map(|b| b.as_ref()).collect();
-            let runner = Runner::new(refs, dry_run);
+            let mut runner = Runner::new(refs, dry_run);
             let mut report = RunReport::new();
             let restore = restore_point || config.restore_point;
             runner.run(&plan, &mut report, restore).await;

@@ -11,6 +11,27 @@ use async_trait::async_trait;
 use crate::error::Result;
 use crate::model::{BackendKind, UpdateCandidate};
 
+/// Progress phase reported during `apply_with_progress`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApplyPhase {
+    Downloading,
+    Installing,
+    Verifying,
+    Rebooting,
+}
+
+/// A single progress update emitted during `apply_with_progress`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ApplyProgress {
+    /// 0–100 percent.  `None` when the backend can't estimate (indeterminate).
+    pub percent: Option<u8>,
+    /// Human-readable status message.
+    pub message: String,
+    /// Current phase of the update process.
+    pub phase: ApplyPhase,
+}
+
 /// A source of software updates.
 #[async_trait]
 pub trait Backend: Send + Sync {
@@ -42,6 +63,18 @@ pub trait Backend: Send + Sync {
     ///   * never spawn a visible console window
     ///   * verify the installed version afterwards via [`Backend::installed_version`]
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()>;
+
+    /// Like [`apply`](Backend::apply) but emits progress updates through `tx`.
+    ///
+    /// The default implementation simply calls `apply` and ignores the channel.
+    /// Backends that can parse progress from their CLI tool should override this.
+    async fn apply_with_progress(
+        &self,
+        candidate: &UpdateCandidate,
+        _tx: Option<tokio::sync::mpsc::Sender<ApplyProgress>>,
+    ) -> Result<()> {
+        self.apply(candidate).await
+    }
 
     /// Read back the version currently installed, for post-apply confirmation.
     ///

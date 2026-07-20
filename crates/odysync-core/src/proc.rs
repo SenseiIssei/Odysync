@@ -101,18 +101,25 @@ pub async fn run<S: AsRef<OsStr>>(program: &str, args: &[S], timeout: Duration) 
     // deadlocks as soon as a child fills the pipe buffer it is not being read
     // from, which winget does on large upgrade lists.
     let collect = async {
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        if let Some(p) = stdout_pipe.as_mut() {
-            let mut raw = Vec::new();
-            p.read_to_end(&mut raw).await?;
-            stdout = String::from_utf8_lossy(&raw).into_owned();
-        }
-        if let Some(p) = stderr_pipe.as_mut() {
-            let mut raw = Vec::new();
-            p.read_to_end(&mut raw).await?;
-            stderr = String::from_utf8_lossy(&raw).into_owned();
-        }
+        let stdout_fut = async {
+            let mut stdout = String::new();
+            if let Some(p) = stdout_pipe.as_mut() {
+                let mut raw = Vec::new();
+                p.read_to_end(&mut raw).await?;
+                stdout = String::from_utf8_lossy(&raw).into_owned();
+            }
+            Ok::<_, std::io::Error>(stdout)
+        };
+        let stderr_fut = async {
+            let mut stderr = String::new();
+            if let Some(p) = stderr_pipe.as_mut() {
+                let mut raw = Vec::new();
+                p.read_to_end(&mut raw).await?;
+                stderr = String::from_utf8_lossy(&raw).into_owned();
+            }
+            Ok::<_, std::io::Error>(stderr)
+        };
+        let (stdout, stderr) = tokio::try_join!(stdout_fut, stderr_fut)?;
         Ok::<_, std::io::Error>((stdout, stderr))
     };
 

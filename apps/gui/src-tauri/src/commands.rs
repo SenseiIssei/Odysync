@@ -5,6 +5,7 @@ use odysync_core::maintenance::MaintenanceKind;
 use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::report::RunReport;
 use odysync_core::runner::Runner;
+use odysync_core::Backend;
 use tauri::{AppHandle, Emitter, State};
 
 // ── DTOs for the frontend ────────────────────────────────────────────────────
@@ -86,15 +87,27 @@ pub struct ScheduleRequest {
 
 // ── Helper conversions ───────────────────────────────────────────────────────
 
-fn backend_kind_from_str(s: &str) -> BackendKind {
+fn backend_kind_from_str(s: &str) -> Option<BackendKind> {
     match s {
-        "winget" => BackendKind::Winget,
-        "msstore" => BackendKind::MsStore,
-        "windows_drivers" => BackendKind::WindowsDrivers,
-        "homebrew" => BackendKind::Homebrew,
-        "apt" => BackendKind::Apt,
-        "flatpak" => BackendKind::Flatpak,
-        _ => BackendKind::Winget,
+        "winget" => Some(BackendKind::Winget),
+        "msstore" => Some(BackendKind::MsStore),
+        "windows-drivers" => Some(BackendKind::WindowsDrivers),
+        "homebrew" => Some(BackendKind::Homebrew),
+        "softwareupdate" => Some(BackendKind::MacSoftwareUpdate),
+        "apt" => Some(BackendKind::Apt),
+        "dnf" => Some(BackendKind::Dnf),
+        "pacman" => Some(BackendKind::Pacman),
+        "flatpak" => Some(BackendKind::Flatpak),
+        "nvidia-gpu" => Some(BackendKind::NvidiaGpu),
+        "amd-gpu" => Some(BackendKind::AmdGpu),
+        "intel-gpu" => Some(BackendKind::IntelGpu),
+        "dell-command-update" => Some(BackendKind::DellCommandUpdate),
+        "hp-image-assistant" => Some(BackendKind::HpImageAssistant),
+        "lenovo-system-update" => Some(BackendKind::LenovoSystemUpdate),
+        "msi-center" => Some(BackendKind::MsiCenter),
+        "fwupd" => Some(BackendKind::Fwupd),
+        "mac-firmware" => Some(BackendKind::MacFirmware),
+        _ => None,
     }
 }
 
@@ -105,26 +118,41 @@ pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
     let config = state.config.lock().unwrap().clone();
     let backends = odysync_backends::detect_backends(&config).await;
 
+    let results: Vec<(String, odysync_core::error::Result<Vec<UpdateCandidate>>)> = futures::future::join_all(
+        backends.iter().map(|b| async move {
+            let kind_id = b.kind().id().to_string();
+            let result = b.scan().await;
+            (kind_id, result)
+        }),
+    )
+    .await;
+
     let mut actionable = Vec::new();
     let mut skipped = Vec::new();
 
-    for backend in &backends {
-        let candidates = backend.scan().await.map_err(|e| e.to_string())?;
+    for (i, (kind_id, result)) in results.into_iter().enumerate() {
+        let candidates = match result {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(backend = %kind_id, error = %e, "scan failed");
+                continue;
+            }
+        };
         let plan = config.policy.plan(candidates);
 
         for entry in &plan {
             match &entry.blocked_by {
                 Some(reason) => {
                     skipped.push(SkippedDto {
-                        backend: format!("{:?}", backend.kind()),
+                        backend: backends[i].kind().id().to_string(),
                         id: entry.candidate.id.to_string(),
                         name: entry.candidate.name.clone(),
-                        reason: format!("{reason:?}"),
+                        reason: reason.to_string(),
                     });
                 }
                 None => {
                     actionable.push(UpdateDto {
-                        backend: format!("{:?}", backend.kind()),
+                        backend: backends[i].kind().id().to_string(),
                         id: entry.candidate.id.to_string(),
                         name: entry.candidate.name.clone(),
                         installed: entry.candidate.installed.raw().to_string(),
@@ -158,7 +186,9 @@ pub async fn apply(
     for backend in &backends {
         let candidates = backend.scan().await.map_err(|e| e.to_string())?;
         for req_update in &request.updates {
-            let req_kind = backend_kind_from_str(&req_update.backend);
+            let Some(req_kind) = backend_kind_from_str(&req_update.backend) else {
+                return Err(format!("unknown backend: {}", req_update.backend));
+            };
             if backend.kind() != req_kind {
                 continue;
             }
@@ -171,7 +201,7 @@ pub async fn apply(
     }
 
     let plan = config.policy.plan(candidates_to_apply);
-    let runner = Runner::new(backends.iter().map(|b| b.as_ref()), request.dry_run);
+    let mut runner = Runner::new(backends.iter().map(|b| b.as_ref()), request.dry_run);
     let mut report = RunReport::new();
     runner.run(&plan, &mut report, request.restore_point).await;
     report.finish();
@@ -203,7 +233,7 @@ pub async fn list_backends(state: State<'_, AppState>) -> Result<Vec<BackendDto>
     let mut result = Vec::new();
     for backend in &backends {
         result.push(BackendDto {
-            kind: format!("{:?}", backend.kind()),
+            kind: backend.kind().id().to_string(),
             name: backend.display_name().to_string(),
             available: backend.is_available().await,
         });
@@ -234,7 +264,9 @@ pub async fn hold(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let mut config = state.config.lock().unwrap().clone();
-    let kind = backend_kind_from_str(&request.backend);
+    let Some(kind) = backend_kind_from_str(&request.backend) else {
+        return Err(format!("unknown backend: {}", request.backend));
+    };
     let id = PackageId::new(kind, request.id);
     config.policy.holds.retain(|h| h.package != id.to_string());
     config.policy.holds.push(odysync_core::policy::Hold {
@@ -254,7 +286,9 @@ pub async fn unhold(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let mut config = state.config.lock().unwrap().clone();
-    let kind = backend_kind_from_str(&request.backend);
+    let Some(kind) = backend_kind_from_str(&request.backend) else {
+        return Err(format!("unknown backend: {}", request.backend));
+    };
     let id = PackageId::new(kind, request.id);
     config.policy.holds.retain(|h| h.package != id.to_string());
     let path = state.config_path.clone();

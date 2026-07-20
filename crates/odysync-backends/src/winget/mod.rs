@@ -17,7 +17,7 @@
 //!     `CREATE_NO_WINDOW` means no console flashes and no install can block
 //!     forever on a hidden prompt.
 
-mod table;
+pub mod table;
 
 use std::time::Duration;
 
