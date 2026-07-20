@@ -151,6 +151,10 @@ export async function restartAsAdmin(): Promise<void> {
   return invoke<void>("restart_as_admin");
 }
 
+export async function quitApp(): Promise<void> {
+  return invoke<void>("quit_app");
+}
+
 export async function listStartupPrograms(): Promise<StartupProgramDto[]> {
   return invoke<StartupProgramDto[]>("list_startup_programs");
 }

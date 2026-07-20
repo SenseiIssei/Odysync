@@ -152,6 +152,7 @@ fn backend_kind_from_str(s: &str) -> Option<BackendKind> {
 
 #[tauri::command]
 pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
+    tracing::info!("Starting scan across all backends");
     let config = state.config.lock().unwrap().clone();
     let backends = odysync_backends::detect_backends(&config).await;
 
@@ -206,6 +207,7 @@ pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
     }
 
     let total = actionable.len() + skipped.len();
+    tracing::info!(total, actionable = actionable.len(), skipped = skipped.len(), "Scan complete");
     Ok(ScanResult {
         actionable,
         skipped,
@@ -219,6 +221,7 @@ pub async fn apply(
     request: ApplyRequest,
     state: State<'_, AppState>,
 ) -> Result<ApplyResultDto, String> {
+    tracing::info!(count = request.updates.len(), dry_run = request.dry_run, "Starting apply");
     let mut config = state.config.lock().unwrap().clone();
     config.policy.elevated = odysync_core::platform::is_elevated();
 
@@ -520,6 +523,7 @@ pub struct DiskInfoDto {
 
 #[tauri::command]
 pub async fn get_hardware_info() -> Result<HardwareInfoDto, String> {
+    tracing::info!("Fetching hardware info");
     let os = odysync_core::platform::os_label().to_string();
 
     let cpu = if cfg!(windows) {
@@ -635,6 +639,7 @@ pub async fn get_hardware_info() -> Result<HardwareInfoDto, String> {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct Win32Gpu {
     name: Option<String>,
     driver_version: Option<String>,
@@ -642,6 +647,7 @@ struct Win32Gpu {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct Win32Disk {
     device_id: Option<String>,
     volume_name: Option<String>,
@@ -883,6 +889,15 @@ pub async fn verify_offline_cache() -> Result<Vec<bool>, String> {
     Ok(results)
 }
 
+// ── Quit App ─────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn quit_app(app: AppHandle) -> Result<(), String> {
+    tracing::info!("User requested quit, exiting application");
+    app.exit(0);
+    Ok(())
+}
+
 // ── Run as Admin ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -952,6 +967,7 @@ pub struct StartupProgramDto {
 
 #[tauri::command]
 pub async fn list_startup_programs() -> Result<Vec<StartupProgramDto>, String> {
+    tracing::info!("Listing startup programs");
     #[cfg(windows)]
     {
         let script = r#"
@@ -1040,6 +1056,7 @@ $result | Sort-Object Name | ConvertTo-Json -Depth 2
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct StartupProgramJson {
     name: String,
     command: String,
@@ -1117,6 +1134,7 @@ pub struct BackupDto {
 
 #[tauri::command]
 pub async fn list_backups() -> Result<Vec<BackupDto>, String> {
+    tracing::info!("Listing backups/restore points");
     #[cfg(windows)]
     {
         // List system restore points
@@ -1155,6 +1173,7 @@ Get-ComputerRestorePoint | Select-Object Description, CreationTime, SequenceNumb
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct RestorePointJson {
     description: String,
     creation_time: String,
@@ -1162,6 +1181,7 @@ struct RestorePointJson {
 
 #[tauri::command]
 pub async fn create_backup(description: String) -> Result<(), String> {
+    tracing::info!(desc = %description, "Creating backup/restore point");
     #[cfg(windows)]
     {
         let script = format!(r#"
