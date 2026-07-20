@@ -51,6 +51,10 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
         v.push(Box::new(oem::hp_image_assistant::HpImageAssistantBackend::new()));
         v.push(Box::new(oem::lenovo_system_update::LenovoSystemUpdateBackend::new()));
         v.push(Box::new(oem::msi_center::MsiCenterBackend::new()));
+        v.push(Box::new(oem::asus_armoury::AsusArmouryBackend::new()));
+        v.push(Box::new(oem::gigabyte_control_center::GigabyteControlCenterBackend::new()));
+        v.push(Box::new(oem::acer_care_center::AcerCareCenterBackend::new()));
+        v.push(Box::new(oem::razer_synapse::RazerSynapseBackend::new()));
         v.push(Box::new(chocolatey::ChocolateyBackend::new()));
         v.push(Box::new(scoop::ScoopBackend::new()));
     }
@@ -132,6 +136,10 @@ mod tests {
             assert!(kinds.contains(&BackendKind::HpImageAssistant));
             assert!(kinds.contains(&BackendKind::LenovoSystemUpdate));
             assert!(kinds.contains(&BackendKind::MsiCenter));
+            assert!(kinds.contains(&BackendKind::AsusArmoury));
+            assert!(kinds.contains(&BackendKind::GigabyteControlCenter));
+            assert!(kinds.contains(&BackendKind::AcerCareCenter));
+            assert!(kinds.contains(&BackendKind::RazerSynapse));
             assert!(kinds.contains(&BackendKind::Chocolatey));
             assert!(kinds.contains(&BackendKind::Scoop));
         }
