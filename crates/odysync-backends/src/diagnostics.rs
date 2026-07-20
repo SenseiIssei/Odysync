@@ -133,7 +133,7 @@ mod tests {
 
         // Verify it's a valid zip by reading it back.
         let file = std::fs::File::open(&zip_path).unwrap();
-        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let archive = zip::ZipArchive::new(file).unwrap();
         assert!(archive.len() >= 2); // env.txt + config.json at minimum
 
         std::fs::remove_dir_all(&dir).ok();
