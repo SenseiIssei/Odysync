@@ -7,6 +7,11 @@
 //! The schedule is a simple daily or weekly trigger at a specified time.
 //! The scheduled command is `odysync apply --yes` (or the user's custom args).
 
+// Only the launchd (macOS) and systemd (Linux) paths build file paths; on
+// Windows this would be an unused import, which `-D warnings` rejects.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use odysync_core::error::{Error, Result};
