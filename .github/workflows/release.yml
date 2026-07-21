@@ -21,9 +21,12 @@ jobs:
           - os: ubuntu-latest
             artifact: odysync
             archive: odysync-linux-x86_64.tar.gz
+          # `macos-latest` is Apple Silicon; naming this x86_64 would ship an
+          # arm64 binary to Intel users. Intel Macs are not built at all — add
+          # a `macos-13` entry if that is wanted.
           - os: macos-latest
             artifact: odysync
-            archive: odysync-macos-x86_64.tar.gz
+            archive: odysync-macos-arm64.tar.gz
 
     steps:
       - uses: actions/checkout@v4
@@ -49,11 +52,17 @@ jobs:
       - name: Generate SHA-256
         shell: bash
         run: |
+          # One format on every platform: "<hash>  <filename>", the shape
+          # `sha256sum -c` expects. certutil printed a bare hash with a
+          # trailing CR, so the Windows checksum file could not be verified
+          # the same way as the others.
           if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            certutil -hashfile ${{ matrix.archive }} SHA256 | sed -n 2p > ${{ matrix.archive }}.sha256
+            hash=$(certutil -hashfile "${{ matrix.archive }}" SHA256 | sed -n 2p | tr -d ' \r\n')
+            echo "$hash  ${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
           else
-            shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+            shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
           fi
+          cat "${{ matrix.archive }}.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -119,7 +128,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: odysync-macos-x86_64.tar.gz
+          name: odysync-macos-arm64.tar.gz
           path: artifacts
 
       - uses: actions/download-artifact@v4

@@ -57,7 +57,14 @@ jobs:
       - name: Build release (CLI only)
         run: cargo build --release -p odysync-cli
 
+      # This job exists to verify the code, not to distribute it — release.yml
+      # is what actually publishes binaries, and its uploads stay fatal.
+      # GitHub's artifact service times out often enough that letting it fail
+      # a green build across the whole matrix is noise, not signal.
+      # `if-no-files-found: error` is kept so a genuinely missing binary still
+      # shows up in the step, just without failing the job.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: odysync-${{ matrix.os }}
           path: |
