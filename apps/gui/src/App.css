@@ -6,6 +6,9 @@
   --cyber-bg: #0a0a0f;
   --cyber-surface: #13131a;
   --cyber-border: #1e1e2a;
+  --cyber-text: #e0e0e8;
+  --cyber-text-dim: #8888a0;
+  --cyber-text-faint: #555568;
   --accent-cyan: #00f0ff;
   --accent-purple: #a855f7;
 }

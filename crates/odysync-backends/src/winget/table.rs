@@ -15,13 +15,27 @@
 //! their order (Name, Id, Version, Available, Source), so this works on a
 //! German or Japanese install without knowing a single translated word.
 
-/// One parsed row of `winget upgrade` / `winget list`.
+/// One parsed row of `winget upgrade`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub name: String,
     pub id: String,
     pub version: String,
     pub available: String,
+    pub source: String,
+}
+
+/// One parsed row of `winget list`.
+///
+/// `winget list` prints the same table minus the Available column when nothing
+/// is upgradable, and *with* it when something is — so the source is taken from
+/// the last column rather than a fixed index. Only Name/Id/Version have a fixed
+/// position in both shapes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListRow {
+    pub name: String,
+    pub id: String,
+    pub version: String,
     pub source: String,
 }
 
@@ -156,12 +170,12 @@ fn clean(line: &str) -> String {
         .to_string()
 }
 
-/// Parse a winget table into rows.
+/// Parse a winget table into its raw cells, one `Vec<String>` per data row.
 ///
-/// Returns an empty vector when no table is present (for example "No installed
-/// package found matching input criteria."), which callers treat as "nothing to
-/// do" rather than an error.
-pub fn parse(output: &str) -> Vec<Row> {
+/// Every winget table (`upgrade`, `list`, …) shares this shape; only the
+/// meaning of the columns after Name/Id/Version differs, so the column-offset
+/// logic — the part that has to be right — lives here once.
+fn parse_cells(output: &str) -> Vec<Vec<String>> {
     let lines: Vec<String> = output.lines().map(clean).collect();
 
     // The header is the line immediately preceding the dashed separator. Anchor
@@ -205,16 +219,51 @@ pub fn parse(output: &str) -> Vec<Row> {
             break;
         }
 
-        rows.push(Row {
-            name,
-            id,
-            version: cols.get(2).cloned().unwrap_or_default(),
-            available: cols.get(3).cloned().unwrap_or_default(),
-            source: cols.get(4).cloned().unwrap_or_default(),
-        });
+        rows.push(cols);
     }
 
     rows
+}
+
+/// Parse a `winget upgrade` table into rows.
+///
+/// Returns an empty vector when no table is present (for example "No installed
+/// package found matching input criteria."), which callers treat as "nothing to
+/// do" rather than an error.
+pub fn parse(output: &str) -> Vec<Row> {
+    parse_cells(output)
+        .into_iter()
+        .map(|cols| Row {
+            name: cols.first().cloned().unwrap_or_default(),
+            id: cols.get(1).cloned().unwrap_or_default(),
+            version: cols.get(2).cloned().unwrap_or_default(),
+            available: cols.get(3).cloned().unwrap_or_default(),
+            source: cols.get(4).cloned().unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// Parse a `winget list` table into rows.
+///
+/// Uses the same column-offset machinery as [`parse`]; the only difference is
+/// that the Available column may be absent, so the source is read from the last
+/// column instead of a fixed index.
+pub fn parse_list(output: &str) -> Vec<ListRow> {
+    parse_cells(output)
+        .into_iter()
+        .map(|cols| ListRow {
+            name: cols.first().cloned().unwrap_or_default(),
+            id: cols.get(1).cloned().unwrap_or_default(),
+            version: cols.get(2).cloned().unwrap_or_default(),
+            // Name/Id/Version/[Available]/Source: with or without Available the
+            // source is always last, and a 3-column table has none at all.
+            source: if cols.len() >= 4 {
+                cols.last().cloned().unwrap_or_default()
+            } else {
+                String::new()
+            },
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -407,6 +456,76 @@ Name                 Id                      Version      Available    Source
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "Vendor.Notepad");
         assert_eq!(rows[0].version, "1.0.0");
+    }
+
+    #[test]
+    fn parses_a_winget_list_table_without_an_available_column() {
+        let out = "\
+Name                 Id                      Version      Source
+-------------------------------------------------------------------------------
+Mozilla Firefox      Mozilla.Firefox         141.0        winget
+7-Zip                7zip.7zip               24.09        winget
+Some Store App       9WZDNCRFJ3TJ            2024.1       msstore
+";
+        let rows = parse_list(out);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].name, "Mozilla Firefox");
+        assert_eq!(rows[0].id, "Mozilla.Firefox");
+        assert_eq!(rows[0].version, "141.0");
+        assert_eq!(rows[0].source, "winget");
+        assert_eq!(rows[2].source, "msstore");
+    }
+
+    #[test]
+    fn winget_list_source_is_read_from_the_last_column_when_available_is_present() {
+        // winget re-adds the Available column to `list` as soon as any package
+        // has an upgrade; the source must not be read out of it.
+        let out = "\
+Name                 Id                      Version      Available    Source
+-------------------------------------------------------------------------------
+Mozilla Firefox      Mozilla.Firefox         140.0.1      141.0        winget
+7-Zip                7zip.7zip               24.09                     winget
+";
+        let rows = parse_list(out);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].version, "140.0.1");
+        assert_eq!(rows[0].source, "winget");
+        assert_eq!(rows[1].version, "24.09");
+        assert_eq!(rows[1].source, "winget");
+    }
+
+    #[test]
+    fn a_listed_name_containing_a_double_space_does_not_shift_columns() {
+        let out = "\
+Name                 Id                      Version      Source
+-------------------------------------------------------------------------------
+Weird  App  Name     Vendor.WeirdApp         1.2.3        winget
+";
+        let rows = parse_list(out);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Weird  App  Name");
+        assert_eq!(rows[0].id, "Vendor.WeirdApp");
+        assert_eq!(rows[0].version, "1.2.3");
+        assert_eq!(rows[0].source, "winget");
+    }
+
+    #[test]
+    fn a_list_table_with_no_source_column_yields_an_empty_source() {
+        let out = "\
+Name                 Id                      Version
+-------------------------------------------------------------------------------
+Local Thing          Vendor.Local            1.0.0
+";
+        let rows = parse_list(out);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].version, "1.0.0");
+        assert_eq!(rows[0].source, "");
+    }
+
+    #[test]
+    fn no_list_table_yields_no_rows() {
+        assert!(parse_list("No installed package found matching input criteria.").is_empty());
+        assert!(parse_list("").is_empty());
     }
 
     #[test]

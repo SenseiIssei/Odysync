@@ -13,7 +13,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use odysync_core::backend::Backend;
 use odysync_core::error::{Error, Result};
-use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
+use odysync_core::model::{BackendKind, InstalledPackage, PackageId, UpdateCandidate};
 use odysync_core::proc;
 use odysync_core::version::Version;
 
@@ -66,6 +66,25 @@ impl Backend for ChocolateyBackend {
         }
 
         Ok(parse_choco_outdated(&out.stdout))
+    }
+
+    async fn list_installed(&self) -> Result<Vec<InstalledPackage>> {
+        let out = proc::run(
+            "choco",
+            &["list", "--local-only", "--limit-output"],
+            SCAN_TIMEOUT,
+        )
+        .await?;
+
+        if !out.success() {
+            return Err(Error::CommandFailed {
+                command: "choco list --local-only".into(),
+                code: out.code,
+                stderr: out.stderr,
+            });
+        }
+
+        Ok(parse_choco_list(&out.stdout))
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
@@ -172,9 +191,61 @@ fn parse_choco_outdated(stdout: &str) -> Vec<UpdateCandidate> {
         .collect()
 }
 
+/// Parse `choco list --local-only --limit-output` output.
+///
+/// Format: `package_name|version`, one per line. Lines without a pipe are
+/// banner or summary text ("3 packages installed.") and are skipped rather
+/// than guessed at.
+fn parse_choco_list(stdout: &str) -> Vec<InstalledPackage> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (name, version) = line.trim().split_once('|')?;
+            let name = name.trim();
+            let version = version.split('|').next().unwrap_or("").trim();
+            if name.is_empty() {
+                return None;
+            }
+            Some(InstalledPackage {
+                id: PackageId::new(BackendKind::Chocolatey, name),
+                name: name.to_string(),
+                version: version.to_string(),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_choco_list() {
+        let output = "\
+chocolatey|2.2.2
+firefox|141.0
+7zip|24.09
+";
+        let installed = parse_choco_list(output);
+        assert_eq!(installed.len(), 3);
+        assert_eq!(installed[0].id.native, "chocolatey");
+        assert_eq!(installed[0].version, "2.2.2");
+        assert_eq!(installed[1].name, "firefox");
+        assert_eq!(installed[2].version, "24.09");
+    }
+
+    #[test]
+    fn choco_list_skips_lines_without_a_pipe() {
+        let output = "firefox|141.0\n3 packages installed.\n\n";
+        let installed = parse_choco_list(output);
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].id.native, "firefox");
+    }
+
+    #[test]
+    fn choco_list_empty_output_yields_empty_vec() {
+        assert!(parse_choco_list("").is_empty());
+    }
 
     #[test]
     fn parses_choco_outdated() {

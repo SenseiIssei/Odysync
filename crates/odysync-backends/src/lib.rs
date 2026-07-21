@@ -8,6 +8,7 @@
 
 pub mod apt;
 pub mod appimage;
+pub mod autostart;
 pub mod chocolatey;
 pub mod diagnostics;
 pub mod dnf;
@@ -24,6 +25,7 @@ pub mod offline;
 pub mod pacman;
 pub mod scheduler;
 pub mod scoop;
+pub mod security;
 pub mod snap;
 pub mod fwupd;
 pub mod virtualization_guest;
@@ -110,30 +112,60 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
     v
 }
 
-/// Backends that are present on this machine and enabled in `config`.
+/// One compiled-in backend paired with the result of probing this machine.
+pub struct ProbedBackend {
+    pub backend: Box<dyn Backend>,
+    /// Whether the underlying tool is present and usable here.
+    pub available: bool,
+    /// Whether the user has disabled it in config.
+    pub enabled: bool,
+}
+
+impl ProbedBackend {
+    /// Usable for a scan or apply: present on the machine and not disabled.
+    pub fn usable(&self) -> bool {
+        self.available && self.enabled
+    }
+}
+
+/// Probe every compiled-in backend, reporting availability for all of them.
 ///
 /// Availability probes run concurrently — each shells out to a package manager
 /// and they are independent, so doing them in sequence would make startup as
 /// slow as the sum of every probe.
-pub async fn detect_backends(config: &Config) -> Vec<Box<dyn Backend>> {
-    let candidates: Vec<Box<dyn Backend>> = all_backends()
-        .into_iter()
-        .filter(|b| config.backend_enabled(b.kind()))
-        .collect();
-
+///
+/// Unlike [`detect_backends`], this keeps the backends that are *not* present,
+/// so a UI can show "winget: not installed" rather than silently omitting it.
+/// It is also the only place availability is probed: callers should probe once
+/// and cache, since a full sweep is roughly one process spawn per backend.
+pub async fn probe_backends(config: &Config) -> Vec<ProbedBackend> {
+    let candidates = all_backends();
     let results = futures::future::join_all(candidates.iter().map(|b| b.is_available())).await;
 
     candidates
         .into_iter()
         .zip(results)
-        .filter_map(|(backend, available)| {
-            if available {
-                Some(backend)
-            } else {
+        .map(|(backend, available)| {
+            let enabled = config.backend_enabled(backend.kind());
+            if !available {
                 tracing::debug!(backend = %backend.kind(), "not available on this host");
-                None
+            }
+            ProbedBackend {
+                backend,
+                available,
+                enabled,
             }
         })
+        .collect()
+}
+
+/// Backends that are present on this machine and enabled in `config`.
+pub async fn detect_backends(config: &Config) -> Vec<Box<dyn Backend>> {
+    probe_backends(config)
+        .await
+        .into_iter()
+        .filter(ProbedBackend::usable)
+        .map(|p| p.backend)
         .collect()
 }
 

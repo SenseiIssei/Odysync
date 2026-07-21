@@ -1,3 +1,12 @@
+/**
+ * Wire types shared with the Tauri command layer.
+ *
+ * These mirror the DTOs in `src-tauri/src/commands.rs` exactly. They are NOT
+ * the core Rust types: `odysync_core::Config` serializes as kebab-case, so the
+ * command layer exposes an explicit snake_case DTO instead. Keep both sides in
+ * step — a mismatch here shows up as silently `undefined` fields, not an error.
+ */
+
 export interface UpdateDto {
   backend: string;
   id: string;
@@ -14,28 +23,44 @@ export interface SkippedDto {
   reason: string;
 }
 
+export interface BackendErrorDto {
+  backend: string;
+  error: string;
+}
+
 export interface ScanResult {
   actionable: UpdateDto[];
   skipped: SkippedDto[];
   total: number;
+  failed_backends: BackendErrorDto[];
 }
 
 export interface BackendDto {
   kind: string;
   name: string;
   available: boolean;
+  enabled: boolean;
 }
 
 export interface SystemInfoDto {
   os: string;
   elevated: boolean;
   version: string;
+  config_error: string | null;
 }
+
+/** Stable outcome discriminants emitted by the command layer. */
+export type ApplyStatus =
+  | "updated"
+  | "did-not-converge"
+  | "verification-failed"
+  | "failed"
+  | "skipped";
 
 export interface ApplyEntryDto {
   name: string;
-  outcome: string;
-  reboot_required: boolean;
+  status: ApplyStatus;
+  detail: string;
 }
 
 export interface ApplyResultDto {
@@ -75,15 +100,18 @@ export interface Profile {
   packages: string[];
 }
 
+export interface PolicyConfig {
+  stable_only: boolean;
+  require_known_versions: boolean;
+  exclude: string[];
+  /** Read-only: managed through the hold/unhold commands, never written back. */
+  holds: Hold[];
+}
+
 export interface Config {
-  policy: {
-    stable_only: boolean;
-    require_known_versions: boolean;
-    elevated: boolean;
-    exclude: string[];
-    holds: Hold[];
-  };
+  policy: PolicyConfig;
   disabled_backends: string[];
+  /** Read-only: managed through the profile commands. */
   profiles: Profile[];
   restore_point: boolean;
   scan_interval_hours: number;
@@ -91,7 +119,6 @@ export interface Config {
   proxy_url: string | null;
   auto_apply: boolean;
   notifications: boolean;
-  skip_prerelease: boolean;
   max_retries: number;
   backend_timeout_secs: number;
 }
@@ -102,7 +129,8 @@ export interface HistoryEntryDto {
   backend: string;
   from_version: string;
   to_version: string;
-  outcome: string;
+  status: ApplyStatus;
+  detail: string;
 }
 
 export interface GpuInfoDto {
@@ -169,6 +197,68 @@ export interface StartupProgramDto {
 export interface BackupDto {
   name: string;
   created_at: string;
-  size_bytes: number;
+  sequence_number: number;
   backup_type: string;
+}
+
+// ── Security ─────────────────────────────────────────────────────────────────
+
+export type Severity = "critical" | "high" | "medium" | "low" | "info";
+
+/**
+ * Mirrors `Remediation` in `odysync_backends::security`, which is
+ * `#[serde(tag = "kind", rename_all = "kebab-case")]`.
+ *
+ * Note the asymmetry: `rename_all` on an enum renames the *variants*, so the
+ * tags are kebab-case while the fields inside each variant stay snake_case.
+ * `security_wire_format_matches_the_frontend` in the command layer pins this.
+ */
+export type Remediation =
+  | { kind: "remove-defender-threat"; threat_id: string }
+  | { kind: "disable-run-key"; hive: string; name: string }
+  | { kind: "disable-scheduled-task"; task_path: string }
+  | { kind: "delete-file"; path: string }
+  | { kind: "stop-and-disable-service"; name: string }
+  | { kind: "reset-hosts-file" }
+  | { kind: "manual"; instructions: string };
+
+export interface SecurityFinding {
+  id: string;
+  severity: Severity;
+  /** "malware" | "persistence" | "network" | "posture" | "integrity" | "account" */
+  category: string;
+  title: string;
+  detail: string;
+  evidence: string[];
+  remediation: Remediation | null;
+}
+
+/** camelCase on the wire — see `SectionResult` in `security::mod`. */
+export interface SectionResult {
+  name: string;
+  ok: boolean;
+  error: string | null;
+  durationMs: number;
+}
+
+/** camelCase on the wire — see `ScanReport` in `security::mod`. */
+export interface ScanReport {
+  findings: SecurityFinding[];
+  scannedAt: string;
+  sections: SectionResult[];
+}
+
+export interface DefenderStatusDto {
+  real_time_protection: boolean;
+  tamper_protection: boolean;
+  antivirus_enabled: boolean;
+  signature_age_days: number;
+  signature_version: string;
+  last_quick_scan: string | null;
+  last_full_scan: string | null;
+}
+
+export interface AutostartConfig {
+  enabled: boolean;
+  minimized: boolean;
 }

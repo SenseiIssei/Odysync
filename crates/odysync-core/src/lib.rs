@@ -24,7 +24,10 @@ pub use error::{Error, Result};
 pub use health::{run_health_checks, all_passed, failure_reasons, HealthCheckResult};
 pub use history::{HistoryEntry, HistoryOutcome, UpdateHistory};
 pub use maintenance::{Maintenance, MaintenanceKind, MaintenanceResult};
-pub use model::{ApplyOutcome, BackendKind, PackageId, PlannedUpdate, SkipReason, UpdateCandidate};
+pub use model::{
+    ApplyOutcome, BackendKind, InstalledPackage, PackageId, PlannedUpdate, SkipReason,
+    UpdateCandidate,
+};
 pub use policy::{Hold, Policy};
 pub use report::RunReport;
 pub use restore::RestorePointGuard;

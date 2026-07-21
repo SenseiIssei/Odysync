@@ -17,9 +17,10 @@ use odysync_core::version::Version;
 
 use super::{enumerate_display_adapters, GpuVendor};
 
+
 const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
-const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+
 
 pub struct QualcommGpuBackend;
 

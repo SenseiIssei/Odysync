@@ -152,7 +152,9 @@ impl UpdateHistory {
 }
 
 fn history_path() -> PathBuf {
-    let dir = directories::ProjectDirs::from("com", "odysync", "Odysync")
+    // Must match Config::default_path's qualifier, or history lands in a
+    // different directory tree from the config it is documented to sit beside.
+    let dir = directories::ProjectDirs::from("dev", "SenseiIssei", "Odysync")
         .map(|d| d.config_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
     dir.join("history.json")
@@ -196,7 +198,7 @@ mod tests {
         history.max_entries = 3;
         for i in 0..10 {
             history.record(
-                &PackageId::new(BackendKind::Winget, &format!("pkg.{i}")),
+                &PackageId::new(BackendKind::Winget, format!("pkg.{i}")),
                 &format!("Package {i}"),
                 "1.0.0",
                 "2.0.0",
@@ -253,7 +255,7 @@ mod tests {
         let mut history = UpdateHistory::load_from(path);
         for i in 0..5 {
             history.record(
-                &PackageId::new(BackendKind::Winget, &format!("pkg.{i}")),
+                &PackageId::new(BackendKind::Winget, format!("pkg.{i}")),
                 &format!("Package {i}"),
                 "1.0.0",
                 "2.0.0",
