@@ -182,9 +182,10 @@ async fn check_battery_or_ac_power() -> HealthCheckResult {
         match out {
             Ok(o) => {
                 let s = String::from_utf8_lossy(&o.stdout);
-                if s.contains("AC Power") || !s.contains("Battery") {
-                    HealthCheckResult::pass("power")
-                } else if s.contains("AC") {
+                // The second branch used to test `contains("AC")` separately,
+                // which is subsumed by "AC Power" and produced an identical
+                // body — a clippy error under `-D warnings`.
+                if s.contains("AC") || !s.contains("Battery") {
                     HealthCheckResult::pass("power")
                 } else {
                     HealthCheckResult::fail("power", "laptop is not on AC power")
