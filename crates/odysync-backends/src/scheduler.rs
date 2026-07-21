@@ -218,8 +218,11 @@ pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
     }
 }
 
+/// Returns `Result<()>` to match the Windows implementation. These signatures
+/// used to disagree — `Result` on Windows, `bool` everywhere else — so callers
+/// written against one platform could not compile on the others.
 #[cfg(target_os = "macos")]
-pub async fn remove_schedule(task_name: &str) -> bool {
+pub async fn remove_schedule(task_name: &str) -> Result<()> {
     let path = plist_path(task_name);
     let _ = proc::run(
         "launchctl",
@@ -227,8 +230,13 @@ pub async fn remove_schedule(task_name: &str) -> bool {
         std::time::Duration::from_secs(15),
     )
     .await;
-    let _ = std::fs::remove_file(&path);
-    true
+    // An absent plist means there was nothing scheduled, which is the desired
+    // end state rather than a failure.
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -323,12 +331,10 @@ pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
     Ok(())
 }
 
+/// See the macOS variant: `Result<()>` to match Windows.
 #[cfg(target_os = "linux")]
-pub async fn remove_schedule(task_name: &str) -> bool {
-    let dir = match unit_dir() {
-        Ok(d) => d,
-        Err(_) => return false,
-    };
+pub async fn remove_schedule(task_name: &str) -> Result<()> {
+    let dir = unit_dir()?;
 
     let timer_name = format!("dev.odysync.{task_name}.timer");
     let service_name = format!("dev.odysync.{task_name}.service");
@@ -356,7 +362,7 @@ pub async fn remove_schedule(task_name: &str) -> bool {
     )
     .await;
 
-    true
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -377,8 +383,10 @@ pub async fn create_schedule(_spec: &ScheduleSpec) -> Result<()> {
     ))
 }
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-pub async fn remove_schedule(_task_name: &str) -> bool {
-    false
+pub async fn remove_schedule(_task_name: &str) -> Result<()> {
+    Err(Error::Config(
+        "scheduling is not supported on this platform".into(),
+    ))
 }
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub async fn schedule_exists(_task_name: &str) -> bool {
