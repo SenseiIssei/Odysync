@@ -50,6 +50,12 @@ use odysync_core::backend::Backend;
 use odysync_core::config::Config;
 
 /// Every backend compiled into this build, whether usable here or not.
+///
+/// `vec_init_then_push` does not apply: which backends exist is decided by
+/// `cfg`, so this cannot be a `vec![]` literal. On Linux the Windows block
+/// vanishes and the first statement becomes a push, which is what trips the
+/// lint there but not on Windows.
+#[allow(clippy::vec_init_then_push)]
 fn all_backends() -> Vec<Box<dyn Backend>> {
     let mut v: Vec<Box<dyn Backend>> = Vec::new();
 

@@ -11,6 +11,9 @@ use odysync_core::error::{Error, Result};
 use odysync_core::maintenance::{Maintenance, MaintenanceKind, MaintenanceResult};
 use odysync_core::proc;
 
+/// Only the Windows maintenance actions shell out; elsewhere every action is
+/// unsupported, so this would be dead code and `-D warnings` rejects it.
+#[cfg(windows)]
 const MAINTENANCE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 // ── Temp cleanup ────────────────────────────────────────────────────────────
