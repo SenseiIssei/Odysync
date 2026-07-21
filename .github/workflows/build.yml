@@ -27,15 +27,15 @@ jobs:
       - name: Clean old spec and artifacts
         shell: pwsh
         run: |
-          if (Test-Path "SenseisUpdater.spec") { Remove-Item -Force "SenseisUpdater.spec" }
+          if (Test-Path "Odysync.spec") { Remove-Item -Force "Odysync.spec" }
           Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue | Out-Null
 
       - name: Build EXE
         shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1 -Name "SenseisUpdater"
+        run: powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1 -Name "Odysync"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SenseisUpdater-Windows
-          path: dist/SenseisUpdater.exe
+          name: Odysync-Windows
+          path: dist/Odysync.exe
