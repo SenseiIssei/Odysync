@@ -76,6 +76,11 @@ async fn check_disk_space() -> HealthCheckResult {
     #[cfg(windows)]
     {
         let drive = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
+        // `SystemDrive` is `C:` — a drive prefix with no root, which means
+        // "current directory on C:", not "the root of C:". Joining `\` is what
+        // turns it into `C:\`. clippy's join_absolute_paths lint does not model
+        // the Windows drive-relative case and flags this incorrectly.
+        #[allow(clippy::join_absolute_paths)]
         let root = Path::new(&drive).join("\\");
         match get_free_space(&root) {
             Some(free) if free >= min_bytes => HealthCheckResult::pass("disk-space"),
@@ -172,9 +177,7 @@ async fn check_battery_or_ac_power() -> HealthCheckResult {
     {
         // pmset -g batt returns battery info; if no battery, it says "AC Power".
         use std::process::Command;
-        let out = Command::new("pmset")
-            .args(["-g", "batt"])
-            .output();
+        let out = Command::new("pmset").args(["-g", "batt"]).output();
 
         match out {
             Ok(o) => {
@@ -302,9 +305,8 @@ fn get_free_space(path: &Path) -> Option<u64> {
         let mut free: u64 = 0;
         let mut total: u64 = 0;
         let mut total_free: u64 = 0;
-        let ret = unsafe {
-            GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, &mut total_free)
-        };
+        let ret =
+            unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, &mut total_free) };
         if ret != 0 {
             Some(free)
         } else {
@@ -342,10 +344,7 @@ mod tests {
 
     #[test]
     fn all_passed_returns_true_for_all_passing() {
-        let results = vec![
-            HealthCheckResult::pass("a"),
-            HealthCheckResult::pass("b"),
-        ];
+        let results = vec![HealthCheckResult::pass("a"), HealthCheckResult::pass("b")];
         assert!(all_passed(&results));
     }
 

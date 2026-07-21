@@ -72,12 +72,7 @@ impl Backend for SnapBackend {
             });
         }
 
-        let out = proc::run(
-            "snap",
-            &["refresh", &candidate.id.native],
-            INSTALL_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("snap", &["refresh", &candidate.id.native], INSTALL_TIMEOUT).await?;
 
         if out.success() {
             Ok(())
@@ -95,12 +90,7 @@ impl Backend for SnapBackend {
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        let out = proc::run(
-            "snap",
-            &["list", &candidate.id.native],
-            QUERY_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("snap", &["list", &candidate.id.native], QUERY_TIMEOUT).await?;
 
         if !out.success() {
             return Ok(None);
@@ -112,9 +102,7 @@ impl Backend for SnapBackend {
             let l = l.trim();
             !l.is_empty() && !l.starts_with("Name")
         });
-        let version = line
-            .and_then(|l| l.split_whitespace().nth(1))
-            .unwrap_or("");
+        let version = line.and_then(|l| l.split_whitespace().nth(1)).unwrap_or("");
 
         if version.is_empty() {
             Ok(None)
@@ -182,7 +170,10 @@ chromium  120.0    2663 latest/stable  canonical
 
     #[test]
     fn header_only_yields_empty_vec() {
-        assert!(parse_snap_refresh_list("Name      Version  Rev  Tracking  Publisher  Notes\n").is_empty());
+        assert!(
+            parse_snap_refresh_list("Name      Version  Rev  Tracking  Publisher  Notes\n")
+                .is_empty()
+        );
     }
 
     #[test]

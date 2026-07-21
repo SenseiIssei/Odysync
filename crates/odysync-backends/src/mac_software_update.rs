@@ -120,9 +120,8 @@ fn parse_softwareupdate_list(output: &str) -> Vec<UpdateCandidate> {
             if let Some(label) = current_label.take() {
                 let version = extract_field(line, "Version:").unwrap_or_default();
                 let name = title.trim_end_matches(',').to_string();
-                let is_firmware = line.contains("Firmware")
-                    || line.contains("EFI")
-                    || line.contains("SMC");
+                let is_firmware =
+                    line.contains("Firmware") || line.contains("EFI") || line.contains("SMC");
 
                 candidates.push(UpdateCandidate {
                     id: PackageId::new(BackendKind::MacSoftwareUpdate, &label),
@@ -224,7 +223,10 @@ Software Update found the following new or updated software:
         assert_eq!(all.len(), 2);
 
         // The backend filters out firmware entries.
-        let non_firmware: Vec<_> = all.into_iter().filter(|c| !c.name.contains("[Firmware]")).collect();
+        let non_firmware: Vec<_> = all
+            .into_iter()
+            .filter(|c| !c.name.contains("[Firmware]"))
+            .collect();
         assert_eq!(non_firmware.len(), 1);
         assert_eq!(non_firmware[0].id.native, "ProAppsQTCodecs-1.0");
     }

@@ -77,7 +77,11 @@ impl ScanCache {
     }
 
     /// Get a cached result or compute it via `f` and cache the result.
-    pub async fn get_or_insert<F, Fut>(&self, kind: BackendKind, f: F) -> Result<Vec<UpdateCandidate>>
+    pub async fn get_or_insert<F, Fut>(
+        &self,
+        kind: BackendKind,
+        f: F,
+    ) -> Result<Vec<UpdateCandidate>>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<Vec<UpdateCandidate>>>,

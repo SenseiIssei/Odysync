@@ -1,4 +1,4 @@
-﻿//! Cross-platform scheduled task management.
+//! Cross-platform scheduled task management.
 //!
 //! Windows: Task Scheduler via `schtasks`.
 //! macOS: launchd via a plist in `~/Library/LaunchAgents`.
@@ -254,10 +254,7 @@ pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
     let service_name = format!("dev.odysync.{unit}.service");
     let timer_name = format!("dev.odysync.{unit}.timer");
 
-    let exec_start = format!(
-        "{exe} {}",
-        args.join(" ")
-    );
+    let exec_start = format!("{exe} {}", args.join(" "));
 
     let service = format!(
         "[Unit]\nDescription=Odysync scheduled run\n\n[Service]\nType=oneshot\nExecStart={exec_start}\n"
@@ -370,7 +367,9 @@ pub async fn schedule_exists(task_name: &str) -> bool {
 
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub async fn create_schedule(_spec: &ScheduleSpec) -> Result<()> {
-    Err(Error::Config("scheduling is not supported on this platform".into()))
+    Err(Error::Config(
+        "scheduling is not supported on this platform".into(),
+    ))
 }
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub async fn remove_schedule(_task_name: &str) -> bool {

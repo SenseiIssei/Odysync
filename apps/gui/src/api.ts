@@ -17,6 +17,10 @@ import type {
   OfflineManifestEntryDto,
   StartupProgramDto,
   BackupDto,
+  ScanReport,
+  DefenderStatusDto,
+  Remediation,
+  AutostartConfig,
 } from "./types";
 
 export async function scan(): Promise<ScanResult> {
@@ -29,6 +33,11 @@ export async function apply(request: ApplyRequest): Promise<ApplyResultDto> {
 
 export async function listBackends(): Promise<BackendDto[]> {
   return invoke<BackendDto[]>("list_backends");
+}
+
+/** Force a fresh availability probe; `listBackends` serves a cached result. */
+export async function refreshBackends(): Promise<BackendDto[]> {
+  return invoke<BackendDto[]>("refresh_backends");
 }
 
 export async function getConfig(): Promise<Config> {
@@ -75,6 +84,24 @@ export async function getSystemInfo(): Promise<SystemInfoDto> {
   return invoke<SystemInfoDto>("get_system_info");
 }
 
+/**
+ * Record a frontend crash in odysync.log.
+ *
+ * Never throws: this runs from an error handler, and a failure here would
+ * replace the real error with a misleading one.
+ */
+export async function reportFrontendError(
+  context: string,
+  message: string,
+  stack?: string,
+): Promise<void> {
+  try {
+    await invoke<void>("report_frontend_error", { context, message, stack: stack ?? null });
+  } catch (e) {
+    console.error("[odysync] could not report frontend error:", e);
+  }
+}
+
 export async function getUpdateHistory(): Promise<HistoryEntryDto[]> {
   return invoke<HistoryEntryDto[]>("get_update_history");
 }
@@ -95,6 +122,11 @@ export async function getLogs(): Promise<LogEntryDto[]> {
   return invoke<LogEntryDto[]>("get_logs");
 }
 
+/** Absolute path of the directory holding odysync.log. */
+export async function getLogFolder(): Promise<string> {
+  return invoke<string>("open_log_folder");
+}
+
 export async function listProfiles(): Promise<ProfileDto[]> {
   return invoke<ProfileDto[]>("list_profiles");
 }
@@ -111,16 +143,17 @@ export async function getOfflineCacheStatus(): Promise<OfflineCacheStatusDto> {
   return invoke<OfflineCacheStatusDto>("get_offline_cache_status");
 }
 
-export async function clearOfflineCache(): Promise<void> {
-  return invoke<void>("clear_offline_cache");
-}
-
 export async function listOfflineCache(): Promise<OfflineManifestEntryDto[]> {
   return invoke<OfflineManifestEntryDto[]>("list_offline_cache");
 }
 
 export async function clearOfflineManifest(): Promise<void> {
   return invoke<void>("clear_offline_manifest");
+}
+
+/** Drop manifest entries whose cached file is gone. Returns how many. */
+export async function pruneOfflineCache(): Promise<number> {
+  return invoke<number>("prune_offline_cache");
 }
 
 export async function removeOfflineEntry(packageId: string, backend: string): Promise<void> {
@@ -175,10 +208,49 @@ export async function restoreBackup(sequenceNumber: number): Promise<void> {
   return invoke<void>("restore_backup", { sequenceNumber });
 }
 
-export async function deleteBackup(sequenceNumber: number): Promise<void> {
-  return invoke<void>("delete_backup", { sequenceNumber });
-}
-
 export async function isSystemProtectionEnabled(): Promise<boolean> {
   return invoke<boolean>("is_system_protection_enabled");
+}
+
+// ── Security ─────────────────────────────────────────────────────────────────
+
+/** Full posture + indicator audit. Slow: shells out to Defender, WMI and CIM. */
+export async function securityScan(): Promise<ScanReport> {
+  return invoke<ScanReport>("security_scan");
+}
+
+export async function getDefenderStatus(): Promise<DefenderStatusDto> {
+  return invoke<DefenderStatusDto>("get_defender_status");
+}
+
+export async function defenderQuickScan(): Promise<string> {
+  return invoke<string>("defender_quick_scan");
+}
+
+/** Reads every file on every drive; can run for hours. */
+export async function defenderFullScan(): Promise<string> {
+  return invoke<string>("defender_full_scan");
+}
+
+export async function updateDefenderSignatures(): Promise<string> {
+  return invoke<string>("update_defender_signatures");
+}
+
+/** Returns a human-readable description of what was actually changed. */
+export async function applyRemediation(remediation: Remediation): Promise<string> {
+  return invoke<string>("apply_remediation", { remediation });
+}
+
+// ── Autostart ────────────────────────────────────────────────────────────────
+
+export async function getAutostart(): Promise<AutostartConfig> {
+  return invoke<AutostartConfig>("get_autostart");
+}
+
+export async function enableAutostart(minimized: boolean): Promise<void> {
+  return invoke<void>("enable_autostart", { minimized });
+}
+
+export async function disableAutostart(): Promise<void> {
+  return invoke<void>("disable_autostart");
 }

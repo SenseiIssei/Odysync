@@ -1,4 +1,4 @@
-﻿//! Machine- and human-readable run reports.
+//! Machine- and human-readable run reports.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -94,7 +94,9 @@ impl RunReport {
         out.push_str(&format!("Started:  {}\n", self.started));
         out.push_str(&format!(
             "Finished: {}\n",
-            self.finished.map(|t| t.to_string()).unwrap_or_else(|| "-".into())
+            self.finished
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "-".into())
         ));
         out.push('\n');
 

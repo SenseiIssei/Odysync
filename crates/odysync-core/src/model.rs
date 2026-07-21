@@ -257,7 +257,9 @@ impl PackageId {
         }
 
         // Shell metacharacters that could enable command injection.
-        const FORBIDDEN: &[char] = &[';', '&', '|', '`', '$', '(', ')', '{', '}', '<', '>', '\n', '\r', '\0'];
+        const FORBIDDEN: &[char] = &[
+            ';', '&', '|', '`', '$', '(', ')', '{', '}', '<', '>', '\n', '\r', '\0',
+        ];
 
         if let Some(c) = id.chars().find(|c| FORBIDDEN.contains(c)) {
             return Err(crate::error::Error::invalid_package_id(
@@ -309,6 +311,16 @@ pub struct UpdateCandidate {
     pub size_bytes: Option<u64>,
     /// Expected SHA-256 of the installer, when the backend can supply it.
     pub expected_sha256: Option<String>,
+}
+
+/// A package a backend reports as currently installed, regardless of whether
+/// an update is available for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstalledPackage {
+    pub id: PackageId,
+    pub name: String,
+    /// Version string exactly as the package manager reported it.
+    pub version: String,
 }
 
 /// Why the policy engine refused to act on a candidate.

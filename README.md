@@ -18,7 +18,7 @@
 [![Security Audit](https://img.shields.io/badge/cargo--audit-passing-brightgreen?style=flat-square&logo=rust)](https://github.com/SenseiIssei/Odysync/actions)
 [![cargo-deny](https://img.shields.io/badge/cargo--deny-checked-brightgreen?style=flat-square&logo=rust)](https://github.com/SenseiIssei/Odysync/actions)
 [![SBOM](https://img.shields.io/badge/SBOM-CycloneDX-blue?style=flat-square)](https://github.com/SenseiIssei/Odysync/actions)
-[![Tests](https://img.shields.io/badge/tests-99%20passing-brightgreen?style=flat-square)](https://github.com/SenseiIssei/Odysync/actions)
+[![Tests](https://img.shields.io/badge/tests-439%20passing-brightgreen?style=flat-square)](https://github.com/SenseiIssei/Odysync/actions)
 [![Clippy](https://img.shields.io/badge/clippy-clean-brightgreen?style=flat-square&logo=rust)](https://github.com/SenseiIssei/Odysync/actions)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/odysync)
 
@@ -73,7 +73,7 @@ npx tauri dev
 |:------:|:-----:|
 | Language | Rust + TypeScript |
 | Crates | 5 |
-| Unit Tests | 99 |
+| Unit Tests | 439 |
 | Backends | 6 (winget, msstore, Windows Drivers, Homebrew, apt, Flatpak) |
 | Binary Size | ~1 MB (CLI) |
 | Platforms | Windows, macOS, Linux |

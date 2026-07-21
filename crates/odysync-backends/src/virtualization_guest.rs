@@ -51,9 +51,7 @@ impl VirtualizationGuestBackend {
     }
 
     pub fn with_hypervisor(hv: Hypervisor) -> Self {
-        Self {
-            hypervisor: hv,
-        }
+        Self { hypervisor: hv }
     }
 }
 
@@ -123,9 +121,15 @@ impl Backend for VirtualizationGuestBackend {
             for row in candidates {
                 let name_lower = row.name.to_lowercase();
                 let matches_hv = match hv {
-                    Hypervisor::VirtualBox => name_lower.contains("virtualbox") || name_lower.contains("guest additions"),
-                    Hypervisor::Vmware => name_lower.contains("vmware") || name_lower.contains("tools"),
-                    Hypervisor::Qemu => name_lower.contains("qemu") || name_lower.contains("guest agent"),
+                    Hypervisor::VirtualBox => {
+                        name_lower.contains("virtualbox") || name_lower.contains("guest additions")
+                    }
+                    Hypervisor::Vmware => {
+                        name_lower.contains("vmware") || name_lower.contains("tools")
+                    }
+                    Hypervisor::Qemu => {
+                        name_lower.contains("qemu") || name_lower.contains("guest agent")
+                    }
                     Hypervisor::Unknown => false,
                 };
 
@@ -198,7 +202,11 @@ impl Backend for VirtualizationGuestBackend {
             }
 
             return Err(Error::CommandFailed {
-                command: format!("winget install --id {} --version {}", candidate.id.native, candidate.available.raw()),
+                command: format!(
+                    "winget install --id {} --version {}",
+                    candidate.id.native,
+                    candidate.available.raw()
+                ),
                 code: out.code,
                 stderr: if out.stderr.trim().is_empty() {
                     out.stdout
@@ -317,15 +325,27 @@ async fn read_installed_guest_version(hv: Hypervisor) -> Option<String> {
                     $val = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Oracle\VirtualBox Guest Additions' -Name 'Version' -ErrorAction SilentlyContinue).Version
                     if ($val) { Write-Output $val }
                 "#;
-                let out = proc::powershell(script, Duration::from_secs(10)).await.ok()?;
+                let out = proc::powershell(script, Duration::from_secs(10))
+                    .await
+                    .ok()?;
                 let v = out.stdout.trim().to_string();
-                if v.is_empty() { None } else { Some(v) }
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v)
+                }
             }
             #[cfg(not(windows))]
             {
-                let out = proc::run("VBoxService", &["--version"], QUERY_TIMEOUT).await.ok()?;
+                let out = proc::run("VBoxService", &["--version"], QUERY_TIMEOUT)
+                    .await
+                    .ok()?;
                 let v = out.stdout.trim().to_string();
-                if v.is_empty() { None } else { Some(v) }
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v)
+                }
             }
         }
         Hypervisor::Vmware => {
@@ -337,7 +357,11 @@ async fn read_installed_guest_version(hv: Hypervisor) -> Option<String> {
                     .nth(1)
                     .and_then(|s| s.split_whitespace().next())
                     .unwrap_or("");
-                if version.is_empty() { None } else { Some(version.to_string()) }
+                if version.is_empty() {
+                    None
+                } else {
+                    Some(version.to_string())
+                }
             } else {
                 None
             }
@@ -345,7 +369,11 @@ async fn read_installed_guest_version(hv: Hypervisor) -> Option<String> {
         Hypervisor::Qemu => {
             if let Ok(out) = proc::run("qemu-ga", &["--version"], QUERY_TIMEOUT).await {
                 let v = out.stdout.trim().to_string();
-                if v.is_empty() { None } else { Some(v) }
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v)
+                }
             } else {
                 None
             }

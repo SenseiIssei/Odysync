@@ -1,4 +1,4 @@
-﻿//! Applies a plan and confirms each update actually landed.
+//! Applies a plan and confirms each update actually landed.
 //!
 //! The runner is deliberately paranoid about one thing: a package manager
 //! reporting exit code 0 does not prove the package changed. winget in
@@ -16,10 +16,14 @@ use crate::restore::RestorePointGuard;
 use crate::version::Version;
 
 /// Applies planned updates using the supplied backends.
+/// Default number of retries when no explicit value is configured.
+pub const DEFAULT_MAX_RETRIES: u32 = 2;
+
 pub struct Runner<'a> {
     backends: HashMap<BackendKind, &'a dyn Backend>,
     dry_run: bool,
     history: Option<UpdateHistory>,
+    max_retries: u32,
 }
 
 impl<'a> Runner<'a> {
@@ -28,12 +32,21 @@ impl<'a> Runner<'a> {
             backends: backends.into_iter().map(|b| (b.kind(), b)).collect(),
             dry_run,
             history: None,
+            max_retries: DEFAULT_MAX_RETRIES,
         }
     }
 
     /// Enable persistent update history recording.
     pub fn with_history(mut self, history: UpdateHistory) -> Self {
         self.history = Some(history);
+        self
+    }
+
+    /// Override how many times a retryable failure is retried.
+    ///
+    /// Wired to `Config::max_retries` so the setting in the UI has an effect.
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries;
         self
     }
 
@@ -52,7 +65,8 @@ impl<'a> Runner<'a> {
         report: &mut RunReport,
         restore_point: bool,
     ) {
-        self.run_with_progress(plan, report, restore_point, None::<&dyn ProgressEmitter>).await;
+        self.run_with_progress(plan, report, restore_point, None::<&dyn ProgressEmitter>)
+            .await;
     }
 
     /// Like [`run`](Self::run) but emits progress events via `emitter`.
@@ -171,26 +185,29 @@ impl<'a> Runner<'a> {
 
     /// Apply an update with retry logic for transient errors.
     ///
-    /// Retries up to 2 times with exponential backoff (1s, 2s) when the
-    /// error is retryable (transient, timeout, certain I/O errors).
+    /// Retries up to `self.max_retries` times with exponential backoff
+    /// (1s, 2s, 4s, ...) when the error is retryable (transient, timeout,
+    /// certain I/O errors).
     async fn apply_with_retry(
         &self,
         backend: &dyn Backend,
         planned: &PlannedUpdate,
     ) -> ApplyOutcome {
-        const MAX_RETRIES: u32 = 2;
+        let max_retries = self.max_retries;
         let candidate = &planned.candidate;
 
-        for attempt in 0..=MAX_RETRIES {
+        for attempt in 0..=max_retries {
             match backend.apply(candidate).await {
                 Ok(()) => return self.confirm(backend, planned).await,
                 Err(e) => {
-                    if e.is_retryable() && attempt < MAX_RETRIES {
-                        let delay = std::time::Duration::from_secs(1 << attempt);
+                    if e.is_retryable() && attempt < max_retries {
+                        // Cap the shift so a large configured retry count
+                        // cannot overflow into a multi-hour sleep.
+                        let delay = std::time::Duration::from_secs(1u64 << attempt.min(6));
                         tracing::warn!(
                             package = %candidate.id,
                             attempt = attempt + 1,
-                            max_retries = MAX_RETRIES,
+                            max_retries,
                             delay_secs = delay.as_secs(),
                             error = %e.sanitize(),
                             "retrying transient error"
