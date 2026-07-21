@@ -121,13 +121,25 @@ jobs:
         working-directory: apps/gui
         run: npx tauri build
 
-      - uses: actions/upload-artifact@v4
+      # `tauri.conf.json` sets `bundle.targets` to `["nsis"]`, so a Linux build
+      # produces the binary but no package. Uploading the executable there
+      # still proves the GUI compiles and links on Linux, which is the point of
+      # this job; asking for an installer that the config never asks Tauri to
+      # build would fail forever.
+      - name: Upload installer (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
         with:
           name: odysync-gui-${{ matrix.os }}
-          path: |
-            target/release/bundle/nsis/*.exe
-            target/release/bundle/deb/*.deb
-            target/release/bundle/appimage/*.AppImage
+          path: target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Upload binary (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: odysync-gui-${{ matrix.os }}
+          path: target/release/odysync-gui
           if-no-files-found: error
 
   audit:
