@@ -205,7 +205,10 @@ pub fn analyze_suspect_files(files: &[SuspectFile]) -> Vec<Finding> {
                 evidence.push(format!("line {}: {} — {}", h.line_no, h.excerpt, h.pattern));
             }
             Finding::new(
-                format!("integrity-discord-injection:{}", super::normalize_path(&f.path)),
+                format!(
+                    "integrity-discord-injection:{}",
+                    super::normalize_path(&f.path)
+                ),
                 severity,
                 "integrity",
                 "Discord client files contain credential-theft code",
@@ -272,7 +275,11 @@ pub fn analyze_client_mods(mods: &[ClientMod]) -> Vec<Finding> {
          installed plugin as suspect: remove the mod entirely, then re-add only what \
          you can identify.",
     )
-    .with_evidence(mods.iter().map(|m| format!("{}: {}", m.name, m.path)).collect::<Vec<_>>())
+    .with_evidence(
+        mods.iter()
+            .map(|m| format!("{}: {}", m.name, m.path))
+            .collect::<Vec<_>>(),
+    )
     .with_remediation(Remediation::Manual {
         instructions: "Uninstall the client mod, delete its data directory, and \
              reinstall Discord. Then change your Discord password to invalidate every \
@@ -365,15 +372,20 @@ const SECURITY_DOMAINS: &[&str] = &[
     "bleepingcomputer",
 ];
 
-const DISCORD_DOMAINS: &[&str] = &["discord.com", "discordapp.com", "discord.gg", "discordapp.net"];
+const DISCORD_DOMAINS: &[&str] = &[
+    "discord.com",
+    "discordapp.com",
+    "discord.gg",
+    "discordapp.net",
+];
 
 /// True for the loopback entries every stock `hosts` file may contain.
 pub fn is_default_hosts_entry(e: &HostsEntry) -> bool {
     let loopback = e.ip == "127.0.0.1" || e.ip == "::1" || e.ip == "0.0.0.0";
     loopback
-        && e.hosts
-            .iter()
-            .all(|h| h == "localhost" || h == "localhost.localdomain" || h == "kubernetes.docker.internal")
+        && e.hosts.iter().all(|h| {
+            h == "localhost" || h == "localhost.localdomain" || h == "kubernetes.docker.internal"
+        })
 }
 
 pub fn analyze_hosts(content: &str) -> Vec<Finding> {
@@ -423,7 +435,12 @@ pub fn analyze_hosts(content: &str) -> Vec<Finding> {
                  being updated or cleaned. This is not something legitimate software \
                  does.",
             )
-            .with_evidence(security.iter().map(|e| format!("line {}: {}", e.line_no, e.raw)).collect::<Vec<_>>())
+            .with_evidence(
+                security
+                    .iter()
+                    .map(|e| format!("line {}: {}", e.line_no, e.raw))
+                    .collect::<Vec<_>>(),
+            )
             .with_remediation(Remediation::ResetHostsFile),
         );
     }
@@ -440,7 +457,12 @@ pub fn analyze_hosts(content: &str) -> Vec<Finding> {
                  something that can read it. Given a compromised account, assume the \
                  latter until proven otherwise.",
             )
-            .with_evidence(discord.iter().map(|e| format!("line {}: {}", e.line_no, e.raw)).collect::<Vec<_>>())
+            .with_evidence(
+                discord
+                    .iter()
+                    .map(|e| format!("line {}: {}", e.line_no, e.raw))
+                    .collect::<Vec<_>>(),
+            )
             .with_remediation(Remediation::ResetHostsFile),
         );
     }
@@ -612,7 +634,16 @@ pub fn classify_dropped_file(
             if inner != stem
                 && matches!(
                     inner,
-                    "pdf" | "doc" | "docx" | "xls" | "xlsx" | "jpg" | "jpeg" | "png" | "txt" | "mp4"
+                    "pdf"
+                        | "doc"
+                        | "docx"
+                        | "xls"
+                        | "xlsx"
+                        | "jpg"
+                        | "jpeg"
+                        | "png"
+                        | "txt"
+                        | "mp4"
                 )
             {
                 return Some((
@@ -640,7 +671,10 @@ pub fn classify_dropped_file(
     }
 
     if location == DropLocation::Startup
-        && matches!(ext, "bat" | "cmd" | "ps1" | "vbs" | "vbe" | "js" | "jse" | "wsf" | "hta")
+        && matches!(
+            ext,
+            "bat" | "cmd" | "ps1" | "vbs" | "vbe" | "js" | "jse" | "wsf" | "hta"
+        )
     {
         return Some((
             Severity::High,
@@ -681,14 +715,11 @@ pub fn analyze_dropped_files(files: &[DroppedFile]) -> Vec<Finding> {
                 format!("Suspicious file in {}: {name}", f.location.label()),
                 reason,
             )
-            .with_evidence(
-                std::iter::once(f.path.clone()).chain(
-                    // An unreadable timestamp is reported as absent rather than
-                    // as an absurd number of days.
-                    (f.age_days < 36_500)
-                        .then(|| format!("last modified {} day(s) ago", f.age_days)),
-                ),
-            )
+            .with_evidence(std::iter::once(f.path.clone()).chain(
+                // An unreadable timestamp is reported as absent rather than
+                // as an absurd number of days.
+                (f.age_days < 36_500).then(|| format!("last modified {} day(s) ago", f.age_days)),
+            ))
             .with_remediation(Remediation::DeleteFile {
                 path: f.path.clone(),
             }),
@@ -711,7 +742,12 @@ pub fn file_name_of(path: &str) -> String {
 /// Deliberately hand-rolled rather than recursive: Discord's `node_modules`
 /// trees are deep, and an unbounded walk of `%APPDATA%` on a real machine can
 /// take minutes. Symlinks are not followed, so a loop cannot hang the scan.
-pub fn walk_files(root: &Path, max_depth: usize, max_files: usize, pred: &dyn Fn(&Path) -> bool) -> Vec<PathBuf> {
+pub fn walk_files(
+    root: &Path,
+    max_depth: usize,
+    max_files: usize,
+    pred: &dyn Fn(&Path) -> bool,
+) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
 
@@ -795,7 +831,13 @@ fn collect_and_analyze() -> Result<Vec<Finding>> {
 
     let mut discord_roots: Vec<PathBuf> = Vec::new();
     for base in [appdata.as_ref(), local.as_ref()].into_iter().flatten() {
-        for name in ["discord", "discordptb", "discordcanary", "Lightcord", "Discord"] {
+        for name in [
+            "discord",
+            "discordptb",
+            "discordcanary",
+            "Lightcord",
+            "Discord",
+        ] {
             let p = base.join(name);
             if p.is_dir() && !discord_roots.contains(&p) {
                 discord_roots.push(p);
@@ -808,7 +850,9 @@ fn collect_and_analyze() -> Result<Vec<Finding>> {
             let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
             let lower = name.to_ascii_lowercase();
             (lower.ends_with(".js") || lower.ends_with(".json"))
-                && std::fs::metadata(p).map(|m| m.len() <= MAX_SCAN_FILE_BYTES).unwrap_or(false)
+                && std::fs::metadata(p)
+                    .map(|m| m.len() <= MAX_SCAN_FILE_BYTES)
+                    .unwrap_or(false)
         });
 
         for file in files {
@@ -907,7 +951,11 @@ fn walk_dirs_named(root: &Path, name: &str, max_depth: usize) -> Vec<PathBuf> {
                 continue;
             }
             let path = entry.path();
-            if entry.file_name().to_string_lossy().eq_ignore_ascii_case(name) {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(name)
+            {
                 out.push(path.clone());
             }
             if depth < max_depth {
@@ -1042,7 +1090,9 @@ setTimeout(steal, 5000);
         let hits = scan_text_for_grabber(PATCHED_INDEX_JS);
         let webhook = hits.iter().find(|h| h.pattern.contains("webhook")).unwrap();
         assert!(webhook.excerpt.contains("[REDACTED]"));
-        assert!(!webhook.excerpt.contains("aVeryLongLookingWebhookTokenValueHere"));
+        assert!(!webhook
+            .excerpt
+            .contains("aVeryLongLookingWebhookTokenValueHere"));
         // The useful part is still readable.
         assert!(webhook.excerpt.contains("discord.com/api/webhooks"));
     }
@@ -1183,8 +1233,7 @@ app.on('ready', () => new BrowserWindow({ width: 1280 }));
 
     #[test]
     fn system_binary_names_in_user_directories_are_critical() {
-        let (sev, why) =
-            classify_dropped_file("svchost.exe", 1, DropLocation::AppData).unwrap();
+        let (sev, why) = classify_dropped_file("svchost.exe", 1, DropLocation::AppData).unwrap();
         assert_eq!(sev, Severity::Critical);
         assert!(why.contains("System32"));
     }

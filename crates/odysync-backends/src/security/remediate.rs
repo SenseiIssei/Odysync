@@ -166,7 +166,10 @@ pub fn validate_task_path(task_path: &str) -> Result<(String, String)> {
             format!("{full} is not a full task path (it must start with \\)"),
         ));
     }
-    if full.to_ascii_lowercase().starts_with("\\microsoft\\windows\\") {
+    if full
+        .to_ascii_lowercase()
+        .starts_with("\\microsoft\\windows\\")
+    {
         return Err(Error::security(
             "scheduled task validation",
             format!(
@@ -463,7 +466,11 @@ async fn quarantine_file(path: &str) -> Result<String> {
         "Moved {path} to quarantine at {}. Nothing was deleted: if this was a mistake, \
          rename the file and move it back.{}",
         dest.display(),
-        if moved { "" } else { " (copied, then the original was removed)" }
+        if moved {
+            ""
+        } else {
+            " (copied, then the original was removed)"
+        }
     ))
 }
 
@@ -544,10 +551,9 @@ mod tests {
             r"hkey_current_user\software\microsoft\windows\currentversion\run"
         );
         // The PowerShell drive spelling and a Registry:: prefix both normalise.
-        assert!(validate_run_key_hive(
-            r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-        )
-        .is_ok());
+        assert!(
+            validate_run_key_hive(r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").is_ok()
+        );
         assert!(validate_run_key_hive(
             r"Registry::HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce"
         )
@@ -663,8 +669,8 @@ mod tests {
         let err = check_quarantinable(r"C:\Users\bob\Documents\thesis.docx", &roots).unwrap_err();
         assert!(matches!(err, Error::SecurityViolation { .. }));
         // A path that merely starts with the same characters is not inside.
-        let err = check_quarantinable(r"C:\Users\bob\AppData\Local\TempEvil\x.exe", &roots)
-            .unwrap_err();
+        let err =
+            check_quarantinable(r"C:\Users\bob\AppData\Local\TempEvil\x.exe", &roots).unwrap_err();
         assert!(matches!(err, Error::SecurityViolation { .. }));
     }
 
@@ -685,7 +691,9 @@ mod tests {
             r"C:\Users\bob\AppData\Local\Temp".to_string(),
             r"C:\Users\bob\AppData\Roaming".to_string(),
         ];
-        assert!(check_quarantinable(r"C:\Users\bob\AppData\Local\Temp\dropper.exe", &roots).is_ok());
+        assert!(
+            check_quarantinable(r"C:\Users\bob\AppData\Local\Temp\dropper.exe", &roots).is_ok()
+        );
         // Case and slash direction must not matter.
         assert!(check_quarantinable(r"c:/users/bob/appdata/roaming/x.exe", &roots).is_ok());
     }
@@ -696,10 +704,7 @@ mod tests {
             quarantine_name(r"C:\Users\bob\AppData\Local\Temp\a.exe", "20260721T101500Z"),
             "20260721T101500Z_a.exe.quarantined"
         );
-        assert_eq!(
-            quarantine_name("plain.exe", "S"),
-            "S_plain.exe.quarantined"
-        );
+        assert_eq!(quarantine_name("plain.exe", "S"), "S_plain.exe.quarantined");
     }
 
     #[test]

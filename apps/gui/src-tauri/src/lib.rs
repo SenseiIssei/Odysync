@@ -1,4 +1,4 @@
-﻿mod commands;
+mod commands;
 mod state;
 mod tray;
 
@@ -22,8 +22,7 @@ pub fn run() {
             .with_ansi(false)
     });
 
-    let console_layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr);
+    let console_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
 
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))

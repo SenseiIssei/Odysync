@@ -150,7 +150,10 @@ fn parse_nix_profile_list(stdout: &str) -> Vec<UpdateCandidate> {
             let flake_ref = parts[1];
 
             // Extract package name from flake ref (after #).
-            let name = flake_ref.rsplit_once('#').map(|(_, n)| n).unwrap_or(flake_ref);
+            let name = flake_ref
+                .rsplit_once('#')
+                .map(|(_, n)| n)
+                .unwrap_or(flake_ref);
 
             // Try to find version in remaining parts — usually the last field.
             let version = parts.last().copied().unwrap_or("");

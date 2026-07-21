@@ -257,7 +257,9 @@ impl PackageId {
         }
 
         // Shell metacharacters that could enable command injection.
-        const FORBIDDEN: &[char] = &[';', '&', '|', '`', '$', '(', ')', '{', '}', '<', '>', '\n', '\r', '\0'];
+        const FORBIDDEN: &[char] = &[
+            ';', '&', '|', '`', '$', '(', ')', '{', '}', '<', '>', '\n', '\r', '\0',
+        ];
 
         if let Some(c) = id.chars().find(|c| FORBIDDEN.contains(c)) {
             return Err(crate::error::Error::invalid_package_id(

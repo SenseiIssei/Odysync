@@ -4,13 +4,13 @@
 //! This module provides shared utilities for detecting which OEM made the
 //! current machine and where their update tool is installed.
 
+pub mod acer_care_center;
+pub mod asus_armoury;
 pub mod dell_command_update;
+pub mod gigabyte_control_center;
 pub mod hp_image_assistant;
 pub mod lenovo_system_update;
 pub mod msi_center;
-pub mod asus_armoury;
-pub mod gigabyte_control_center;
-pub mod acer_care_center;
 pub mod razer_synapse;
 
 use std::path::PathBuf;
@@ -105,9 +105,7 @@ pub fn oem_tool_path(oem: OemManufacturer) -> Option<PathBuf> {
             r"C:\Program Files (x86)\Lenovo\System Update\tvsu.exe",
             r"C:\Program Files (x86)\Lenovo\Commercial Vantage\SUHelper.exe",
         ],
-        OemManufacturer::Msi => &[
-            r"C:\Program Files\MSI\MSI Center\MSI Center.exe",
-        ],
+        OemManufacturer::Msi => &[r"C:\Program Files\MSI\MSI Center\MSI Center.exe"],
         OemManufacturer::Asus => &[
             r"C:\Program Files\ASUS\ArmouryDevice\ArmouryCrateService.exe",
             r"C:\Program Files (x86)\ASUS\ArmouryDevice\ArmouryCrateService.exe",

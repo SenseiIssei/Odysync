@@ -132,10 +132,7 @@ impl UpdateHistory {
 
     /// Return entries for a specific backend.
     pub fn for_backend(&self, kind: BackendKind) -> Vec<&HistoryEntry> {
-        self.entries
-            .iter()
-            .filter(|e| e.backend == kind)
-            .collect()
+        self.entries.iter().filter(|e| e.backend == kind).collect()
     }
 
     /// Return the most recent `n` entries.
@@ -235,7 +232,9 @@ mod tests {
             "Apt Package",
             "1.0.0",
             "2.0.0",
-            &ApplyOutcome::Failed { detail: "test".into() },
+            &ApplyOutcome::Failed {
+                detail: "test".into(),
+            },
         );
 
         let winget_entries = history.for_backend(BackendKind::Winget);

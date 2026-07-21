@@ -69,13 +69,7 @@ impl VendorScraper {
 
         if let Some(el) = doc.select(&version_sel).next() {
             let text = el.text().collect::<String>();
-            let version = text
-                .trim()
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
+            let version = text.trim().lines().next().unwrap_or("").trim().to_string();
             if !version.is_empty() {
                 return Ok(VersionInfo {
                     version,
@@ -100,8 +94,9 @@ impl VendorScraper {
         let doc = Html::parse_document(&html);
 
         // Look for any version-like string in meta tags or data attributes.
-        let meta_sel = Selector::parse("meta[name='latest-version'], meta[property='og:description']")
-            .map_err(|e| SourceError::Parse(format!("selector: {e}")))?;
+        let meta_sel =
+            Selector::parse("meta[name='latest-version'], meta[property='og:description']")
+                .map_err(|e| SourceError::Parse(format!("selector: {e}")))?;
 
         for el in doc.select(&meta_sel) {
             if let Some(content) = el.value().attr("content") {
@@ -128,8 +123,8 @@ impl VendorScraper {
         let html = self.fetch_html(url).await?;
         let doc = Html::parse_document(&html);
 
-        let title_sel = Selector::parse("title")
-            .map_err(|e| SourceError::Parse(format!("selector: {e}")))?;
+        let title_sel =
+            Selector::parse("title").map_err(|e| SourceError::Parse(format!("selector: {e}")))?;
 
         if let Some(el) = doc.select(&title_sel).next() {
             let text = el.text().collect::<String>();
@@ -191,23 +186,39 @@ fn extract_version_string(text: &str) -> Option<String> {
 /// Map NVIDIA device names to PSID (product series ID) for the download URL.
 fn nvidia_psid(device: &str) -> &str {
     let d = device.to_lowercase();
-    if d.contains("rtx-40") { "107" }
-    else if d.contains("rtx-30") { "106" }
-    else if d.contains("rtx-20") { "105" }
-    else if d.contains("gtx-16") { "156" }
-    else { "0" }
+    if d.contains("rtx-40") {
+        "107"
+    } else if d.contains("rtx-30") {
+        "106"
+    } else if d.contains("rtx-20") {
+        "105"
+    } else if d.contains("gtx-16") {
+        "156"
+    } else {
+        "0"
+    }
 }
 
 /// Map NVIDIA device names to PFID (product ID) for the download URL.
 fn nvidia_pfid(device: &str) -> &str {
     let d = device.to_lowercase();
-    if d.contains("4090") { "950" }
-    else if d.contains("4080") { "949" }
-    else if d.contains("4070") { "948" }
-    else if d.contains("4060") { "947" }
-    else if d.contains("3090") { "840" }
-    else if d.contains("3080") { "839" }
-    else if d.contains("3070") { "838" }
-    else if d.contains("3060") { "837" }
-    else { "0" }
+    if d.contains("4090") {
+        "950"
+    } else if d.contains("4080") {
+        "949"
+    } else if d.contains("4070") {
+        "948"
+    } else if d.contains("4060") {
+        "947"
+    } else if d.contains("3090") {
+        "840"
+    } else if d.contains("3080") {
+        "839"
+    } else if d.contains("3070") {
+        "838"
+    } else if d.contains("3060") {
+        "837"
+    } else {
+        "0"
+    }
 }

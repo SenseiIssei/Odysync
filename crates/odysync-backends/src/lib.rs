@@ -1,4 +1,4 @@
-﻿//! Package-manager integrations and host detection.
+//! Package-manager integrations and host detection.
 //!
 //! Backends are discovered at runtime rather than chosen at compile time: a
 //! single binary ships every integration for its platform and simply reports
@@ -6,37 +6,37 @@
 //! manager means implementing [`Backend`] and adding one line to
 //! [`detect_backends`] — nothing else in the codebase changes.
 
-pub mod apt;
 pub mod appimage;
+pub mod apt;
 pub mod autostart;
 pub mod chocolatey;
 pub mod diagnostics;
 pub mod dnf;
+pub mod firmware_backends;
 pub mod flatpak;
+pub mod fwupd;
+pub mod gpu;
 pub mod homebrew;
 pub mod lang_backends;
-pub mod firmware_backends;
 pub mod mac_firmware;
 pub mod mac_software_update;
 pub mod maintenance;
 pub mod nix;
 pub mod notifications;
+#[cfg(windows)]
+pub mod oem;
 pub mod offline;
 pub mod pacman;
 pub mod scheduler;
 pub mod scoop;
 pub mod security;
 pub mod snap;
-pub mod fwupd;
 pub mod virtualization_guest;
-pub mod zypper;
-#[cfg(windows)]
-pub mod winget;
 #[cfg(windows)]
 pub mod windows_drivers;
-pub mod gpu;
 #[cfg(windows)]
-pub mod oem;
+pub mod winget;
+pub mod zypper;
 
 use odysync_core::backend::Backend;
 use odysync_core::config::Config;
@@ -54,17 +54,27 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
         v.push(Box::new(gpu::amd_gpu::AmdGpuBackend::new()));
         v.push(Box::new(gpu::intel_gpu::IntelGpuBackend::new()));
         v.push(Box::new(gpu::qualcomm_gpu::QualcommGpuBackend::new()));
-        v.push(Box::new(oem::dell_command_update::DellCommandUpdateBackend::new()));
-        v.push(Box::new(oem::hp_image_assistant::HpImageAssistantBackend::new()));
-        v.push(Box::new(oem::lenovo_system_update::LenovoSystemUpdateBackend::new()));
+        v.push(Box::new(
+            oem::dell_command_update::DellCommandUpdateBackend::new(),
+        ));
+        v.push(Box::new(
+            oem::hp_image_assistant::HpImageAssistantBackend::new(),
+        ));
+        v.push(Box::new(
+            oem::lenovo_system_update::LenovoSystemUpdateBackend::new(),
+        ));
         v.push(Box::new(oem::msi_center::MsiCenterBackend::new()));
         v.push(Box::new(oem::asus_armoury::AsusArmouryBackend::new()));
-        v.push(Box::new(oem::gigabyte_control_center::GigabyteControlCenterBackend::new()));
+        v.push(Box::new(
+            oem::gigabyte_control_center::GigabyteControlCenterBackend::new(),
+        ));
         v.push(Box::new(oem::acer_care_center::AcerCareCenterBackend::new()));
         v.push(Box::new(oem::razer_synapse::RazerSynapseBackend::new()));
         v.push(Box::new(chocolatey::ChocolateyBackend::new()));
         v.push(Box::new(scoop::ScoopBackend::new()));
-        v.push(Box::new(virtualization_guest::VirtualizationGuestBackend::new()));
+        v.push(Box::new(
+            virtualization_guest::VirtualizationGuestBackend::new(),
+        ));
     }
 
     // Language runtime package managers (cross-platform)
@@ -80,7 +90,9 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
     {
         v.push(Box::new(lang_backends::PowerShellModuleBackend::new()));
         v.push(Box::new(lang_backends::WindowsOptionalFeatureBackend::new()));
-        v.push(Box::new(lang_backends::NvidiaGeForceExperienceBackend::new()));
+        v.push(Box::new(
+            lang_backends::NvidiaGeForceExperienceBackend::new(),
+        ));
         v.push(Box::new(lang_backends::IntelDsaBackend::new()));
         v.push(Box::new(firmware_backends::DellFirmwareBackend::new()));
         v.push(Box::new(firmware_backends::HpFirmwareBackend::new()));
@@ -106,7 +118,9 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
     #[cfg(target_os = "macos")]
     {
         v.push(Box::new(mac_firmware::MacFirmwareBackend::new()));
-        v.push(Box::new(mac_software_update::MacSoftwareUpdateBackend::new()));
+        v.push(Box::new(
+            mac_software_update::MacSoftwareUpdateBackend::new(),
+        ));
     }
 
     v
@@ -202,20 +216,20 @@ mod tests {
             assert!(kinds.contains(&BackendKind::Chocolatey));
             assert!(kinds.contains(&BackendKind::Scoop));
             assert!(kinds.contains(&BackendKind::VirtualizationGuest));
-        assert!(kinds.contains(&BackendKind::Pip));
-        assert!(kinds.contains(&BackendKind::Cargo));
-        assert!(kinds.contains(&BackendKind::Npm));
-        assert!(kinds.contains(&BackendKind::Go));
-        assert!(kinds.contains(&BackendKind::DotnetTool));
-        assert!(kinds.contains(&BackendKind::VscodeExtension));
-        assert!(kinds.contains(&BackendKind::PowerShellModule));
-        assert!(kinds.contains(&BackendKind::NvidiaGeForceExperience));
-        assert!(kinds.contains(&BackendKind::IntelDsa));
-        assert!(kinds.contains(&BackendKind::JetbrainsPlugin));
-        assert!(kinds.contains(&BackendKind::WindowsOptionalFeature));
-        assert!(kinds.contains(&BackendKind::DellFirmware));
-        assert!(kinds.contains(&BackendKind::HpFirmware));
-        assert!(kinds.contains(&BackendKind::LenovoFirmware));
+            assert!(kinds.contains(&BackendKind::Pip));
+            assert!(kinds.contains(&BackendKind::Cargo));
+            assert!(kinds.contains(&BackendKind::Npm));
+            assert!(kinds.contains(&BackendKind::Go));
+            assert!(kinds.contains(&BackendKind::DotnetTool));
+            assert!(kinds.contains(&BackendKind::VscodeExtension));
+            assert!(kinds.contains(&BackendKind::PowerShellModule));
+            assert!(kinds.contains(&BackendKind::NvidiaGeForceExperience));
+            assert!(kinds.contains(&BackendKind::IntelDsa));
+            assert!(kinds.contains(&BackendKind::JetbrainsPlugin));
+            assert!(kinds.contains(&BackendKind::WindowsOptionalFeature));
+            assert!(kinds.contains(&BackendKind::DellFirmware));
+            assert!(kinds.contains(&BackendKind::HpFirmware));
+            assert!(kinds.contains(&BackendKind::LenovoFirmware));
         }
 
         #[cfg(target_os = "linux")]

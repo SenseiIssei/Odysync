@@ -43,9 +43,7 @@ impl LenovoSystemUpdateBackend {
             .unwrap_or(false)
         {
             (
-                std::path::PathBuf::from(
-                    r"C:\Program Files (x86)\Lenovo\System Update\tvsu.exe",
-                ),
+                std::path::PathBuf::from(r"C:\Program Files (x86)\Lenovo\System Update\tvsu.exe"),
                 Some(tool_path),
             )
         } else {
@@ -145,12 +143,7 @@ impl Backend for LenovoSystemUpdateBackend {
             if oem::tool_exists(suhelper.to_str().unwrap_or("")) {
                 let out = proc::run(
                     suhelper.to_str().unwrap_or("SUHelper.exe"),
-                    &[
-                        "-autoupdate",
-                        "-include",
-                        &candidate.id.native,
-                        "-noreboot",
-                    ],
+                    &["-autoupdate", "-include", &candidate.id.native, "-noreboot"],
                     INSTALL_TIMEOUT,
                 )
                 .await?;

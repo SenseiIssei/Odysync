@@ -1,4 +1,4 @@
-﻿//! Diagnostics bundle creation.
+//! Diagnostics bundle creation.
 //!
 //! Collects environment info, backend outputs, config, and the latest run
 //! report into a zip file. No data is uploaded anywhere — this is purely
@@ -28,8 +28,8 @@ pub async fn create_diagnostics(
 ) -> Result<()> {
     let file = std::fs::File::create(out_path)?;
     let mut zip = zip::ZipWriter::new(file);
-    let options =
-        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
 
     // env.txt
     let env_text = format!(
@@ -83,12 +83,7 @@ pub async fn create_diagnostics(
     for (filename, cmd) in commands {
         let program = cmd[0];
         let args = &cmd[1..];
-        let output = proc::run(
-            program,
-            args,
-            std::time::Duration::from_secs(60),
-        )
-        .await;
+        let output = proc::run(program, args, std::time::Duration::from_secs(60)).await;
 
         let text = match output {
             Ok(o) => format!(
@@ -124,9 +119,7 @@ mod tests {
         let zip_path = dir.join("diag.zip");
 
         let cfg = Config::default();
-        create_diagnostics(&zip_path, &cfg, None)
-            .await
-            .unwrap();
+        create_diagnostics(&zip_path, &cfg, None).await.unwrap();
 
         assert!(zip_path.exists());
         assert!(zip_path.metadata().unwrap().len() > 0);

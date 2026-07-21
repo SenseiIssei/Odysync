@@ -623,9 +623,15 @@ mod tests {
         let dir = tmp.path();
 
         let mut manifest = CacheManifest::default();
-        manifest.add_in(dir, entry("pkg", "winget", "old", 1)).unwrap();
-        manifest.add_in(dir, entry("pkg", "winget", "new", 2)).unwrap();
-        manifest.add_in(dir, entry("pkg", "pip", "other", 3)).unwrap();
+        manifest
+            .add_in(dir, entry("pkg", "winget", "old", 1))
+            .unwrap();
+        manifest
+            .add_in(dir, entry("pkg", "winget", "new", 2))
+            .unwrap();
+        manifest
+            .add_in(dir, entry("pkg", "pip", "other", 3))
+            .unwrap();
 
         let reloaded = CacheManifest::load_from(dir);
         assert_eq!(reloaded.entries.len(), 2);

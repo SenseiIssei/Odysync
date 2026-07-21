@@ -15,9 +15,7 @@ pub fn is_elevated() -> bool {
 
     // SAFETY: GetCurrentProcess returns a pseudo-handle that is always valid.
     let mut token: HANDLE = Default::default();
-    let ok = unsafe {
-        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)
-    };
+    let ok = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) };
     if ok.is_err() {
         return false;
     }

@@ -51,12 +51,7 @@ impl Backend for DnfBackend {
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
-        let out = proc::run(
-            "dnf",
-            &["check-update", "--refresh", "-q"],
-            SCAN_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("dnf", &["check-update", "--refresh", "-q"], SCAN_TIMEOUT).await?;
 
         // Exit 100 = updates available, 0 = no updates.
         if out.code != 0 && out.code != 100 {
@@ -83,12 +78,7 @@ impl Backend for DnfBackend {
         }
 
         let spec = format!("{}-{}", candidate.id.native, candidate.available.raw());
-        let out = proc::run(
-            "dnf",
-            &["install", "-y", "--best", &spec],
-            INSTALL_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("dnf", &["install", "-y", "--best", &spec], INSTALL_TIMEOUT).await?;
 
         if out.success() {
             Ok(())
@@ -135,7 +125,8 @@ fn parse_dnf_check_update(stdout: &str) -> Vec<UpdateCandidate> {
                 return None;
             }
             // Skip summary lines like "N updates can be installed" or similar.
-            if line.starts_with("Last metadata") || (line.contains("update") && !line.contains('.')) {
+            if line.starts_with("Last metadata") || (line.contains("update") && !line.contains('.'))
+            {
                 return None;
             }
 
@@ -143,7 +134,10 @@ fn parse_dnf_check_update(stdout: &str) -> Vec<UpdateCandidate> {
             let pkg_arch = parts.next()?;
             let version_release = parts.next()?;
 
-            let name = pkg_arch.rsplit_once('.').map(|(n, _)| n).unwrap_or(pkg_arch);
+            let name = pkg_arch
+                .rsplit_once('.')
+                .map(|(n, _)| n)
+                .unwrap_or(pkg_arch);
 
             Some(UpdateCandidate {
                 id: PackageId::new(BackendKind::Dnf, name),

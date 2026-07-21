@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use odysync_core::backend::Backend;
 use odysync_core::error::{Error, Result};
 use odysync_core::model::{BackendKind, InstalledPackage, PackageId, UpdateCandidate};
-use odysync_core::version::Version;
 use odysync_core::proc;
+use odysync_core::version::Version;
 
 const SCAN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const INSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
@@ -15,37 +15,54 @@ const INSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120)
 pub struct PipBackend;
 
 impl PipBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for PipBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for PipBackend {
-    fn kind(&self) -> BackendKind { BackendKind::Pip }
-    fn display_name(&self) -> &str { "Python pip" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::Pip
+    }
+    fn display_name(&self) -> &str {
+        "Python pip"
+    }
 
     async fn is_available(&self) -> bool {
         proc::exists("pip", &["--version"]).await
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
-        let out = proc::run("pip", &["list", "--outdated", "--format=json"], SCAN_TIMEOUT).await?;
+        let out = proc::run(
+            "pip",
+            &["list", "--outdated", "--format=json"],
+            SCAN_TIMEOUT,
+        )
+        .await?;
         let packages: Vec<PipOutdated> = serde_json::from_str(&out.stdout)
             .map_err(|e| Error::parse("pip", format!("JSON parse: {e}")))?;
         let kind = self.kind();
-        Ok(packages.into_iter().map(|p| {
-            let name = p.name.clone();
-            UpdateCandidate {
-            id: PackageId::new(kind, p.name),
-            name,
-            installed: Version::parse(&p.version),
-            available: Version::parse(&p.latest_version),
-            size_bytes: None,
-            expected_sha256: None,
-        }}).collect())
+        Ok(packages
+            .into_iter()
+            .map(|p| {
+                let name = p.name.clone();
+                UpdateCandidate {
+                    id: PackageId::new(kind, p.name),
+                    name,
+                    installed: Version::parse(&p.version),
+                    available: Version::parse(&p.latest_version),
+                    size_bytes: None,
+                    expected_sha256: None,
+                }
+            })
+            .collect())
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
@@ -55,7 +72,17 @@ impl Backend for PipBackend {
                 detail: "refusing to install without an exact target version".into(),
             });
         }
-        let out = proc::run("pip", &["install", "--upgrade", &candidate.id.native, candidate.available.raw()], INSTALL_TIMEOUT).await?;
+        let out = proc::run(
+            "pip",
+            &[
+                "install",
+                "--upgrade",
+                &candidate.id.native,
+                candidate.available.raw(),
+            ],
+            INSTALL_TIMEOUT,
+        )
+        .await?;
         if !out.success() {
             return Err(Error::CommandFailed {
                 command: format!("pip install --upgrade {}", candidate.id.native),
@@ -114,17 +141,25 @@ fn parse_pip_list(stdout: &str) -> Result<Vec<InstalledPackage>> {
 pub struct CargoBackend;
 
 impl CargoBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for CargoBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for CargoBackend {
-    fn kind(&self) -> BackendKind { BackendKind::Cargo }
-    fn display_name(&self) -> &str { "Rust cargo" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::Cargo
+    }
+    fn display_name(&self) -> &str {
+        "Rust cargo"
+    }
 
     async fn is_available(&self) -> bool {
         proc::exists("cargo", &["--version"]).await
@@ -151,7 +186,17 @@ impl Backend for CargoBackend {
                 detail: "refusing to install without an exact target version".into(),
             });
         }
-        let out = proc::run("cargo", &["install", &candidate.id.native, "--version", candidate.available.raw()], INSTALL_TIMEOUT).await?;
+        let out = proc::run(
+            "cargo",
+            &[
+                "install",
+                &candidate.id.native,
+                "--version",
+                candidate.available.raw(),
+            ],
+            INSTALL_TIMEOUT,
+        )
+        .await?;
         if !out.success() {
             return Err(Error::CommandFailed {
                 command: format!("cargo install {}", candidate.id.native),
@@ -215,17 +260,25 @@ fn parse_cargo_install_list(stdout: &str) -> Vec<InstalledPackage> {
 pub struct NpmBackend;
 
 impl NpmBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for NpmBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for NpmBackend {
-    fn kind(&self) -> BackendKind { BackendKind::Npm }
-    fn display_name(&self) -> &str { "Node.js npm (global)" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::Npm
+    }
+    fn display_name(&self) -> &str {
+        "Node.js npm (global)"
+    }
 
     async fn is_available(&self) -> bool {
         proc::exists("npm", &["--version"]).await
@@ -237,16 +290,20 @@ impl Backend for NpmBackend {
         let packages: std::collections::HashMap<String, NpmOutdated> =
             serde_json::from_str(&out.stdout).unwrap_or_default();
         let kind = self.kind();
-        Ok(packages.into_iter().map(|(name, p)| {
-            let id_name = name.clone();
-            UpdateCandidate {
-            id: PackageId::new(kind, id_name),
-            name,
-            installed: Version::parse(&p.current.unwrap_or_default()),
-            available: Version::parse(&p.latest.unwrap_or_default()),
-            size_bytes: None,
-            expected_sha256: None,
-        }}).collect())
+        Ok(packages
+            .into_iter()
+            .map(|(name, p)| {
+                let id_name = name.clone();
+                UpdateCandidate {
+                    id: PackageId::new(kind, id_name),
+                    name,
+                    installed: Version::parse(&p.current.unwrap_or_default()),
+                    available: Version::parse(&p.latest.unwrap_or_default()),
+                    size_bytes: None,
+                    expected_sha256: None,
+                }
+            })
+            .collect())
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
@@ -274,7 +331,12 @@ impl Backend for NpmBackend {
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        let out = proc::run("npm", &["list", "-g", &candidate.id.native, "--json"], SCAN_TIMEOUT).await?;
+        let out = proc::run(
+            "npm",
+            &["list", "-g", &candidate.id.native, "--json"],
+            SCAN_TIMEOUT,
+        )
+        .await?;
         let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap_or_default();
         if let Some(version) = parsed
             .pointer(&format!("/dependencies/{}/version", candidate.id.native))
@@ -328,17 +390,25 @@ fn parse_npm_global_list(stdout: &str) -> Vec<InstalledPackage> {
 pub struct GoBackend;
 
 impl GoBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for GoBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for GoBackend {
-    fn kind(&self) -> BackendKind { BackendKind::Go }
-    fn display_name(&self) -> &str { "Go modules" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::Go
+    }
+    fn display_name(&self) -> &str {
+        "Go modules"
+    }
 
     async fn is_available(&self) -> bool {
         proc::exists("go", &["version"]).await
@@ -399,17 +469,25 @@ impl Backend for GoBackend {
 pub struct DotnetToolBackend;
 
 impl DotnetToolBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for DotnetToolBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for DotnetToolBackend {
-    fn kind(&self) -> BackendKind { BackendKind::DotnetTool }
-    fn display_name(&self) -> &str { ".NET global tools" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::DotnetTool
+    }
+    fn display_name(&self) -> &str {
+        ".NET global tools"
+    }
 
     async fn is_available(&self) -> bool {
         proc::exists("dotnet", &["--version"]).await
@@ -445,7 +523,19 @@ impl Backend for DotnetToolBackend {
                 detail: "refusing to install without an exact target version".into(),
             });
         }
-        let out = proc::run("dotnet", &["tool", "update", "-g", &candidate.id.native, "--version", candidate.available.raw()], INSTALL_TIMEOUT).await?;
+        let out = proc::run(
+            "dotnet",
+            &[
+                "tool",
+                "update",
+                "-g",
+                &candidate.id.native,
+                "--version",
+                candidate.available.raw(),
+            ],
+            INSTALL_TIMEOUT,
+        )
+        .await?;
         if !out.success() {
             return Err(Error::CommandFailed {
                 command: format!("dotnet tool update -g {}", candidate.id.native),
@@ -505,25 +595,38 @@ fn parse_dotnet_tool_list(stdout: &str) -> Vec<InstalledPackage> {
 pub struct VscodeExtensionBackend;
 
 impl VscodeExtensionBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for VscodeExtensionBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for VscodeExtensionBackend {
-    fn kind(&self) -> BackendKind { BackendKind::VscodeExtension }
-    fn display_name(&self) -> &str { "VS Code extensions" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::VscodeExtension
+    }
+    fn display_name(&self) -> &str {
+        "VS Code extensions"
+    }
 
     async fn is_available(&self) -> bool {
         // Check for either `code` or `code-insiders`
-        proc::exists("code", &["--version"]).await || proc::exists("code-insiders", &["--version"]).await
+        proc::exists("code", &["--version"]).await
+            || proc::exists("code-insiders", &["--version"]).await
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
-        let cmd = if proc::exists("code", &["--version"]).await { "code" } else { "code-insiders" };
+        let cmd = if proc::exists("code", &["--version"]).await {
+            "code"
+        } else {
+            "code-insiders"
+        };
         let out = proc::run(cmd, &["--list-extensions", "--show-versions"], SCAN_TIMEOUT).await?;
         let kind = self.kind();
         let mut candidates = Vec::new();
@@ -544,8 +647,17 @@ impl Backend for VscodeExtensionBackend {
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
-        let cmd = if proc::exists("code", &["--version"]).await { "code" } else { "code-insiders" };
-        let out = proc::run(cmd, &["--install-extension", &candidate.id.native, "--force"], INSTALL_TIMEOUT).await?;
+        let cmd = if proc::exists("code", &["--version"]).await {
+            "code"
+        } else {
+            "code-insiders"
+        };
+        let out = proc::run(
+            cmd,
+            &["--install-extension", &candidate.id.native, "--force"],
+            INSTALL_TIMEOUT,
+        )
+        .await?;
         if !out.success() {
             return Err(Error::CommandFailed {
                 command: format!("{} --install-extension {}", cmd, candidate.id.native),
@@ -557,13 +669,21 @@ impl Backend for VscodeExtensionBackend {
     }
 
     async fn list_installed(&self) -> Result<Vec<InstalledPackage>> {
-        let cmd = if proc::exists("code", &["--version"]).await { "code" } else { "code-insiders" };
+        let cmd = if proc::exists("code", &["--version"]).await {
+            "code"
+        } else {
+            "code-insiders"
+        };
         let out = proc::run(cmd, &["--list-extensions", "--show-versions"], SCAN_TIMEOUT).await?;
         Ok(parse_vscode_extensions(&out.stdout))
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        let cmd = if proc::exists("code", &["--version"]).await { "code" } else { "code-insiders" };
+        let cmd = if proc::exists("code", &["--version"]).await {
+            "code"
+        } else {
+            "code-insiders"
+        };
         let out = proc::run(cmd, &["--list-extensions", "--show-versions"], SCAN_TIMEOUT).await?;
         for line in out.stdout.lines() {
             if let Some((id, version)) = line.rsplit_once('@') {
@@ -600,17 +720,25 @@ fn parse_vscode_extensions(stdout: &str) -> Vec<InstalledPackage> {
 pub struct PowerShellModuleBackend;
 
 impl PowerShellModuleBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for PowerShellModuleBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for PowerShellModuleBackend {
-    fn kind(&self) -> BackendKind { BackendKind::PowerShellModule }
-    fn display_name(&self) -> &str { "PowerShell modules" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::PowerShellModule
+    }
+    fn display_name(&self) -> &str {
+        "PowerShell modules"
+    }
 
     async fn is_available(&self) -> bool {
         // Short-circuit on the cheap cfg check before spawning anything.
@@ -620,26 +748,47 @@ impl Backend for PowerShellModuleBackend {
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
-        let pwsh = if proc::exists("pwsh", &["--version"]).await { "pwsh" } else { "powershell" };
+        let pwsh = if proc::exists("pwsh", &["--version"]).await {
+            "pwsh"
+        } else {
+            "powershell"
+        };
         let script = "Get-InstalledModule | Select-Object Name, Version | ConvertTo-Json";
         let out = proc::run(pwsh, &["-NoProfile", "-Command", script], SCAN_TIMEOUT).await?;
         let kind = self.kind();
         let modules: Vec<PsModule> = serde_json::from_str(&out.stdout).unwrap_or_default();
-        Ok(modules.into_iter().map(|m| {
-            let name = m.name.clone();
-            UpdateCandidate {
-            id: PackageId::new(kind, m.name),
-            name,
-            installed: Version::parse(&m.version),
-            available: Version::Unknown(String::new()),
-            size_bytes: None,
-            expected_sha256: None,
-        }}).collect())
+        Ok(modules
+            .into_iter()
+            .map(|m| {
+                let name = m.name.clone();
+                UpdateCandidate {
+                    id: PackageId::new(kind, m.name),
+                    name,
+                    installed: Version::parse(&m.version),
+                    available: Version::Unknown(String::new()),
+                    size_bytes: None,
+                    expected_sha256: None,
+                }
+            })
+            .collect())
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
-        let pwsh = if proc::exists("pwsh", &["--version"]).await { "pwsh" } else { "powershell" };
-        let out = proc::run(pwsh, &["-NoProfile", "-Command", &format!("Update-Module -Name {} -Force", candidate.id.native)], INSTALL_TIMEOUT).await?;
+        let pwsh = if proc::exists("pwsh", &["--version"]).await {
+            "pwsh"
+        } else {
+            "powershell"
+        };
+        let out = proc::run(
+            pwsh,
+            &[
+                "-NoProfile",
+                "-Command",
+                &format!("Update-Module -Name {} -Force", candidate.id.native),
+            ],
+            INSTALL_TIMEOUT,
+        )
+        .await?;
         if !out.success() {
             return Err(Error::CommandFailed {
                 command: format!("Update-Module {}", candidate.id.native),
@@ -651,11 +800,22 @@ impl Backend for PowerShellModuleBackend {
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        let pwsh = if proc::exists("pwsh", &["--version"]).await { "pwsh" } else { "powershell" };
-        let script = format!("Get-InstalledModule -Name {} | Select-Object -ExpandProperty Version", candidate.id.native);
+        let pwsh = if proc::exists("pwsh", &["--version"]).await {
+            "pwsh"
+        } else {
+            "powershell"
+        };
+        let script = format!(
+            "Get-InstalledModule -Name {} | Select-Object -ExpandProperty Version",
+            candidate.id.native
+        );
         let out = proc::run(pwsh, &["-NoProfile", "-Command", &script], SCAN_TIMEOUT).await?;
         let v = out.stdout.trim().to_string();
-        if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
+        if v.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(v))
+        }
     }
 }
 
@@ -670,17 +830,25 @@ struct PsModule {
 pub struct JetbrainsPluginBackend;
 
 impl JetbrainsPluginBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for JetbrainsPluginBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for JetbrainsPluginBackend {
-    fn kind(&self) -> BackendKind { BackendKind::JetbrainsPlugin }
-    fn display_name(&self) -> &str { "JetBrains IDE plugins" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::JetbrainsPlugin
+    }
+    fn display_name(&self) -> &str {
+        "JetBrains IDE plugins"
+    }
 
     async fn is_available(&self) -> bool {
         // Check if any JetBrains IDE config directory exists
@@ -728,7 +896,8 @@ impl Backend for JetbrainsPluginBackend {
                 if let Ok(plugin_entries) = std::fs::read_dir(&plugins_dir) {
                     for plugin_entry in plugin_entries.flatten() {
                         let plugin_path = plugin_entry.path();
-                        let plugin_name = plugin_path.file_name()
+                        let plugin_name = plugin_path
+                            .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
                         // Read version from plugin.xml if available
@@ -805,17 +974,25 @@ fn extract_xml_version(xml: &str) -> Option<String> {
 pub struct WindowsOptionalFeatureBackend;
 
 impl WindowsOptionalFeatureBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for WindowsOptionalFeatureBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for WindowsOptionalFeatureBackend {
-    fn kind(&self) -> BackendKind { BackendKind::WindowsOptionalFeature }
-    fn display_name(&self) -> &str { "Windows optional features" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::WindowsOptionalFeature
+    }
+    fn display_name(&self) -> &str {
+        "Windows optional features"
+    }
 
     async fn is_available(&self) -> bool {
         cfg!(windows)
@@ -833,22 +1010,33 @@ impl Backend for WindowsOptionalFeatureBackend {
 
         let kind = self.kind();
         let features: Vec<PsFeature> = serde_json::from_str(&out.stdout).unwrap_or_default();
-        Ok(features.into_iter().map(|f| UpdateCandidate {
-            id: PackageId::new(kind, &f.feature_name),
-            name: f.feature_name,
-            installed: Version::parse("1.0"),
-            available: Version::parse("1.0"),
-            size_bytes: None,
-            expected_sha256: None,
-        }).collect())
+        Ok(features
+            .into_iter()
+            .map(|f| UpdateCandidate {
+                id: PackageId::new(kind, &f.feature_name),
+                name: f.feature_name,
+                installed: Version::parse("1.0"),
+                available: Version::parse("1.0"),
+                size_bytes: None,
+                expected_sha256: None,
+            })
+            .collect())
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
         let out = proc::run(
             "powershell",
-            &["-NoProfile", "-Command", &format!("Enable-WindowsOptionalFeature -Online -FeatureName {} -NoRestart", candidate.id.native)],
+            &[
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "Enable-WindowsOptionalFeature -Online -FeatureName {} -NoRestart",
+                    candidate.id.native
+                ),
+            ],
             INSTALL_TIMEOUT,
-        ).await?;
+        )
+        .await?;
         if !out.success() {
             return Err(Error::CommandFailed {
                 command: format!("Enable-WindowsOptionalFeature {}", candidate.id.native),
@@ -875,20 +1063,30 @@ struct PsFeature {
 pub struct NvidiaGeForceExperienceBackend;
 
 impl NvidiaGeForceExperienceBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for NvidiaGeForceExperienceBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for NvidiaGeForceExperienceBackend {
-    fn kind(&self) -> BackendKind { BackendKind::NvidiaGeForceExperience }
-    fn display_name(&self) -> &str { "NVIDIA GeForce Experience" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::NvidiaGeForceExperience
+    }
+    fn display_name(&self) -> &str {
+        "NVIDIA GeForce Experience"
+    }
 
     async fn is_available(&self) -> bool {
-        if !cfg!(windows) { return false; }
+        if !cfg!(windows) {
+            return false;
+        }
         // Check for NVIDIA GeForce Experience installation
         let program_files = std::env::var("ProgramFiles").unwrap_or_default();
         std::path::Path::new(&program_files)
@@ -929,7 +1127,8 @@ impl Backend for NvidiaGeForceExperienceBackend {
     async fn apply(&self, _candidate: &UpdateCandidate) -> Result<()> {
         Err(Error::Verification {
             package: _candidate.id.to_string(),
-            detail: "NVIDIA driver updates require GeForce Experience GUI or the NVIDIA website".into(),
+            detail: "NVIDIA driver updates require GeForce Experience GUI or the NVIDIA website"
+                .into(),
         })
     }
 
@@ -944,7 +1143,11 @@ impl Backend for NvidiaGeForceExperienceBackend {
             SCAN_TIMEOUT,
         ).await?;
         let v = out.stdout.trim().to_string();
-        if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
+        if v.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(v))
+        }
     }
 }
 
@@ -953,20 +1156,30 @@ impl Backend for NvidiaGeForceExperienceBackend {
 pub struct IntelDsaBackend;
 
 impl IntelDsaBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for IntelDsaBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for IntelDsaBackend {
-    fn kind(&self) -> BackendKind { BackendKind::IntelDsa }
-    fn display_name(&self) -> &str { "Intel Driver & Support Assistant" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::IntelDsa
+    }
+    fn display_name(&self) -> &str {
+        "Intel Driver & Support Assistant"
+    }
 
     async fn is_available(&self) -> bool {
-        if !cfg!(windows) { return false; }
+        if !cfg!(windows) {
+            return false;
+        }
         let program_files = std::env::var("ProgramFiles").unwrap_or_default();
         std::path::Path::new(&program_files)
             .join("Intel/Driver Support Assistant/Intel.DSA.exe")
