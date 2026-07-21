@@ -15,6 +15,11 @@ pub mod dnf;
 pub mod firmware_backends;
 pub mod flatpak;
 pub mod fwupd;
+// GPU driver updates are delivered through winget, so these backends reference
+// `crate::winget`, which only exists on Windows. Every use site in
+// `all_backends` is already `cfg(windows)`; the module declaration was not, so
+// the crate failed to compile on Linux and macOS.
+#[cfg(windows)]
 pub mod gpu;
 pub mod homebrew;
 pub mod lang_backends;
@@ -31,6 +36,9 @@ pub mod scheduler;
 pub mod scoop;
 pub mod security;
 pub mod snap;
+// Same as `gpu`: installs the guest additions through winget, so it cannot
+// compile without `crate::winget`. Its only use site is already cfg(windows).
+#[cfg(windows)]
 pub mod virtualization_guest;
 #[cfg(windows)]
 pub mod windows_drivers;

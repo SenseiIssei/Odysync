@@ -5,6 +5,13 @@ all-features = true
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 ignore = []
+# Only hold our own direct dependencies to the "still maintained" bar.
+# Transitively we pull the gtk-rs GTK3 bindings through Tauri's Linux webview,
+# and those are formally unmaintained with no alternative available to us —
+# seventeen advisories we cannot act on. Vulnerabilities are still denied for
+# the whole graph; this narrows *unmaintained* only, rather than pinning a
+# list of IDs that grows every release and eventually gets ignored wholesale.
+unmaintained = "workspace"
 
 [licenses]
 allow = [
@@ -23,6 +30,8 @@ allow = [
     # licence check failed on MPL-2.0 dependencies (`option-ext`, reached via
     # `directories`) despite the licence being listed as allowed.
     "MPL-2.0",
+    # webpki-roots: the Mozilla CA bundle, reached through reqwest/rustls.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
