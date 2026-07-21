@@ -11,6 +11,7 @@
 //! package manager's own GPG checks.
 
 use std::path::Path;
+#[cfg(any(windows, target_os = "macos"))]
 use std::time::Duration;
 
 /// Outcome of checking a file's code signature.
@@ -30,6 +31,10 @@ pub enum SignatureStatus {
 /// Timeout for the verifier itself. Certificate revocation checks hit the
 /// network, so this is generous — but bounded, because a captive portal can
 /// otherwise stall it indefinitely.
+/// Only the Windows and macOS verifiers shell out; on other platforms
+/// signature checking is unsupported, so this is unreferenced there and
+/// `-D warnings` makes an unused constant fatal.
+#[cfg(any(windows, target_os = "macos"))]
 const VERIFY_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[cfg(windows)]

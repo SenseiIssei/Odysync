@@ -29,6 +29,11 @@ confidence-threshold = 0.8
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Our own crates depend on each other by path with no version requirement,
+# which cargo-deny counts as a wildcard. That is intra-workspace linkage, not
+# an unpinned third-party dependency, so it is exempt — external wildcards are
+# still denied.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
