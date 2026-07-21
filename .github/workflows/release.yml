@@ -80,19 +80,22 @@ jobs:
 
       - name: Install frontend deps
         working-directory: apps/gui
-        run: npm install
+        run: npm ci
 
       - name: Build Tauri app
         working-directory: apps/gui
         run: npx tauri build
 
+      # `src-tauri` is a workspace member, so cargo puts its output in the
+      # workspace-root `target/`, not `apps/gui/src-tauri/target/`. Combined
+      # with `if-no-files-found: warn` that meant the installer was quietly
+      # never uploaded — every release shipped CLI binaries only.
       - name: Upload NSIS installer
         uses: actions/upload-artifact@v4
         with:
           name: odysync-gui-windows
-          path: |
-            apps/gui/src-tauri/target/release/bundle/nsis/*.exe
-          if-no-files-found: warn
+          path: target/release/bundle/nsis/*.exe
+          if-no-files-found: error
 
   publish:
     needs: [build-cli, build-gui-windows]
@@ -117,6 +120,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: odysync-macos-x86_64.tar.gz
+          path: artifacts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: odysync-gui-windows
           path: artifacts
 
       - name: Publish GitHub Release

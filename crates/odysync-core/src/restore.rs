@@ -80,7 +80,13 @@ async fn create_restore_point(description: &str) -> bool {
     }
 }
 
+/// No such thing outside Windows; the guard degrades to a no-op.
+///
+/// `dead_code` is allowed rather than removed: the only caller is itself behind
+/// `cfg(windows)`, so on other platforms this is legitimately unreferenced —
+/// and CI builds with `-D warnings`, which turns that into a hard error.
 #[cfg(not(windows))]
+#[allow(dead_code)]
 async fn create_restore_point(_description: &str) -> bool {
     false
 }
