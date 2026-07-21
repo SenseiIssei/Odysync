@@ -1,0 +1,22 @@
+[package]
+name = "odysync-version-source"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Hybrid version discovery: online registry, vendor scraping, offline cache"
+
+[dependencies]
+odysync-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }
+scraper = { workspace = true }
+chrono = { workspace = true }
+directories = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
