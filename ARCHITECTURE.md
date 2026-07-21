@@ -1,7 +1,7 @@
 # Architecture — v2 (Rust)
 
-> The v1 Python implementation lives in `legacy/` and still runs. It will be
-> removed when v2.0.0 ships.
+> The v1 Python implementation was removed once the Rust CLI reached feature
+> parity. It remains available at the `v1.3.0` tag.
 
 ## Why the rewrite
 

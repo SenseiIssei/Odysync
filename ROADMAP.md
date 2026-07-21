@@ -57,8 +57,8 @@ tests. See `ARCHITECTURE.md` for where each guarantee is enforced.
 
 **Exit criteria:** every v1 flag has a v2 equivalent; `legacy/` deleted.
 
-**Status:** All Phase 2 features implemented. 110 tests pass, clippy-clean.
-`legacy/` deletion remains as a follow-up cleanup task.
+**Status:** Complete. `legacy/` has been deleted; the Python tool remains
+available at the `v1.3.0` tag.
 
 ---
 
@@ -131,7 +131,8 @@ and TypeScript compiles clean, clippy clean, 99 tests pass.
 - [x] Rewrite `README.md` for v2 (it still documents the Python tool).
 - [x] Migration note: v1 profiles → v2 config.
 - [x] `CHANGELOG.md` + release notes.
-- [ ] Tag `v2.0.0`, merge `dev/rust-rewrite` → `main`, delete `legacy/`.
+- [x] Merge `dev/rust-rewrite` → `main`, tag a release, delete `legacy/`.
+      Shipped as `v2.1.0` rather than `v2.0.0`.
 
 ---
 
