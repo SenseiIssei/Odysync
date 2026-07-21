@@ -19,7 +19,6 @@ use super::{enumerate_display_adapters, GpuVendor};
 
 const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
-const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct QualcommGpuBackend;
 
@@ -146,7 +145,11 @@ impl Backend for QualcommGpuBackend {
             Ok(())
         } else {
             Err(Error::CommandFailed {
-                command: format!("winget install --id {} --version {}", candidate.id.native, candidate.available.raw()),
+                command: format!(
+                    "winget install --id {} --version {}",
+                    candidate.id.native,
+                    candidate.available.raw()
+                ),
                 code: out.code,
                 stderr: if out.stderr.trim().is_empty() {
                     out.stdout
@@ -180,7 +183,9 @@ async fn read_installed_driver_version() -> Option<String> {
         }
     "#;
 
-    let out = proc::powershell(script, Duration::from_secs(10)).await.ok()?;
+    let out = proc::powershell(script, Duration::from_secs(10))
+        .await
+        .ok()?;
     let version = out.stdout.trim().to_string();
     if version.is_empty() {
         None

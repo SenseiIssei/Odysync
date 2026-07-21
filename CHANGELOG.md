@@ -5,6 +5,56 @@ All notable changes to Odysync will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0]
+
+### Added
+- **Security page** — posture and indicator-of-compromise audit across five
+  sections (Defender, persistence, integrity, network, hardening). Drives
+  Microsoft Defender for malware scanning rather than implementing an engine;
+  each section fails independently so a failure is never mistaken for a clean
+  result. Remediation quarantines instead of deleting, refuses paths under
+  `C:\Windows` or `Program Files`, and requires explicit confirmation.
+- **Hardware Updates page** — drivers, firmware and vendor tools, grouped, with
+  a separate confirmation step for firmware and a forced restore point.
+- Start with Windows, optionally minimised to the tray (`--minimized`).
+- `Backend::list_installed()` — a real inventory call, implemented for winget,
+  chocolatey, scoop, pip, npm, cargo, dotnet and VS Code.
+- Log viewer auto-scroll; error boundaries and frontend crash reporting into
+  `odysync.log`.
+
+### Fixed
+- **Saving settings reset the entire config**, destroying `policy.holds` and
+  `policy.exclude`: `Config` serializes kebab-case, the GUI posted snake_case,
+  and `#[serde(default)]` with no `deny_unknown_fields` read that as "all
+  fields absent". A held package silently became updatable again.
+- **Arbitrary file deletion** via `remove_offline_entry`: an unvalidated
+  `filename` from `manifest.json` was joined to the cache directory, and an
+  absolute path there discards the base entirely.
+- **PowerShell command injection** in `toggle_startup_program`, which
+  interpolated registry-sourced strings unescaped; the same function referenced
+  an undefined `$enable`, so entries could be disabled but never re-enabled.
+- Every page refetched on navigation, losing state and re-scanning in a loop.
+- `restore_backup` used the list index as the restore-point sequence number.
+- Update history was never written (`Runner::with_history` had no call sites)
+  and used a different config directory than everything else.
+- "Installed Packages" listed only *upgradable* packages.
+- Backend availability was re-probed (~36 process spawns) on every page load
+  and always reported `true`.
+- Failures reported as facts: a denied restore-point query as "none found", a
+  disabled System Protection as the 24-hour throttle, unexpanded `%SystemRoot%`
+  paths as deleted files, and an unparsed `{"value":[…]}` collection as
+  "Defender absent or superseded by a third-party AV".
+- `Remove-MpThreat -ThreatID` — no such parameter exists.
+
+### Changed
+- Severity policy: "unsigned", "outside `C:\Windows`" and "user-writable" are
+  treated as context rather than signals, since per-user installs are how most
+  software ships and self-built binaries are unsigned by definition. Only real
+  indicators escalate. Handled Defender detections that never executed drop to
+  informational; ones that *ran* keep full severity.
+- Apply outcomes expose a stable status discriminant instead of `Debug` output.
+- `Config::max_retries` is now actually used by the runner.
+
 ## [Unreleased] - v2.0.0
 
 ### Added

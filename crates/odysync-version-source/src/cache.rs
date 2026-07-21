@@ -54,8 +54,7 @@ impl OfflineCache {
         let text = serde_json::to_string_pretty(cache)
             .map_err(|e| SourceError::Cache(format!("serialize: {e}")))?;
         let tmp = self.cache_path().with_extension("json.tmp");
-        std::fs::write(&tmp, &text)
-            .map_err(|e| SourceError::Cache(format!("write: {e}")))?;
+        std::fs::write(&tmp, &text).map_err(|e| SourceError::Cache(format!("write: {e}")))?;
         std::fs::rename(&tmp, self.cache_path())
             .map_err(|e| SourceError::Cache(format!("rename: {e}")))?;
         Ok(())
@@ -158,13 +157,18 @@ mod tests {
         let cache = OfflineCache::with_dir(dir).unwrap();
 
         let id = HardwareId::new("intel", "arc-a770");
-        cache.put(&id, VersionInfo {
-            version: "32.0.101.6083".into(),
-            download_url: None,
-            release_date: None,
-            checksum: None,
-            notes: None,
-        }).unwrap();
+        cache
+            .put(
+                &id,
+                VersionInfo {
+                    version: "32.0.101.6083".into(),
+                    download_url: None,
+                    release_date: None,
+                    checksum: None,
+                    notes: None,
+                },
+            )
+            .unwrap();
 
         assert_eq!(cache.len(), 1);
         cache.clear().unwrap();

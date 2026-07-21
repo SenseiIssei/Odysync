@@ -2,7 +2,10 @@
 //!
 //! Every successful online result is cached for offline use.
 
-use crate::{HardwareId, OfflineCache, RegistrySource, SourceError, VendorScraper, VersionInfo, VersionSource};
+use crate::{
+    HardwareId, OfflineCache, RegistrySource, SourceError, VendorScraper, VersionInfo,
+    VersionSource,
+};
 
 /// Default cache TTL: 24 hours.
 pub const DEFAULT_TTL: chrono::Duration = chrono::Duration::hours(24);

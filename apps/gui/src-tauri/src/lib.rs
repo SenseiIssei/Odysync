@@ -1,7 +1,8 @@
-﻿mod commands;
+mod commands;
 mod state;
 mod tray;
 
+use tauri::Manager;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
@@ -21,8 +22,7 @@ pub fn run() {
             .with_ansi(false)
     });
 
-    let console_layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr);
+    let console_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
 
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
@@ -37,6 +37,15 @@ pub fn run() {
         .manage(state::AppState::new())
         .setup(|app| {
             tray::setup(app.handle())?;
+
+            // Launched by the Windows "Run" key with --minimized: stay in the
+            // tray instead of stealing focus during login.
+            if std::env::args().any(|a| a == "--minimized") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                tracing::info!("started minimised to tray");
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -51,6 +60,7 @@ pub fn run() {
             commands::scan,
             commands::apply,
             commands::list_backends,
+            commands::refresh_backends,
             commands::get_config,
             commands::save_config,
             commands::hold,
@@ -62,30 +72,40 @@ pub fn run() {
             commands::check_schedule,
             commands::create_diagnostics,
             commands::get_system_info,
+            commands::report_frontend_error,
             commands::background_scan,
             commands::get_update_history,
             commands::clear_update_history,
             commands::get_hardware_info,
             commands::list_installed_packages,
             commands::get_logs,
+            commands::open_log_folder,
             commands::list_profiles,
             commands::create_profile,
             commands::delete_profile,
             commands::get_offline_cache_status,
-            commands::clear_offline_cache,
             commands::list_offline_cache,
+            commands::prune_offline_cache,
             commands::clear_offline_manifest,
             commands::remove_offline_entry,
             commands::download_offline_installer,
             commands::verify_offline_cache,
             commands::quit_app,
             commands::restart_as_admin,
+            commands::security_scan,
+            commands::get_defender_status,
+            commands::defender_quick_scan,
+            commands::defender_full_scan,
+            commands::update_defender_signatures,
+            commands::apply_remediation,
+            commands::get_autostart,
+            commands::enable_autostart,
+            commands::disable_autostart,
             commands::list_startup_programs,
             commands::toggle_startup_program,
             commands::list_backups,
             commands::create_backup,
             commands::restore_backup,
-            commands::delete_backup,
             commands::is_system_protection_enabled,
         ])
         .run(tauri::generate_context!())

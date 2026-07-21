@@ -40,7 +40,7 @@ impl RestorePointGuard {
 #[cfg(windows)]
 async fn create_restore_point(description: &str) -> bool {
     use windows::Win32::System::Restore::{
-        RESTOREPOINTINFOA, SRSetRestorePointA, STATEMGRSTATUS, BEGIN_SYSTEM_CHANGE, MODIFY_SETTINGS,
+        SRSetRestorePointA, BEGIN_SYSTEM_CHANGE, MODIFY_SETTINGS, RESTOREPOINTINFOA, STATEMGRSTATUS,
     };
 
     // System Restore requires elevation. If we are not elevated, skip silently.
@@ -66,9 +66,7 @@ async fn create_restore_point(description: &str) -> bool {
     };
     let mut status = STATEMGRSTATUS::default();
 
-    let ok = unsafe {
-        SRSetRestorePointA(&info, &mut status)
-    };
+    let ok = unsafe { SRSetRestorePointA(&info, &mut status) };
 
     if ok.as_bool() {
         let seq = status.llSequenceNumber;
