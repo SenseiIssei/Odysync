@@ -338,8 +338,6 @@ pub fn parse_ps_object<T: serde::de::DeserializeOwned>(stdout: &str) -> Option<T
     parse_ps_json::<T>(stdout).into_iter().next()
 }
 
-/// Run a read-only PowerShell query and return stdout.
-#[cfg(windows)]
 /// Every shape `ConvertTo-Json` can produce for one logical collection.
 ///
 /// PowerShell is remarkably inconsistent here, and each variant below was
@@ -385,6 +383,8 @@ where
     )
 }
 
+/// Run a read-only PowerShell query and return stdout.
+#[cfg(windows)]
 pub(crate) async fn ps_query(script: &str, timeout: std::time::Duration) -> Result<String> {
     let out = odysync_core::proc::powershell(script, timeout).await?;
     Ok(out.stdout)
