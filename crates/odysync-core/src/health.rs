@@ -76,6 +76,11 @@ async fn check_disk_space() -> HealthCheckResult {
     #[cfg(windows)]
     {
         let drive = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
+        // `SystemDrive` is `C:` — a drive prefix with no root, which means
+        // "current directory on C:", not "the root of C:". Joining `\` is what
+        // turns it into `C:\`. clippy's join_absolute_paths lint does not model
+        // the Windows drive-relative case and flags this incorrectly.
+        #[allow(clippy::join_absolute_paths)]
         let root = Path::new(&drive).join("\\");
         match get_free_space(&root) {
             Some(free) if free >= min_bytes => HealthCheckResult::pass("disk-space"),

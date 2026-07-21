@@ -9,7 +9,7 @@
 use async_trait::async_trait;
 
 use crate::error::Result;
-use crate::model::{BackendKind, UpdateCandidate};
+use crate::model::{BackendKind, InstalledPackage, UpdateCandidate};
 
 /// Progress phase reported during `apply_with_progress`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -52,6 +52,16 @@ pub trait Backend: Send + Sync {
     /// Implementations must report versions verbatim and must not filter on
     /// their own idea of what is safe — that is the policy engine's job.
     async fn scan(&self) -> Result<Vec<UpdateCandidate>>;
+
+    /// Enumerate every package this backend currently has installed.
+    ///
+    /// Distinct from [`scan`](Backend::scan), which reports only packages with
+    /// a newer version available. The default returns an empty list for
+    /// backends that cannot enumerate their inventory (driver and firmware
+    /// backends, for example).
+    async fn list_installed(&self) -> Result<Vec<InstalledPackage>> {
+        Ok(Vec::new())
+    }
 
     /// Install exactly `candidate.available` for `candidate`.
     ///

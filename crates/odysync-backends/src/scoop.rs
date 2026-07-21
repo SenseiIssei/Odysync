@@ -16,7 +16,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use odysync_core::backend::Backend;
 use odysync_core::error::{Error, Result};
-use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
+use odysync_core::model::{BackendKind, InstalledPackage, PackageId, UpdateCandidate};
 use odysync_core::proc;
 use odysync_core::version::Version;
 
@@ -66,6 +66,20 @@ impl Backend for ScoopBackend {
         }
 
         Ok(parse_scoop_status(&out.stdout))
+    }
+
+    async fn list_installed(&self) -> Result<Vec<InstalledPackage>> {
+        let out = proc::run("scoop", &["list"], SCAN_TIMEOUT).await?;
+
+        if !out.success() {
+            return Err(Error::CommandFailed {
+                command: "scoop list".into(),
+                code: out.code,
+                stderr: out.stderr,
+            });
+        }
+
+        Ok(parse_scoop_list(&out.stdout))
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
@@ -180,6 +194,49 @@ fn parse_scoop_status(stdout: &str) -> Vec<UpdateCandidate> {
     candidates
 }
 
+/// Parse `scoop list` output.
+///
+/// ```text
+/// Installed apps:
+///
+/// Name    Version   Source Updated             Info
+/// ----    -------   ------ -------             ----
+/// 7zip    24.09     main   2024-09-01 10:00:00
+/// git     2.46.0    main   2024-09-02 11:00:00
+/// ```
+///
+/// Only the first two fields are read, so the trailing columns (which are
+/// optional and sometimes empty) cannot shift the parse.
+fn parse_scoop_list(stdout: &str) -> Vec<InstalledPackage> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            // Section headings such as "Installed apps:".
+            if trimmed.is_empty() || trimmed.ends_with(':') {
+                return None;
+            }
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() < 2 {
+                return None;
+            }
+            // The header row and the dashed rule beneath it.
+            if parts[0] == "Name" || parts[0].chars().all(|c| c == '-') {
+                return None;
+            }
+            let (name, version) = (parts[0], parts[1]);
+            if version.is_empty() {
+                return None;
+            }
+            Some(InstalledPackage {
+                id: PackageId::new(BackendKind::Scoop, name),
+                name: name.to_string(),
+                version: version.to_string(),
+            })
+        })
+        .collect()
+}
+
 fn parse_outdated_line(line: &str) -> Option<(&str, &str, &str)> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() < 4 {
@@ -223,6 +280,45 @@ These apps are outdated and have updates available:
     fn no_outdated_section_yields_empty_vec() {
         let output = "Scoop is up to date.\n\nThese apps are outdated and have updates available:\n\n";
         assert!(parse_scoop_status(output).is_empty());
+    }
+
+    #[test]
+    fn parses_scoop_list() {
+        let output = "\
+Installed apps:
+
+Name    Version   Source Updated             Info
+----    -------   ------ -------             ----
+7zip    24.09     main   2024-09-01 10:00:00
+git     2.46.0    main   2024-09-02 11:00:00
+";
+        let installed = parse_scoop_list(output);
+        assert_eq!(installed.len(), 2);
+        assert_eq!(installed[0].id.native, "7zip");
+        assert_eq!(installed[0].version, "24.09");
+        assert_eq!(installed[1].name, "git");
+        assert_eq!(installed[1].version, "2.46.0");
+    }
+
+    #[test]
+    fn scoop_list_ignores_headers_and_blank_lines() {
+        assert!(parse_scoop_list("Installed apps:\n\nName  Version\n----  -------\n").is_empty());
+        assert!(parse_scoop_list("").is_empty());
+    }
+
+    #[test]
+    fn scoop_list_tolerates_a_missing_info_column() {
+        let output = "\
+Name    Version   Source Updated             Info
+----    -------   ------ -------             ----
+extras  1.0.0     extras 2024-09-01 10:00:00 Held package
+plain   2.0.0
+";
+        let installed = parse_scoop_list(output);
+        assert_eq!(installed.len(), 2);
+        assert_eq!(installed[0].version, "1.0.0");
+        assert_eq!(installed[1].id.native, "plain");
+        assert_eq!(installed[1].version, "2.0.0");
     }
 
     #[test]

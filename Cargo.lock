@@ -2642,7 +2642,7 @@ dependencies = [
 
 [[package]]
 name = "odysync-backends"
-version = "2.0.0-alpha.1"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2657,6 +2657,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
  "tracing",
  "unicode-width",
@@ -2666,7 +2667,7 @@ dependencies = [
 
 [[package]]
 name = "odysync-cli"
-version = "2.0.0-alpha.1"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2682,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "odysync-core"
-version = "2.0.0-alpha.1"
+version = "2.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2699,7 +2700,7 @@ dependencies = [
 
 [[package]]
 name = "odysync-gui"
-version = "2.0.0-alpha.1"
+version = "2.1.0"
 dependencies = [
  "chrono",
  "directories",
@@ -2721,7 +2722,7 @@ dependencies = [
 
 [[package]]
 name = "odysync-verify"
-version = "2.0.0-alpha.1"
+version = "2.1.0"
 dependencies = [
  "hex",
  "odysync-core",
@@ -2733,7 +2734,7 @@ dependencies = [
 
 [[package]]
 name = "odysync-version-source"
-version = "2.0.0-alpha.1"
+version = "2.1.0"
 dependencies = [
  "async-trait",
  "chrono",

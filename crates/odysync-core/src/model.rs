@@ -311,6 +311,16 @@ pub struct UpdateCandidate {
     pub expected_sha256: Option<String>,
 }
 
+/// A package a backend reports as currently installed, regardless of whether
+/// an update is available for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstalledPackage {
+    pub id: PackageId,
+    pub name: String,
+    /// Version string exactly as the package manager reported it.
+    pub version: String,
+}
+
 /// Why the policy engine refused to act on a candidate.
 ///
 /// Every variant here corresponds to a class of real-world breakage; they are

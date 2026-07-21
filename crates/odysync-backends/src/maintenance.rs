@@ -326,7 +326,10 @@ impl Maintenance for SystemHealth {
                 dism_restore_detail,
             );
 
-            let success = sfc_ok; // SFC success is the main indicator
+            // Every stage has to pass. Reporting success on SFC alone hid a
+            // failed DISM run behind a green result, which is exactly the case
+            // someone runs this check to find out about.
+            let success = sfc_ok && dism_scan_ok && dism_restore_ok;
 
             return Ok(MaintenanceResult {
                 kind: MaintenanceKind::SystemHealth,
