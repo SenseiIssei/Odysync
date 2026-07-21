@@ -19,6 +19,12 @@ tracing.workspace = true
 tokio.workspace = true
 regex = "1"
 
+# `health::get_free_space` calls `libc::statvfs` under `cfg(unix)`. Without
+# this the crate does not compile on Linux or macOS at all — only the Windows
+# job in CI was ever green.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Foundation",
