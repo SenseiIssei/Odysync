@@ -4,6 +4,9 @@ use odysync_core::config::Config;
 use odysync_core::history::HistoryOutcome;
 use odysync_core::maintenance::MaintenanceKind;
 use odysync_core::model::{ApplyOutcome, BackendKind, PackageId, UpdateCandidate};
+// Every `proc::powershell` call site is inside a `cfg(windows)` block, so on
+// other platforms this import is unused — which `-D warnings` rejects.
+#[cfg(windows)]
 use odysync_core::proc;
 use odysync_core::report::RunReport;
 use odysync_core::runner::{ProgressEmitter, ProgressEvent, Runner};
@@ -50,6 +53,9 @@ pub async fn report_frontend_error(
 /// Values reaching these scripts come from the registry and the Startup folder,
 /// which any user-level process can write. Interpolating them raw let a name
 /// containing an apostrophe close the literal and run arbitrary PowerShell.
+/// Called only from the Windows PowerShell paths (and its own test), so on
+/// other platforms a non-test build sees it as dead code.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn ps_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
