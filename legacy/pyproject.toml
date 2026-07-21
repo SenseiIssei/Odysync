@@ -1,9 +1,9 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sensei-updater"
+name = "odysync"
 version = "1.2.0"
 description = "Safe Windows driver and software updater with profiles, reports, diagnostics, scheduling, and TUI."
 readme = "README.md"
@@ -14,7 +14,7 @@ dependencies = []
 tui = ["textual>=0.62.0"]
 
 [project.scripts]
-sensei-updater = "sensei_updater.main:main"
+odysync = "odysync_updater.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

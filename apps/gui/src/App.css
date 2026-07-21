@@ -1,0 +1,148 @@
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
+
+:root {
+  --cyber-bg: #0a0a0f;
+  --cyber-surface: #13131a;
+  --cyber-border: #1e1e2a;
+  --accent-cyan: #00f0ff;
+  --accent-purple: #a855f7;
+}
+
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+}
+
+body {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Rounded window container */
+.app-window {
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--cyber-bg);
+  border: 1px solid var(--cyber-border);
+}
+
+/* Custom titlebar drag region */
+.titlebar {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.titlebar button {
+  -webkit-app-region: no-drag;
+}
+
+/* Glow effects */
+.glow-cyan {
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.3), 0 0 4px rgba(0, 240, 255, 0.2);
+}
+.glow-cyan-strong {
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.5), 0 0 8px rgba(0, 240, 255, 0.3);
+}
+.glow-purple {
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.3), 0 0 4px rgba(168, 85, 247, 0.2);
+}
+.glow-green {
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.3), 0 0 4px rgba(34, 197, 94, 0.2);
+}
+.glow-red {
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.3), 0 0 4px rgba(239, 68, 68, 0.2);
+}
+
+/* Text glow */
+.text-glow-cyan {
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
+}
+.text-glow-purple {
+  text-shadow: 0 0 8px rgba(168, 85, 247, 0.5);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a3e;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a5e;
+}
+
+/* Gradient border effect */
+.gradient-border {
+  position: relative;
+  background: var(--cyber-surface);
+  border-radius: 8px;
+}
+.gradient-border::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.3), rgba(168, 85, 247, 0.3));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Scan line animation overlay */
+.scan-overlay {
+  position: relative;
+  overflow: hidden;
+}
+.scan-overlay::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+  animation: scan-line 1.5s ease-in-out infinite;
+}
+
+/* Grid background pattern */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(30, 30, 42, 0.5) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 30, 42, 0.5) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Smooth focus ring */
+*:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Disable default button styles */
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Selection color */
+::selection {
+  background: rgba(0, 240, 255, 0.2);
+  color: #fff;
+}

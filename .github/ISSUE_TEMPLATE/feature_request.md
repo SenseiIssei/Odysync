@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest an idea for Sensei's Updater
+description: Suggest an idea for Odysync
 title: "[Feature] "
 labels: ["type:feature"]
 body:
