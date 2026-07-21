@@ -149,9 +149,8 @@ fn parse_softwareupdate_list(output: &str) -> Vec<UpdateCandidate> {
             if let Some(label) = current_label.take() {
                 let version = extract_field(line, "Version:").unwrap_or_default();
                 let name = title.trim_end_matches(',').to_string();
-                let is_firmware = line.contains("Firmware")
-                    || line.contains("EFI")
-                    || line.contains("SMC");
+                let is_firmware =
+                    line.contains("Firmware") || line.contains("EFI") || line.contains("SMC");
 
                 candidates.push(UpdateCandidate {
                     id: PackageId::new(BackendKind::MacFirmware, &label),
@@ -162,8 +161,7 @@ fn parse_softwareupdate_list(output: &str) -> Vec<UpdateCandidate> {
                     },
                     installed: Version::parse("0.0.0"),
                     available: Version::parse(&version),
-                    size_bytes: extract_field(line, "Size:")
-                        .and_then(|s| parse_size(&s)),
+                    size_bytes: extract_field(line, "Size:").and_then(|s| parse_size(&s)),
                     expected_sha256: None,
                 });
             }

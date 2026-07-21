@@ -5,9 +5,9 @@
 //! each vendor backend only has to implement scan/apply for its own update
 //! mechanism.
 
-pub mod nvidia_gpu;
 pub mod amd_gpu;
 pub mod intel_gpu;
+pub mod nvidia_gpu;
 pub mod qualcomm_gpu;
 
 use std::time::Duration;
@@ -181,7 +181,9 @@ pub async fn read_driver_version_from_registry(
         service_name, registry_suffix, value_name, value_name
     );
 
-    let out = proc::powershell(&script, Duration::from_secs(10)).await.ok()?;
+    let out = proc::powershell(&script, Duration::from_secs(10))
+        .await
+        .ok()?;
     let version = out.stdout.trim().to_string();
     if version.is_empty() {
         None

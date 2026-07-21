@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use odysync_core::backend::Backend;
 use odysync_core::error::{Error, Result};
 use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
-use odysync_core::version::Version;
 use odysync_core::proc;
+use odysync_core::version::Version;
 
 const SCAN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const INSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
@@ -15,20 +15,30 @@ const INSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300)
 pub struct DellFirmwareBackend;
 
 impl DellFirmwareBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for DellFirmwareBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for DellFirmwareBackend {
-    fn kind(&self) -> BackendKind { BackendKind::DellFirmware }
-    fn display_name(&self) -> &str { "Dell firmware (dcu-cli)" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::DellFirmware
+    }
+    fn display_name(&self) -> &str {
+        "Dell firmware (dcu-cli)"
+    }
 
     async fn is_available(&self) -> bool {
-        if !cfg!(windows) { return false; }
+        if !cfg!(windows) {
+            return false;
+        }
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         std::path::Path::new(&pf)
             .join("Dell/CommandUpdate/dcu-cli.exe")
@@ -36,7 +46,9 @@ impl Backend for DellFirmwareBackend {
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
-        if !cfg!(windows) { return Ok(Vec::new()); }
+        if !cfg!(windows) {
+            return Ok(Vec::new());
+        }
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         let dcu = format!("{pf}/Dell/CommandUpdate/dcu-cli.exe");
 
@@ -67,7 +79,12 @@ impl Backend for DellFirmwareBackend {
         }
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         let dcu = format!("{pf}/Dell/CommandUpdate/dcu-cli.exe");
-        let out = proc::run(&dcu, &["/applyUpdates", "/silent", "/reboot=disable"], INSTALL_TIMEOUT).await?;
+        let out = proc::run(
+            &dcu,
+            &["/applyUpdates", "/silent", "/reboot=disable"],
+            INSTALL_TIMEOUT,
+        )
+        .await?;
         if !out.success() {
             return Err(Error::CommandFailed {
                 command: "dcu-cli /applyUpdates".into(),
@@ -88,20 +105,30 @@ impl Backend for DellFirmwareBackend {
 pub struct HpFirmwareBackend;
 
 impl HpFirmwareBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for HpFirmwareBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for HpFirmwareBackend {
-    fn kind(&self) -> BackendKind { BackendKind::HpFirmware }
-    fn display_name(&self) -> &str { "HP firmware (HPIA)" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::HpFirmware
+    }
+    fn display_name(&self) -> &str {
+        "HP firmware (HPIA)"
+    }
 
     async fn is_available(&self) -> bool {
-        if !cfg!(windows) { return false; }
+        if !cfg!(windows) {
+            return false;
+        }
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         std::path::Path::new(&pf)
             .join("HP/HP Image Assistant/HPIA.exe")
@@ -109,11 +136,23 @@ impl Backend for HpFirmwareBackend {
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
-        if !cfg!(windows) { return Ok(Vec::new()); }
+        if !cfg!(windows) {
+            return Ok(Vec::new());
+        }
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         let hpia = format!("{pf}/HP/HP Image Assistant/HPIA.exe");
 
-        let out = proc::run(&hpia, &["/Analyze", "/Action:Analyze", "/Silent", "/ReportFolder:%TEMP%"], SCAN_TIMEOUT).await?;
+        let out = proc::run(
+            &hpia,
+            &[
+                "/Analyze",
+                "/Action:Analyze",
+                "/Silent",
+                "/ReportFolder:%TEMP%",
+            ],
+            SCAN_TIMEOUT,
+        )
+        .await?;
         let kind = self.kind();
         if out.success() {
             Ok(vec![UpdateCandidate {
@@ -138,7 +177,17 @@ impl Backend for HpFirmwareBackend {
         }
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         let hpia = format!("{pf}/HP/HP Image Assistant/HPIA.exe");
-        let out = proc::run(&hpia, &["/Apply", "/Action:Install", "/Silent", "/ReportFolder:%TEMP%"], INSTALL_TIMEOUT).await?;
+        let out = proc::run(
+            &hpia,
+            &[
+                "/Apply",
+                "/Action:Install",
+                "/Silent",
+                "/ReportFolder:%TEMP%",
+            ],
+            INSTALL_TIMEOUT,
+        )
+        .await?;
         if !out.success() {
             return Err(Error::CommandFailed {
                 command: "HPIA /Apply".into(),
@@ -159,20 +208,30 @@ impl Backend for HpFirmwareBackend {
 pub struct LenovoFirmwareBackend;
 
 impl LenovoFirmwareBackend {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Default for LenovoFirmwareBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Backend for LenovoFirmwareBackend {
-    fn kind(&self) -> BackendKind { BackendKind::LenovoFirmware }
-    fn display_name(&self) -> &str { "Lenovo firmware (SUHelper)" }
+    fn kind(&self) -> BackendKind {
+        BackendKind::LenovoFirmware
+    }
+    fn display_name(&self) -> &str {
+        "Lenovo firmware (SUHelper)"
+    }
 
     async fn is_available(&self) -> bool {
-        if !cfg!(windows) { return false; }
+        if !cfg!(windows) {
+            return false;
+        }
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         std::path::Path::new(&pf)
             .join("Lenovo/System Update/suhelper.exe")
@@ -180,11 +239,18 @@ impl Backend for LenovoFirmwareBackend {
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
-        if !cfg!(windows) { return Ok(Vec::new()); }
+        if !cfg!(windows) {
+            return Ok(Vec::new());
+        }
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         let su = format!("{pf}/Lenovo/System Update/tvsu.exe");
 
-        let out = proc::run(&su, &["/CM", "/search", "/action", "List", "/silent"], SCAN_TIMEOUT).await?;
+        let out = proc::run(
+            &su,
+            &["/CM", "/search", "/action", "List", "/silent"],
+            SCAN_TIMEOUT,
+        )
+        .await?;
         let kind = self.kind();
         if out.success() {
             Ok(vec![UpdateCandidate {
@@ -209,7 +275,19 @@ impl Backend for LenovoFirmwareBackend {
         }
         let pf = std::env::var("ProgramFiles").unwrap_or_default();
         let su = format!("{pf}/Lenovo/System Update/tvsu.exe");
-        let out = proc::run(&su, &["/CM", "/install", "/action", "Install", "/silent", "/noreboot"], INSTALL_TIMEOUT).await?;
+        let out = proc::run(
+            &su,
+            &[
+                "/CM",
+                "/install",
+                "/action",
+                "Install",
+                "/silent",
+                "/noreboot",
+            ],
+            INSTALL_TIMEOUT,
+        )
+        .await?;
         if !out.success() {
             return Err(Error::CommandFailed {
                 command: "tvsu /install".into(),

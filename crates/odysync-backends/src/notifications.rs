@@ -93,10 +93,12 @@ pub fn event_from_outcome(name: &str, outcome: &ApplyOutcome) -> Option<Notifica
             name: name.to_string(),
             detail: detail.clone(),
         }),
-        ApplyOutcome::DidNotConverge { expected, actual } => Some(NotificationEvent::UpdateFailed {
-            name: name.to_string(),
-            detail: format!("expected {expected}, got {actual}"),
-        }),
+        ApplyOutcome::DidNotConverge { expected, actual } => {
+            Some(NotificationEvent::UpdateFailed {
+                name: name.to_string(),
+                detail: format!("expected {expected}, got {actual}"),
+            })
+        }
         ApplyOutcome::VerificationFailed { detail } => Some(NotificationEvent::UpdateFailed {
             name: name.to_string(),
             detail: detail.clone(),
@@ -146,9 +148,7 @@ async fn notify_macos(title: &str, body: &str) {
         title.replace('"', "\\\"")
     );
 
-    let _ = Command::new("osascript")
-        .args(["-e", &script])
-        .spawn();
+    let _ = Command::new("osascript").args(["-e", &script]).spawn();
 }
 
 #[cfg(target_os = "linux")]
@@ -224,7 +224,10 @@ mod tests {
             to: "2.0".into(),
         };
         let event = event_from_outcome("Test", &outcome);
-        assert!(matches!(event, Some(NotificationEvent::UpdateSucceeded { .. })));
+        assert!(matches!(
+            event,
+            Some(NotificationEvent::UpdateSucceeded { .. })
+        ));
     }
 
     #[test]
@@ -233,7 +236,10 @@ mod tests {
             detail: "broken".into(),
         };
         let event = event_from_outcome("Test", &outcome);
-        assert!(matches!(event, Some(NotificationEvent::UpdateFailed { .. })));
+        assert!(matches!(
+            event,
+            Some(NotificationEvent::UpdateFailed { .. })
+        ));
     }
 
     #[test]

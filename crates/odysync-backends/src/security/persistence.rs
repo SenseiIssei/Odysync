@@ -300,18 +300,33 @@ const HIGH_SIGNAL: &[(&str, &str)] = &[
     ("-enc ", "base64-encoded PowerShell command"),
     ("/enc ", "base64-encoded PowerShell command"),
     ("frombase64string", "base64 decoding at runtime"),
-    ("invoke-expression", "runtime code evaluation (Invoke-Expression)"),
-    ("downloadstring", "downloads and runs code from the internet"),
+    (
+        "invoke-expression",
+        "runtime code evaluation (Invoke-Expression)",
+    ),
+    (
+        "downloadstring",
+        "downloads and runs code from the internet",
+    ),
     ("downloadfile", "downloads a file from the internet"),
     ("invoke-webrequest", "fetches content from the internet"),
     ("bitsadmin /transfer", "downloads via bitsadmin"),
     ("certutil -urlcache", "downloads via certutil"),
-    ("certutil -decode", "decodes an embedded payload via certutil"),
+    (
+        "certutil -decode",
+        "decodes an embedded payload via certutil",
+    ),
     ("regsvr32 /i:http", "loads a remote scriptlet via regsvr32"),
     ("scrobj.dll", "runs a script through scrobj.dll"),
-    ("[reflection.assembly]::load", "loads .NET assemblies from memory"),
+    (
+        "[reflection.assembly]::load",
+        "loads .NET assemblies from memory",
+    ),
     ("-ep bypass", "bypasses PowerShell execution policy"),
-    ("-executionpolicy bypass", "bypasses PowerShell execution policy"),
+    (
+        "-executionpolicy bypass",
+        "bypasses PowerShell execution policy",
+    ),
 ];
 
 /// Suggestive, but with plenty of legitimate uses.
@@ -609,14 +624,9 @@ pub fn analyze_runs(runs: &[RunEntry], trust: &TrustMap) -> Vec<Finding> {
 
         if has_high_signal(&indicators) {
             severity = severity.escalate(Severity::High);
-            reasons.push(
-                "its command line is obfuscated or downloads code at startup"
-                    .to_string(),
-            );
+            reasons.push("its command line is obfuscated or downloads code at startup".to_string());
             // Obfuscated *and* unsigned/non-standard is a loader, full stop.
-            if severity == Severity::High
-                && target.as_deref().is_some_and(|p| !is_system_dir(p))
-            {
+            if severity == Severity::High && target.as_deref().is_some_and(|p| !is_system_dir(p)) {
                 severity = Severity::Critical;
             }
         }
@@ -746,7 +756,12 @@ pub fn analyze_winlogon(w: &WinlogonEntry) -> Vec<Finding> {
         }
     }
 
-    if let Some(taskman) = w.taskman.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(taskman) = w
+        .taskman
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         out.push(
             Finding::new(
                 "persistence-winlogon-taskman",
@@ -841,7 +856,11 @@ pub fn analyze_startup(files: &[StartupFile], trust: &TrustMap) -> Vec<Finding> 
                         .to_string()
                 },
             )
-            .with_evidence(line.into_iter().chain([format!("folder: {}", f.location)]).collect::<Vec<_>>())
+            .with_evidence(
+                line.into_iter()
+                    .chain([format!("folder: {}", f.location)])
+                    .collect::<Vec<_>>(),
+            )
             .with_remediation(Remediation::DeleteFile {
                 path: f.path.clone(),
             }),
@@ -911,8 +930,9 @@ pub fn analyze_tasks(tasks: &[TaskEntry], trust: &TrustMap) -> Vec<Finding> {
 
             if has_high_signal(&indicators) {
                 severity = severity.escalate(Severity::High);
-                reasons
-                    .push("its arguments are obfuscated or fetch code from the internet".to_string());
+                reasons.push(
+                    "its arguments are obfuscated or fetch code from the internet".to_string(),
+                );
                 if outside || is_lolbin(target.as_deref().unwrap_or("")) {
                     severity = Severity::Critical;
                 }
@@ -967,9 +987,8 @@ pub fn analyze_services(services: &[ServiceEntry], trust: &TrustMap) -> Vec<Find
             let path = target.clone().unwrap_or_default();
             let (line, unsigned, missing) = trust_evidence(trust, &path);
             let mut severity = Severity::Low;
-            let mut reasons = vec![
-                "its executable is outside C:\\Windows and Program Files".to_string(),
-            ];
+            let mut reasons =
+                vec!["its executable is outside C:\\Windows and Program Files".to_string()];
             if unsigned {
                 severity = Severity::High;
                 reasons.push("and is unsigned".to_string());
@@ -987,7 +1006,12 @@ pub fn analyze_services(services: &[ServiceEntry], trust: &TrustMap) -> Vec<Find
             }
 
             if severity != Severity::Low {
-                let mut evidence = vec![format!("{} ({}) -> {}", s.name, s.display_name.clone().unwrap_or_default(), s.path_name)];
+                let mut evidence = vec![format!(
+                    "{} ({}) -> {}",
+                    s.name,
+                    s.display_name.clone().unwrap_or_default(),
+                    s.path_name
+                )];
                 evidence.extend(line);
                 if let Some(m) = &s.start_mode {
                     evidence.push(format!("start mode: {m}"));
@@ -1253,7 +1277,9 @@ mod tests {
     #[test]
     fn iex_matches_as_a_token_not_a_substring() {
         assert!(has_high_signal(&command_indicators("powershell -c iex $x")));
-        assert!(has_high_signal(&command_indicators("powershell -c IEX($a)")));
+        assert!(has_high_signal(&command_indicators(
+            "powershell -c IEX($a)"
+        )));
         // A program that merely has those letters in its name is not a cradle.
         assert!(!has_high_signal(&command_indicators(
             r"C:\Program Files\Fiexplorer\fiex.exe"
@@ -1262,7 +1288,9 @@ mod tests {
 
     #[test]
     fn lolbins_are_recognised_by_file_name() {
-        assert!(is_lolbin(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"));
+        assert!(is_lolbin(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        ));
         assert!(is_lolbin("MSHTA.EXE"));
         assert!(!is_lolbin(r"C:\Program Files\App\app.exe"));
     }
@@ -1474,7 +1502,9 @@ mod tests {
             start_mode: Some("Auto".into()),
             state: Some("Running".into()),
         }];
-        let trust = trust_map(vec![unsigned(r"C:\Users\bob\AppData\Local\Temp\helper.exe")]);
+        let trust = trust_map(vec![unsigned(
+            r"C:\Users\bob\AppData\Local\Temp\helper.exe",
+        )]);
         let f = analyze_services(&services, &trust);
         assert_eq!(f[0].severity, Severity::High);
         assert_eq!(

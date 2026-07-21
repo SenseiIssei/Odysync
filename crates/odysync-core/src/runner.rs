@@ -1,4 +1,4 @@
-﻿//! Applies a plan and confirms each update actually landed.
+//! Applies a plan and confirms each update actually landed.
 //!
 //! The runner is deliberately paranoid about one thing: a package manager
 //! reporting exit code 0 does not prove the package changed. winget in
@@ -65,7 +65,8 @@ impl<'a> Runner<'a> {
         report: &mut RunReport,
         restore_point: bool,
     ) {
-        self.run_with_progress(plan, report, restore_point, None::<&dyn ProgressEmitter>).await;
+        self.run_with_progress(plan, report, restore_point, None::<&dyn ProgressEmitter>)
+            .await;
     }
 
     /// Like [`run`](Self::run) but emits progress events via `emitter`.
@@ -202,8 +203,7 @@ impl<'a> Runner<'a> {
                     if e.is_retryable() && attempt < max_retries {
                         // Cap the shift so a large configured retry count
                         // cannot overflow into a multi-hour sleep.
-                        let delay =
-                            std::time::Duration::from_secs(1u64 << attempt.min(6));
+                        let delay = std::time::Duration::from_secs(1u64 << attempt.min(6));
                         tracing::warn!(
                             package = %candidate.id,
                             attempt = attempt + 1,

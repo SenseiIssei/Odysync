@@ -223,7 +223,9 @@ async fn read_installed_driver_version() -> Option<String> {
             Select-Object -First 1 -ExpandProperty DriverVersion
     "#;
 
-    let out = proc::powershell(script, Duration::from_secs(10)).await.ok()?;
+    let out = proc::powershell(script, Duration::from_secs(10))
+        .await
+        .ok()?;
     let version = out.stdout.trim().to_string();
     if version.is_empty() {
         None

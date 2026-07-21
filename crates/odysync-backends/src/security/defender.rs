@@ -311,7 +311,10 @@ fn threat_finding(threat: &ThreatRow, detections: &[DetectionRow]) -> Finding {
                 evidence.push(r.clone());
             }
         }
-        evidence.push(format!("status: {}", threat_status_label(d.threat_status_id)));
+        evidence.push(format!(
+            "status: {}",
+            threat_status_label(d.threat_status_id)
+        ));
     }
 
     let executed = threat.did_threat_execute == Some(true);
@@ -497,7 +500,12 @@ pub async fn scan_path(path: &str) -> Result<String> {
         "$ErrorActionPreference='Stop'; Start-MpScan -ScanType CustomScan -ScanPath {}; 'ok'",
         super::ps_quote(path)
     );
-    super::ps_mutate("Start-MpScan -ScanType CustomScan", &script, QUICK_SCAN_TIMEOUT).await?;
+    super::ps_mutate(
+        "Start-MpScan -ScanType CustomScan",
+        &script,
+        QUICK_SCAN_TIMEOUT,
+    )
+    .await?;
     Ok(format!("Defender scanned {path}."))
 }
 
@@ -525,7 +533,10 @@ pub async fn update_signatures() -> Result<String> {
 /// action was not scoped to one threat.
 pub async fn remove_threat(threat_id: &str) -> Result<String> {
     let id = validate_threat_id(threat_id)?;
-    tracing::info!(threat_id = id, "asking Defender to remediate active threats");
+    tracing::info!(
+        threat_id = id,
+        "asking Defender to remediate active threats"
+    );
 
     let script = "$ErrorActionPreference='Stop'; Remove-MpThreat; 'ok'";
     super::ps_mutate("Remove-MpThreat", script, Duration::from_secs(60 * 20)).await?;
@@ -565,7 +576,10 @@ pub async fn remove_threat(_threat_id: &str) -> Result<String> {
 
 #[cfg(not(windows))]
 fn unsupported() -> Error {
-    Error::unavailable("Microsoft Defender", "this action is only available on Windows")
+    Error::unavailable(
+        "Microsoft Defender",
+        "this action is only available on Windows",
+    )
 }
 
 /// `Remove-MpThreat -ThreatID` takes an integer. Accepting anything else would
@@ -696,9 +710,7 @@ mod tests {
                 severity_id: Some(3),
                 is_active: Some(true),
                 did_threat_execute: Some(true),
-                resources: vec![
-                    r"file:_C:\Users\bob\AppData\Local\Temp\setup.exe".into(),
-                ],
+                resources: vec![r"file:_C:\Users\bob\AppData\Local\Temp\setup.exe".into()],
             }],
             detections: vec![DetectionRow {
                 threat_id: Some(2147735503),
@@ -769,7 +781,10 @@ mod tests {
         );
         // Unknown severity should not silently become "Low".
         assert_eq!(severity_from_defender(None, None), Severity::Medium);
-        assert_eq!(severity_from_defender(Some(1), Some(true)), Severity::Critical);
+        assert_eq!(
+            severity_from_defender(Some(1), Some(true)),
+            Severity::Critical
+        );
     }
 
     /// Regression, from a real 58 KB `Get-MpThreat` payload.
@@ -799,8 +814,15 @@ mod tests {
             serde_json::from_str(json).expect("all three collection shapes must parse");
 
         assert_eq!(snapshot.threats.len(), 2);
-        assert!(snapshot.threats[0].resources.is_empty(), "null becomes empty");
-        assert_eq!(snapshot.threats[1].resources.len(), 1, "plain arrays survive");
+        assert!(
+            snapshot.threats[0].resources.is_empty(),
+            "null becomes empty"
+        );
+        assert_eq!(
+            snapshot.threats[1].resources.len(),
+            1,
+            "plain arrays survive"
+        );
         assert_eq!(
             snapshot.detections[0].resources.len(),
             2,

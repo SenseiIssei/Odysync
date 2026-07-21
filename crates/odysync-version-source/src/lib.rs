@@ -11,14 +11,14 @@
 //! result for offline use.
 
 mod cache;
+mod hybrid;
 mod registry;
 mod scraper;
-mod hybrid;
 
 pub use cache::OfflineCache;
+pub use hybrid::HybridSource;
 pub use registry::RegistrySource;
 pub use scraper::VendorScraper;
-pub use hybrid::HybridSource;
 
 use serde::{Deserialize, Serialize};
 

@@ -148,19 +148,32 @@ impl Finding {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Remediation {
     /// Hand the threat back to Defender for removal.
-    RemoveDefenderThreat { threat_id: String },
+    RemoveDefenderThreat {
+        threat_id: String,
+    },
     /// Delete an autostart registry value, after backing it up.
-    DisableRunKey { hive: String, name: String },
+    DisableRunKey {
+        hive: String,
+        name: String,
+    },
     /// `Disable-ScheduledTask`; never applied to `\Microsoft\Windows\` tasks.
-    DisableScheduledTask { task_path: String },
+    DisableScheduledTask {
+        task_path: String,
+    },
     /// Quarantine (rename + move), never a hard delete, and only inside
     /// user-writable directories.
-    DeleteFile { path: String },
-    StopAndDisableService { name: String },
+    DeleteFile {
+        path: String,
+    },
+    StopAndDisableService {
+        name: String,
+    },
     /// Back up `hosts` and restore the stock Windows contents.
     ResetHostsFile,
     /// Nothing safe to automate; tell the user what to do themselves.
-    Manual { instructions: String },
+    Manual {
+        instructions: String,
+    },
 }
 
 /// Outcome of one scan section.
@@ -202,13 +215,7 @@ impl ScanReport {
 }
 
 /// Section names, in report order.
-pub const SECTIONS: &[&str] = &[
-    "defender",
-    "persistence",
-    "integrity",
-    "network",
-    "posture",
-];
+pub const SECTIONS: &[&str] = &["defender", "persistence", "integrity", "network", "posture"];
 
 /// Run every section concurrently and collect the findings.
 ///
@@ -665,7 +672,9 @@ pub fn is_user_writable_dir(path: &str) -> bool {
         "\\$recycle.bin\\",
         "\\perflogs\\",
     ];
-    ROOTS.iter().any(|r| tail.starts_with(r) || tail.contains(r))
+    ROOTS
+        .iter()
+        .any(|r| tail.starts_with(r) || tail.contains(r))
 }
 
 #[cfg(test)]
@@ -760,7 +769,10 @@ mod tests {
         assert_eq!(parse_ps_json::<Row>("   "), Vec::<Row>::new());
         assert_eq!(parse_ps_json::<Row>("null"), Vec::<Row>::new());
         // Non-JSON noise on stdout must not blow up a scan section.
-        assert_eq!(parse_ps_json::<Row>("WARNING: something"), Vec::<Row>::new());
+        assert_eq!(
+            parse_ps_json::<Row>("WARNING: something"),
+            Vec::<Row>::new()
+        );
     }
 
     #[test]
@@ -768,8 +780,14 @@ mod tests {
         let mut v = vec![Severity::Low, Severity::Critical, Severity::Medium];
         v.sort();
         assert_eq!(v, vec![Severity::Critical, Severity::Medium, Severity::Low]);
-        assert_eq!(Severity::Medium.escalate(Severity::Critical), Severity::Critical);
-        assert_eq!(Severity::Critical.escalate(Severity::Low), Severity::Critical);
+        assert_eq!(
+            Severity::Medium.escalate(Severity::Critical),
+            Severity::Critical
+        );
+        assert_eq!(
+            Severity::Critical.escalate(Severity::Low),
+            Severity::Critical
+        );
     }
 
     #[test]
@@ -812,7 +830,9 @@ mod tests {
         // every Microsoft-shipped task looks like it runs from nowhere special.
         assert!(is_system_dir(r"%windir%\system32\usoclient.exe"));
         assert!(is_system_dir(r"%SystemRoot%\System32\svchost.exe"));
-        assert!(is_system_dir(r"%ProgramFiles%\Windows Defender\MsMpEng.exe"));
+        assert!(is_system_dir(
+            r"%ProgramFiles%\Windows Defender\MsMpEng.exe"
+        ));
         assert!(is_system_dir(r"\SystemRoot\System32\drivers\http.sys"));
         assert!(!is_system_dir(r"%APPDATA%\evil.exe"));
     }

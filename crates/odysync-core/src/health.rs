@@ -177,9 +177,7 @@ async fn check_battery_or_ac_power() -> HealthCheckResult {
     {
         // pmset -g batt returns battery info; if no battery, it says "AC Power".
         use std::process::Command;
-        let out = Command::new("pmset")
-            .args(["-g", "batt"])
-            .output();
+        let out = Command::new("pmset").args(["-g", "batt"]).output();
 
         match out {
             Ok(o) => {
@@ -307,9 +305,8 @@ fn get_free_space(path: &Path) -> Option<u64> {
         let mut free: u64 = 0;
         let mut total: u64 = 0;
         let mut total_free: u64 = 0;
-        let ret = unsafe {
-            GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, &mut total_free)
-        };
+        let ret =
+            unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, &mut total_free) };
         if ret != 0 {
             Some(free)
         } else {
@@ -347,10 +344,7 @@ mod tests {
 
     #[test]
     fn all_passed_returns_true_for_all_passing() {
-        let results = vec![
-            HealthCheckResult::pass("a"),
-            HealthCheckResult::pass("b"),
-        ];
+        let results = vec![HealthCheckResult::pass("a"), HealthCheckResult::pass("b")];
         assert!(all_passed(&results));
     }
 

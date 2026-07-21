@@ -50,12 +50,7 @@ impl Backend for ChocolateyBackend {
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
-        let out = proc::run(
-            "choco",
-            &["outdated", "--limit-output"],
-            SCAN_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("choco", &["outdated", "--limit-output"], SCAN_TIMEOUT).await?;
 
         if !out.success() {
             return Err(Error::CommandFailed {
@@ -113,7 +108,11 @@ impl Backend for ChocolateyBackend {
             Ok(())
         } else {
             Err(Error::CommandFailed {
-                command: format!("choco install {} {}", candidate.id.native, candidate.available.raw()),
+                command: format!(
+                    "choco install {} {}",
+                    candidate.id.native,
+                    candidate.available.raw()
+                ),
                 code: out.code,
                 stderr: if out.stderr.trim().is_empty() {
                     out.stdout

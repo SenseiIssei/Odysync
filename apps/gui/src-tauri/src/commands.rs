@@ -1,4 +1,5 @@
 use crate::state::AppState;
+use odysync_backends::security;
 use odysync_core::config::Config;
 use odysync_core::history::HistoryOutcome;
 use odysync_core::maintenance::MaintenanceKind;
@@ -6,7 +7,6 @@ use odysync_core::model::{ApplyOutcome, BackendKind, PackageId, UpdateCandidate}
 use odysync_core::proc;
 use odysync_core::report::RunReport;
 use odysync_core::runner::{ProgressEmitter, ProgressEvent, Runner};
-use odysync_backends::security;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
@@ -1730,23 +1730,26 @@ try {
             .await
             .map_err(|e| e.to_string())?;
 
-        let result: RestorePointQuery = parse_ps_json(&out.stdout)
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                "Could not read the restore point list; Windows returned nothing usable."
-                    .to_string()
-            })?;
+        let result: RestorePointQuery =
+            parse_ps_json(&out.stdout)
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    "Could not read the restore point list; Windows returned nothing usable."
+                        .to_string()
+                })?;
 
         if !result.ok {
             let detail = result.error.unwrap_or_default();
-            return Err(if detail.contains("Zugriff") || detail.to_lowercase().contains("denied") {
-                "Windows refused to list restore points. Listing them requires \
+            return Err(
+                if detail.contains("Zugriff") || detail.to_lowercase().contains("denied") {
+                    "Windows refused to list restore points. Listing them requires \
                  administrator rights — use \"Run as Admin\"."
-                    .to_string()
-            } else {
-                format!("Could not list restore points: {detail}")
-            });
+                        .to_string()
+                } else {
+                    format!("Could not list restore points: {detail}")
+                },
+            );
         }
 
         Ok(result
@@ -1843,16 +1846,20 @@ if ($maxAfter -gt $maxBefore) {{
             tracing::info!("restore point created");
             Ok(())
         } else if out.stdout.contains("ODYSYNC_NO_PROTECTION") {
-            Err("Windows created no restore point and none exist, so System Protection \
+            Err(
+                "Windows created no restore point and none exist, so System Protection \
                  is switched off for this drive. Turn it on first: Start > \"Create a \
                  restore point\" > select your system drive > Configure > Turn on system \
                  protection, and give it some disk space."
-                .to_string())
+                    .to_string(),
+            )
         } else if out.stdout.contains("ODYSYNC_THROTTLED") {
-            Err("Windows did not create a new restore point. By default it skips one if \
+            Err(
+                "Windows did not create a new restore point. By default it skips one if \
                  another was created in the last 24 hours — an existing recent restore \
                  point is already listed below."
-                .to_string())
+                    .to_string(),
+            )
         } else {
             let detail = out.stderr.trim();
             Err(if detail.is_empty() {
@@ -2082,16 +2089,13 @@ mod tests {
         use security::{Finding, Remediation, ScanReport, SectionResult, Severity};
 
         let report = ScanReport {
-            findings: vec![Finding::new(
-                "test:1",
-                Severity::Critical,
-                "malware",
-                "t",
-                "d",
-            )
-            .with_remediation(Remediation::RemoveDefenderThreat {
-                threat_id: "42".into(),
-            })],
+            findings: vec![
+                Finding::new("test:1", Severity::Critical, "malware", "t", "d").with_remediation(
+                    Remediation::RemoveDefenderThreat {
+                        threat_id: "42".into(),
+                    },
+                ),
+            ],
             scanned_at: "2026-07-21T00:00:00Z".into(),
             sections: vec![SectionResult {
                 name: "defender".into(),

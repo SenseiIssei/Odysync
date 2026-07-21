@@ -228,7 +228,10 @@ pub fn analyze_firewall(profiles: &[FirewallProfile]) -> Vec<Finding> {
         "posture-firewall-disabled",
         Severity::High,
         "posture",
-        format!("Windows Firewall is off for the {} profile(s)", names.join(", ")),
+        format!(
+            "Windows Firewall is off for the {} profile(s)",
+            names.join(", ")
+        ),
         "With the firewall off, anything listening on this machine is reachable from \
          the network it is attached to. Malware routinely disables the firewall as a \
          first step, so if you did not turn this off yourself, that is worth taking \
@@ -476,7 +479,10 @@ pub fn analyze_accounts(accounts: &[LocalAccount]) -> Vec<Finding> {
                 "account-administrators",
                 Severity::Info,
                 "account",
-                format!("{} local account(s) have administrator rights", admins.len()),
+                format!(
+                    "{} local account(s) have administrator rights",
+                    admins.len()
+                ),
                 format!(
                     "Every account listed here can change anything on this machine. \
                      {} Any name you do not recognise is a serious finding — creating a \
@@ -697,7 +703,9 @@ mod tests {
             .into_iter()
             .map(|f| f.id)
             .collect();
-        assert!(ids.iter().any(|i| i == "account-builtin-administrator-enabled"));
+        assert!(ids
+            .iter()
+            .any(|i| i == "account-builtin-administrator-enabled"));
         assert!(ids.iter().any(|i| i == "account-administrators"));
     }
 

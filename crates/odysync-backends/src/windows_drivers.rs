@@ -1,4 +1,4 @@
-﻿//! Windows driver updates via the Windows Update Agent COM API.
+//! Windows driver updates via the Windows Update Agent COM API.
 //!
 //! v1 used the PSWindowsUpdate PowerShell module, which is a third-party
 //! module from PSGallery installed at runtime as Administrator — a supply-chain
@@ -99,43 +99,47 @@ impl Backend for WindowsDriverBackend {
 async fn scan_drivers_com() -> Result<Vec<UpdateCandidate>> {
     use windows::core::BSTR;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED,
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_LOCAL_SERVER,
+        COINIT_APARTMENTTHREADED,
     };
     use windows::Win32::System::UpdateAgent::{
-        IUpdate, IUpdateCollection, IUpdateIdentity, IUpdateSearcher, IUpdateSession,
-        ISearchResult, UpdateSession,
+        ISearchResult, IUpdate, IUpdateCollection, IUpdateIdentity, IUpdateSearcher,
+        IUpdateSession, UpdateSession,
     };
 
     let result = tokio::task::spawn_blocking(|| {
         let co_initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
 
         let scope = || -> Result<Vec<UpdateCandidate>> {
-            let session: IUpdateSession = unsafe {
-                CoCreateInstance(&UpdateSession, None, CLSCTX_LOCAL_SERVER)
-            }.map_err(|e| Error::parse(
-                "Windows Update Agent",
-                format!("could not create IUpdateSession: {e}"),
-            ))?;
+            let session: IUpdateSession =
+                unsafe { CoCreateInstance(&UpdateSession, None, CLSCTX_LOCAL_SERVER) }.map_err(
+                    |e| {
+                        Error::parse(
+                            "Windows Update Agent",
+                            format!("could not create IUpdateSession: {e}"),
+                        )
+                    },
+                )?;
 
-            let searcher: IUpdateSearcher = unsafe { session.CreateUpdateSearcher() }
-                .map_err(|e| Error::parse(
-                    "Windows Update Agent",
-                    format!("could not create IUpdateSearcher: {e}"),
-                ))?;
+            let searcher: IUpdateSearcher =
+                unsafe { session.CreateUpdateSearcher() }.map_err(|e| {
+                    Error::parse(
+                        "Windows Update Agent",
+                        format!("could not create IUpdateSearcher: {e}"),
+                    )
+                })?;
 
             let criteria = BSTR::from("Type='Driver'");
-            let result: ISearchResult = unsafe {
-                searcher.Search(&criteria)
-            }.map_err(|e| Error::parse(
-                "Windows Update Agent",
-                format!("driver search failed: {e}"),
-            ))?;
+            let result: ISearchResult = unsafe { searcher.Search(&criteria) }.map_err(|e| {
+                Error::parse("Windows Update Agent", format!("driver search failed: {e}"))
+            })?;
 
-            let code = unsafe { result.ResultCode() }
-                .map_err(|e| Error::parse(
+            let code = unsafe { result.ResultCode() }.map_err(|e| {
+                Error::parse(
                     "Windows Update Agent",
                     format!("could not read ResultCode: {e}"),
-                ))?;
+                )
+            })?;
             // OperationResultCode is a tuple struct (i32); 2 = orcFailed
             if code.0 == 2 {
                 return Err(Error::parse(
@@ -144,36 +148,37 @@ async fn scan_drivers_com() -> Result<Vec<UpdateCandidate>> {
                 ));
             }
 
-            let updates: IUpdateCollection = unsafe { result.Updates() }
-                .map_err(|e| Error::parse(
+            let updates: IUpdateCollection = unsafe { result.Updates() }.map_err(|e| {
+                Error::parse(
                     "Windows Update Agent",
                     format!("could not get Updates collection: {e}"),
-                ))?;
+                )
+            })?;
 
-            let count = unsafe { updates.Count() }
-                .map_err(|e| Error::parse(
-                    "Windows Update Agent",
-                    format!("could not get count: {e}"),
-                ))?;
+            let count = unsafe { updates.Count() }.map_err(|e| {
+                Error::parse("Windows Update Agent", format!("could not get count: {e}"))
+            })?;
 
             let mut candidates = Vec::new();
 
             for i in 0..count {
-                let update: IUpdate = unsafe { updates.get_Item(i) }
-                    .map_err(|e| Error::parse(
+                let update: IUpdate = unsafe { updates.get_Item(i) }.map_err(|e| {
+                    Error::parse(
                         "Windows Update Agent",
                         format!("could not get update item {i}: {e}"),
-                    ))?;
+                    )
+                })?;
 
                 let title = unsafe { update.Title() }
                     .map(|t| t.to_string())
                     .unwrap_or_default();
 
-                let identity: IUpdateIdentity = unsafe { update.Identity() }
-                    .map_err(|e| Error::parse(
+                let identity: IUpdateIdentity = unsafe { update.Identity() }.map_err(|e| {
+                    Error::parse(
                         "Windows Update Agent",
                         format!("could not get Identity: {e}"),
-                    ))?;
+                    )
+                })?;
 
                 let raw_id = unsafe { identity.UpdateID() }
                     .map(|t| t.to_string())
@@ -215,11 +220,12 @@ async fn scan_drivers_com() -> Result<Vec<UpdateCandidate>> {
 async fn install_driver_com(candidate: &UpdateCandidate) -> Result<()> {
     use windows::core::BSTR;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED,
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_LOCAL_SERVER,
+        COINIT_APARTMENTTHREADED,
     };
     use windows::Win32::System::UpdateAgent::{
-        IUpdate, IUpdateCollection, IUpdateInstaller, IUpdateSearcher, IUpdateSession,
-        ISearchResult, UpdateSession,
+        ISearchResult, IUpdate, IUpdateCollection, IUpdateInstaller, IUpdateSearcher,
+        IUpdateSession, UpdateSession,
     };
 
     let update_id = candidate.id.native.clone();
@@ -228,52 +234,58 @@ async fn install_driver_com(candidate: &UpdateCandidate) -> Result<()> {
         let co_initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
 
         let scope = || -> Result<()> {
-            let session: IUpdateSession = unsafe {
-                CoCreateInstance(&UpdateSession, None, CLSCTX_LOCAL_SERVER)
-            }.map_err(|e| Error::parse(
-                "Windows Update Agent",
-                format!("could not create IUpdateSession: {e}"),
-            ))?;
+            let session: IUpdateSession =
+                unsafe { CoCreateInstance(&UpdateSession, None, CLSCTX_LOCAL_SERVER) }.map_err(
+                    |e| {
+                        Error::parse(
+                            "Windows Update Agent",
+                            format!("could not create IUpdateSession: {e}"),
+                        )
+                    },
+                )?;
 
-            let searcher: IUpdateSearcher = unsafe { session.CreateUpdateSearcher() }
-                .map_err(|e| Error::parse(
-                    "Windows Update Agent",
-                    format!("could not create IUpdateSearcher: {e}"),
-                ))?;
+            let searcher: IUpdateSearcher =
+                unsafe { session.CreateUpdateSearcher() }.map_err(|e| {
+                    Error::parse(
+                        "Windows Update Agent",
+                        format!("could not create IUpdateSearcher: {e}"),
+                    )
+                })?;
 
             let criteria = BSTR::from("Type='Driver'");
-            let result: ISearchResult = unsafe {
-                searcher.Search(&criteria)
-            }.map_err(|e| Error::parse(
-                "Windows Update Agent",
-                format!("driver search failed during install: {e}"),
-            ))?;
+            let result: ISearchResult = unsafe { searcher.Search(&criteria) }.map_err(|e| {
+                Error::parse(
+                    "Windows Update Agent",
+                    format!("driver search failed during install: {e}"),
+                )
+            })?;
 
-            let updates: IUpdateCollection = unsafe { result.Updates() }
-                .map_err(|e| Error::parse(
+            let updates: IUpdateCollection = unsafe { result.Updates() }.map_err(|e| {
+                Error::parse(
                     "Windows Update Agent",
                     format!("could not get Updates collection: {e}"),
-                ))?;
+                )
+            })?;
 
-            let count = unsafe { updates.Count() }
-                .map_err(|e| Error::parse(
-                    "Windows Update Agent",
-                    format!("could not get count: {e}"),
-                ))?;
+            let count = unsafe { updates.Count() }.map_err(|e| {
+                Error::parse("Windows Update Agent", format!("could not get count: {e}"))
+            })?;
 
             let mut found: Option<IUpdate> = None;
             for i in 0..count {
-                let update: IUpdate = unsafe { updates.get_Item(i) }
-                    .map_err(|e| Error::parse(
+                let update: IUpdate = unsafe { updates.get_Item(i) }.map_err(|e| {
+                    Error::parse(
                         "Windows Update Agent",
                         format!("could not get update item {i}: {e}"),
-                    ))?;
+                    )
+                })?;
 
-                let identity = unsafe { update.Identity() }
-                    .map_err(|e| Error::parse(
+                let identity = unsafe { update.Identity() }.map_err(|e| {
+                    Error::parse(
                         "Windows Update Agent",
                         format!("could not get Identity: {e}"),
-                    ))?;
+                    )
+                })?;
 
                 let raw_id = unsafe { identity.UpdateID() }
                     .map(|t| t.to_string())
@@ -300,51 +312,63 @@ async fn install_driver_com(candidate: &UpdateCandidate) -> Result<()> {
                     None,
                     CLSCTX_LOCAL_SERVER,
                 )
-            }.map_err(|e| Error::parse(
-                "Windows Update Agent",
-                format!("could not create UpdateCollection: {e}"),
-            ))?;
+            }
+            .map_err(|e| {
+                Error::parse(
+                    "Windows Update Agent",
+                    format!("could not create UpdateCollection: {e}"),
+                )
+            })?;
 
-            unsafe { to_install.Add(&update) }
-                .map_err(|e| Error::parse(
+            unsafe { to_install.Add(&update) }.map_err(|e| {
+                Error::parse(
                     "Windows Update Agent",
                     format!("could not add update to collection: {e}"),
-                ))?;
+                )
+            })?;
 
-            let installer: IUpdateInstaller = unsafe { session.CreateUpdateInstaller() }
-                .map_err(|e| Error::parse(
-                    "Windows Update Agent",
-                    format!("could not create IUpdateInstaller: {e}"),
-                ))?;
+            let installer: IUpdateInstaller =
+                unsafe { session.CreateUpdateInstaller() }.map_err(|e| {
+                    Error::parse(
+                        "Windows Update Agent",
+                        format!("could not create IUpdateInstaller: {e}"),
+                    )
+                })?;
 
-            unsafe { installer.SetUpdates(&to_install) }
-                .map_err(|e| Error::parse(
+            unsafe { installer.SetUpdates(&to_install) }.map_err(|e| {
+                Error::parse(
                     "Windows Update Agent",
                     format!("could not set installer updates: {e}"),
-                ))?;
+                )
+            })?;
 
             // Do not force-install: let the Windows Update Agent apply its
             // own compatibility checks. SetIsForced(true) would bypass them
             // and could install drivers that don't match the hardware.
 
-            let install_result = unsafe { installer.Install() }
-                .map_err(|e| Error::parse(
+            let install_result = unsafe { installer.Install() }.map_err(|e| {
+                Error::parse(
                     "Windows Update Agent",
                     format!("driver install failed: {e}"),
-                ))?;
+                )
+            })?;
 
-            let result_code = unsafe { install_result.ResultCode() }
-                .map_err(|e| Error::parse(
+            let result_code = unsafe { install_result.ResultCode() }.map_err(|e| {
+                Error::parse(
                     "Windows Update Agent",
                     format!("could not read install ResultCode: {e}"),
-                ))?;
+                )
+            })?;
 
             // OperationResultCode: 2 = orcFailed, 3 = orcSucceededWithErrors
             if result_code.0 == 2 || result_code.0 == 3 {
                 let hr = unsafe { install_result.HResult() }.unwrap_or(0);
                 return Err(Error::parse(
                     "Windows Update Agent",
-                    format!("driver install failed (code={}, hr=0x{:08X})", result_code.0, hr),
+                    format!(
+                        "driver install failed (code={}, hr=0x{:08X})",
+                        result_code.0, hr
+                    ),
                 ));
             }
 

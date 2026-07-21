@@ -199,7 +199,11 @@ pub fn is_expected_port(port: u32) -> bool {
 /// Whether the owning process is one to worry about, and why.
 fn process_concerns(conn: &Connection, trust: &TrustMap) -> Vec<String> {
     let mut reasons = Vec::new();
-    let Some(path) = conn.process_path.as_deref().filter(|p| !p.trim().is_empty()) else {
+    let Some(path) = conn
+        .process_path
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+    else {
         // A missing path usually just means the process is protected and this
         // scan is not elevated, so it is not evidence of anything.
         return reasons;
@@ -382,7 +386,9 @@ pub fn analyze(conns: &[Connection], trust: &TrustMap) -> Vec<Finding> {
                 "network",
                 format!(
                     "{} is talking to the internet",
-                    c.process_name.as_deref().unwrap_or("An unidentified program")
+                    c.process_name
+                        .as_deref()
+                        .unwrap_or("An unidentified program")
                 ),
                 format!(
                     "This program has an open connection to an address outside your \
@@ -480,10 +486,25 @@ mod tests {
 
     #[test]
     fn private_ranges_are_recognised() {
-        for a in ["10.1.2.3", "192.168.0.5", "172.16.0.1", "172.31.255.255", "169.254.1.1", "fe80::1", "::1", "127.0.0.1"] {
+        for a in [
+            "10.1.2.3",
+            "192.168.0.5",
+            "172.16.0.1",
+            "172.31.255.255",
+            "169.254.1.1",
+            "fe80::1",
+            "::1",
+            "127.0.0.1",
+        ] {
             assert!(is_private_address(a), "{a} should be private");
         }
-        for a in ["8.8.8.8", "172.15.0.1", "172.32.0.1", "1.1.1.1", "2606:4700::1"] {
+        for a in [
+            "8.8.8.8",
+            "172.15.0.1",
+            "172.32.0.1",
+            "1.1.1.1",
+            "2606:4700::1",
+        ] {
             assert!(!is_private_address(a), "{a} should be public");
         }
     }
@@ -499,7 +520,12 @@ mod tests {
 
     #[test]
     fn rdp_listening_on_all_interfaces_is_high() {
-        let conns = vec![listener(3389, "0.0.0.0", "svchost", r"C:\Windows\System32\svchost.exe")];
+        let conns = vec![listener(
+            3389,
+            "0.0.0.0",
+            "svchost",
+            r"C:\Windows\System32\svchost.exe",
+        )];
         let f = analyze(&conns, &TrustMap::new());
         assert_eq!(f[0].id, "network-rdp-listening");
         assert_eq!(f[0].severity, Severity::High);
@@ -507,8 +533,16 @@ mod tests {
 
     #[test]
     fn rdp_bound_to_loopback_only_is_medium() {
-        let conns = vec![listener(3389, "127.0.0.1", "svchost", r"C:\Windows\System32\svchost.exe")];
-        assert_eq!(analyze(&conns, &TrustMap::new())[0].severity, Severity::Medium);
+        let conns = vec![listener(
+            3389,
+            "127.0.0.1",
+            "svchost",
+            r"C:\Windows\System32\svchost.exe",
+        )];
+        assert_eq!(
+            analyze(&conns, &TrustMap::new())[0].severity,
+            Severity::Medium
+        );
     }
 
     #[test]
@@ -529,8 +563,18 @@ mod tests {
     fn ordinary_system_listeners_produce_only_an_inventory() {
         let conns = vec![
             listener(445, "0.0.0.0", "System", ""),
-            listener(135, "0.0.0.0", "svchost", r"C:\Windows\System32\svchost.exe"),
-            listener(49670, "0.0.0.0", "services", r"C:\Windows\System32\services.exe"),
+            listener(
+                135,
+                "0.0.0.0",
+                "svchost",
+                r"C:\Windows\System32\svchost.exe",
+            ),
+            listener(
+                49670,
+                "0.0.0.0",
+                "services",
+                r"C:\Windows\System32\services.exe",
+            ),
         ];
         let trust = trust_map(vec![
             signed(r"C:\Windows\System32\svchost.exe"),
@@ -552,7 +596,9 @@ mod tests {
         let trust = trust_map(vec![unsigned(path)]);
         let f = analyze(&conns, &trust);
         assert_eq!(
-            f.iter().filter(|x| x.id.starts_with("network-listener:")).count(),
+            f.iter()
+                .filter(|x| x.id.starts_with("network-listener:"))
+                .count(),
             1
         );
     }
@@ -609,6 +655,9 @@ mod tests {
         assert_eq!(conns.len(), 1);
         assert!(conns[0].is_listener());
         assert_eq!(conns[0].process_path, None);
-        assert_eq!(conns[0].describe(), "listening on 0.0.0.0:445 — System (pid 4)");
+        assert_eq!(
+            conns[0].describe(),
+            "listening on 0.0.0.0:445 — System (pid 4)"
+        );
     }
 }

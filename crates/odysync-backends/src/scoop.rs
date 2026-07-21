@@ -98,12 +98,7 @@ impl Backend for ScoopBackend {
             });
         }
 
-        let out = proc::run(
-            "scoop",
-            &["update", &candidate.id.native],
-            INSTALL_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("scoop", &["update", &candidate.id.native], INSTALL_TIMEOUT).await?;
 
         if out.success() {
             Ok(())
@@ -121,12 +116,7 @@ impl Backend for ScoopBackend {
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        let out = proc::run(
-            "scoop",
-            &["list", &candidate.id.native],
-            QUERY_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("scoop", &["list", &candidate.id.native], QUERY_TIMEOUT).await?;
 
         if !out.success() {
             return Ok(None);
@@ -278,7 +268,8 @@ These apps are outdated and have updates available:
 
     #[test]
     fn no_outdated_section_yields_empty_vec() {
-        let output = "Scoop is up to date.\n\nThese apps are outdated and have updates available:\n\n";
+        let output =
+            "Scoop is up to date.\n\nThese apps are outdated and have updates available:\n\n";
         assert!(parse_scoop_status(output).is_empty());
     }
 
