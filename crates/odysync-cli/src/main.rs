@@ -1,4 +1,4 @@
-﻿//! `odysync` — the cross-platform command line for Odysync.
+//! `odysync` — the cross-platform command line for Odysync.
 //!
 //! The CLI is a thin shell over `odysync-core`: it gathers candidates from every
 //! detected backend, runs them through the policy engine, and applies whatever
@@ -471,8 +471,7 @@ async fn run(cli: Cli) -> Result<u8> {
         Command::Unschedule { task_name } => {
             let existed = odysync_backends::scheduler::schedule_exists(&task_name).await;
             if existed {
-                let _ = odysync_backends::scheduler::remove_schedule(&task_name)
-                    .await;
+                let _ = odysync_backends::scheduler::remove_schedule(&task_name).await;
             }
             if cli.json {
                 println!(

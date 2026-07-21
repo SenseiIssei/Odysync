@@ -76,11 +76,7 @@ impl Error {
         }
     }
 
-    pub fn transient(
-        backend: impl Into<String>,
-        detail: impl Into<String>,
-        attempt: u32,
-    ) -> Self {
+    pub fn transient(backend: impl Into<String>, detail: impl Into<String>, attempt: u32) -> Self {
         Error::Transient {
             backend: backend.into(),
             detail: detail.into(),
@@ -102,10 +98,7 @@ impl Error {
         }
     }
 
-    pub fn health_check_failed(
-        check: impl Into<String>,
-        detail: impl Into<String>,
-    ) -> Self {
+    pub fn health_check_failed(check: impl Into<String>, detail: impl Into<String>) -> Self {
         Error::HealthCheckFailed {
             check: check.into(),
             detail: detail.into(),
@@ -120,9 +113,7 @@ impl Error {
         match self {
             Error::Transient { .. } => true,
             Error::CommandTimeout { .. } => true,
-            Error::CommandFailed { code, .. } => {
-                *code == 11 || *code == 143
-            }
+            Error::CommandFailed { code, .. } => *code == 11 || *code == 143,
             Error::Io(e) => {
                 matches!(
                     e.kind(),
@@ -157,9 +148,8 @@ fn sanitize_text(text: &str) -> String {
                 result = result.replace(&*up, "%USERPROFILE%");
             }
         }
-        let path_re = regex::Regex::new(
-            r"[A-Za-z]:\\Users\\[^\\]+\\",
-        ).unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
+        let path_re = regex::Regex::new(r"[A-Za-z]:\\Users\\[^\\]+\\")
+            .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
         result = path_re.replace_all(&result, "C:\\Users\\***\\").to_string();
     }
 
@@ -172,15 +162,13 @@ fn sanitize_text(text: &str) -> String {
     }
 
     // Redact IP addresses
-    let ip_re = regex::Regex::new(
-        r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",
-    ).unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
+    let ip_re = regex::Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
+        .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
     result = ip_re.replace_all(&result, "[IP REDACTED]").to_string();
 
     // Redact environment variable values that look like tokens
-    let token_re = regex::Regex::new(
-        r"(?i)(token|key|secret|password|api[_-]?key)\s*[=:]\s*\S+",
-    ).unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
+    let token_re = regex::Regex::new(r"(?i)(token|key|secret|password|api[_-]?key)\s*[=:]\s*\S+")
+        .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
     result = token_re.replace_all(&result, "$1=[REDACTED]").to_string();
 
     result

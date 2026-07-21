@@ -22,9 +22,7 @@ use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::proc;
 use odysync_core::version::Version;
 
-const SCAN_TIMEOUT: Duration = Duration::from_secs(30);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
-const QUERY_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Directories to scan for AppImage files.
 const SCAN_DIRS: &[&str] = &[

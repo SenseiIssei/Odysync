@@ -16,7 +16,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use odysync_core::backend::{Backend, ApplyPhase, ApplyProgress};
+use odysync_core::backend::{ApplyPhase, ApplyProgress, Backend};
 use odysync_core::error::{Error, Result};
 use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::proc;
@@ -65,12 +65,7 @@ impl Backend for FwupdBackend {
         // Refresh metadata first to ensure we have the latest update info.
         let _ = proc::run("fwupdmgr", &["refresh", "-y"], REFRESH_TIMEOUT).await;
 
-        let out = proc::run(
-            "fwupdagent",
-            &["get-updates", "--json"],
-            SCAN_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("fwupdagent", &["get-updates", "--json"], SCAN_TIMEOUT).await?;
 
         if !out.success() {
             tracing::warn!(stderr = %out.stderr, "fwupdagent get-updates failed");
@@ -90,12 +85,7 @@ impl Backend for FwupdBackend {
 
         let device_id = &candidate.id.native;
 
-        let out = proc::run(
-            "fwupdmgr",
-            &["update", device_id, "-y"],
-            INSTALL_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("fwupdmgr", &["update", device_id, "-y"], INSTALL_TIMEOUT).await?;
 
         if out.success() {
             Ok(())
@@ -150,12 +140,7 @@ impl Backend for FwupdBackend {
         }
 
         // Query the current firmware version for this device.
-        let out = proc::run(
-            "fwupdagent",
-            &["get-devices", "--json"],
-            SCAN_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("fwupdagent", &["get-devices", "--json"], SCAN_TIMEOUT).await?;
 
         if !out.success() {
             return Ok(None);

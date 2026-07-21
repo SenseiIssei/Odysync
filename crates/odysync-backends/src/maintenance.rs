@@ -1,4 +1,4 @@
-﻿//! Maintenance action implementations.
+//! Maintenance action implementations.
 //!
 //! These are system-level housekeeping tasks — temp cleanup, Recycle Bin,
 //! DISM/SFC health checks, and the startup-programs viewer — that are not
@@ -92,10 +92,7 @@ async fn temp_cleanup_unix() -> Result<MaintenanceResult> {
     use std::path::PathBuf;
 
     let mut count = 0usize;
-    let dirs: Vec<PathBuf> = vec![
-        std::env::temp_dir(),
-        PathBuf::from("/tmp"),
-    ];
+    let dirs: Vec<PathBuf> = vec![std::env::temp_dir(), PathBuf::from("/tmp")];
 
     for dir in dirs {
         if !dir.exists() {
@@ -187,8 +184,8 @@ try {
                     if let Ok(entries) = std::fs::read_dir(&files) {
                         for entry in entries.flatten() {
                             let p = entry.path();
-                            let _ = std::fs::remove_file(&p)
-                                .or_else(|_| std::fs::remove_dir_all(&p));
+                            let _ =
+                                std::fs::remove_file(&p).or_else(|_| std::fs::remove_dir_all(&p));
                             count += 1;
                         }
                     }
@@ -246,12 +243,7 @@ impl Maintenance for SystemHealth {
         #[cfg(windows)]
         {
             // SFC first - works without admin for scan, more reliable
-            let sfc = proc::run(
-                "sfc",
-                &["/scannow"],
-                MAINTENANCE_TIMEOUT,
-            )
-            .await;
+            let sfc = proc::run("sfc", &["/scannow"], MAINTENANCE_TIMEOUT).await;
 
             // DISM ScanHealth
             let dism_scan = proc::run(
@@ -285,9 +277,14 @@ impl Maintenance for SystemHealth {
             // Build detailed summary
             let sfc_detail = match &sfc {
                 Ok(o) => {
-                    let last_lines: Vec<&str> = o.stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+                    let last_lines: Vec<&str> =
+                        o.stdout.lines().filter(|l| !l.trim().is_empty()).collect();
                     let detail = last_lines.last().map(|l| l.trim()).unwrap_or("completed");
-                    if o.success() { format!("ok ({})", detail) } else { format!("completed with issues ({})", detail) }
+                    if o.success() {
+                        format!("ok ({})", detail)
+                    } else {
+                        format!("completed with issues ({})", detail)
+                    }
                 }
                 Err(e) => format!("failed ({})", e),
             };
@@ -297,7 +294,8 @@ impl Maintenance for SystemHealth {
                     if o.success() {
                         "ok - no corruption detected".to_string()
                     } else {
-                        let has_corruption = o.stdout.contains("corrupt") || o.stderr.contains("corrupt");
+                        let has_corruption =
+                            o.stdout.contains("corrupt") || o.stderr.contains("corrupt");
                         if has_corruption {
                             "issues found - corruption detected".to_string()
                         } else {
@@ -321,12 +319,13 @@ impl Maintenance for SystemHealth {
 
             let summary = format!(
                 "SFC: {}\nDISM ScanHealth: {}\nDISM RestoreHealth: {}",
-                sfc_detail,
-                dism_scan_detail,
-                dism_restore_detail,
+                sfc_detail, dism_scan_detail, dism_restore_detail,
             );
 
-            let success = sfc_ok; // SFC success is the main indicator
+            // Every stage has to pass. Reporting success on SFC alone hid a
+            // failed DISM run behind a green result, which is exactly the case
+            // someone runs this check to find out about.
+            let success = sfc_ok && dism_scan_ok && dism_restore_ok;
 
             return Ok(MaintenanceResult {
                 kind: MaintenanceKind::SystemHealth,

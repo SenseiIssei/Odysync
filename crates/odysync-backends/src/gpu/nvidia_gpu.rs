@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use odysync_core::backend::{Backend, ApplyPhase, ApplyProgress};
+use odysync_core::backend::{ApplyPhase, ApplyProgress, Backend};
 use odysync_core::error::{Error, Result};
 use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::proc;
@@ -177,7 +177,11 @@ impl Backend for NvidiaGpuBackend {
             let _ = tx
                 .send(ApplyProgress {
                     percent: None,
-                    message: format!("Downloading {} {}…", candidate.name, candidate.available.raw()),
+                    message: format!(
+                        "Downloading {} {}…",
+                        candidate.name,
+                        candidate.available.raw()
+                    ),
                     phase: ApplyPhase::Downloading,
                 })
                 .await;
@@ -190,7 +194,11 @@ impl Backend for NvidiaGpuBackend {
                 let _ = tx
                     .send(ApplyProgress {
                         percent: Some(100),
-                        message: format!("Installed {} {}", candidate.name, candidate.available.raw()),
+                        message: format!(
+                            "Installed {} {}",
+                            candidate.name,
+                            candidate.available.raw()
+                        ),
                         phase: ApplyPhase::Verifying,
                     })
                     .await;
@@ -206,9 +214,7 @@ impl Backend for NvidiaGpuBackend {
         }
 
         let current = read_installed_driver_version().await;
-        Ok(current.filter(|v| {
-            Version::parse(v) == candidate.available
-        }))
+        Ok(current.filter(|v| Version::parse(v) == candidate.available))
     }
 }
 
@@ -233,7 +239,9 @@ async fn read_installed_driver_version() -> Option<String> {
         }
     "#;
 
-    let out = proc::powershell(script, Duration::from_secs(10)).await.ok()?;
+    let out = proc::powershell(script, Duration::from_secs(10))
+        .await
+        .ok()?;
     let version = out.stdout.trim().to_string();
     if version.is_empty() {
         None

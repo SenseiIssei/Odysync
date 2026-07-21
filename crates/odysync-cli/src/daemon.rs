@@ -1,4 +1,4 @@
-﻿//! Background daemon mode: scan, notify, and optionally apply on a timer.
+//! Background daemon mode: scan, notify, and optionally apply on a timer.
 //!
 //! `odysync daemon` runs in the background and periodically checks for updates.
 //! When updates are found it emits a notification (via the OS notification
@@ -70,7 +70,9 @@ pub async fn run(opts: &DaemonOpts, config_path: &std::path::Path) -> Result<u8>
                     );
                 }
             } else {
-                tracing::info!("{actionable} updates available; use --apply to install automatically");
+                tracing::info!(
+                    "{actionable} updates available; use --apply to install automatically"
+                );
             }
         } else {
             tracing::debug!("no updates available");

@@ -107,12 +107,7 @@ impl Backend for PacmanBackend {
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        let out = proc::run(
-            "pacman",
-            &["-Q", &candidate.id.native],
-            QUERY_TIMEOUT,
-        )
-        .await?;
+        let out = proc::run("pacman", &["-Q", &candidate.id.native], QUERY_TIMEOUT).await?;
 
         if !out.success() {
             return Ok(None);

@@ -24,7 +24,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use odysync_core::backend::Backend;
 use odysync_core::error::{Error, Result};
-use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
+use odysync_core::model::{BackendKind, InstalledPackage, PackageId, UpdateCandidate};
 use odysync_core::proc;
 use odysync_core::version::Version;
 
@@ -133,6 +133,39 @@ impl Backend for WingetBackend {
                 // winget verifies the installer hash against its own manifest
                 // internally; we do not have the digest to re-check here.
                 expected_sha256: None,
+            })
+            .collect())
+    }
+
+    async fn list_installed(&self) -> Result<Vec<InstalledPackage>> {
+        let mut args = vec!["list".to_string()];
+        args.extend(self.common_args());
+
+        let out = proc::run("winget", &args, SCAN_TIMEOUT).await?;
+
+        // Same tolerance as `scan`: winget can exit non-zero while still having
+        // printed a usable table, so only a non-zero exit with no output at all
+        // is a real failure.
+        let rows = table::parse_list(&out.stdout);
+        if rows.is_empty() && !out.success() && out.stdout.trim().is_empty() {
+            return Err(Error::CommandFailed {
+                command: "winget list".into(),
+                code: out.code,
+                stderr: out.stderr,
+            });
+        }
+
+        let kind = self.kind();
+        Ok(rows
+            .into_iter()
+            // winget lists Store packages inside the winget table and vice
+            // versa; keep each backend to its own source, exactly as `scan`
+            // does, so the two views agree about which package belongs where.
+            .filter(|r| r.source.is_empty() || r.source.eq_ignore_ascii_case(self.source()))
+            .map(|r| InstalledPackage {
+                id: PackageId::new(kind, r.id),
+                name: r.name,
+                version: r.version,
             })
             .collect())
     }
