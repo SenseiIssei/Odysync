@@ -3,6 +3,9 @@ name = "odysync-verify"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+# Not published to crates.io; also lets cargo-deny's allow-wildcard-paths
+# apply to our path dependencies on each other.
+publish = false
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
