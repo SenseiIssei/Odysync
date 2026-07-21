@@ -807,16 +807,19 @@ pub async fn get_hardware_info() -> Result<HardwareInfoDto, String> {
         .map(|n| n.get() as u32)
         .unwrap_or(1);
 
+    // No `return`: on non-Windows the block below is compiled out, so this is
+    // the tail expression and an explicit return is a clippy error under
+    // `-D warnings`.
     #[cfg(not(windows))]
     {
-        return Ok(HardwareInfoDto {
+        Ok(HardwareInfoDto {
             cpu: "Unknown".to_string(),
             cpu_cores,
             total_memory_gb: 0.0,
             os,
             gpu: Vec::new(),
             disks: Vec::new(),
-        });
+        })
     }
 
     #[cfg(windows)]
