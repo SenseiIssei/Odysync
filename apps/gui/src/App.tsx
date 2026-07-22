@@ -91,8 +91,13 @@ function Shell() {
 
   return (
     <div className="app-window h-screen flex flex-col text-cyber-text bg-cyber-bg grid-bg">
-      {/* Titlebar */}
-      <div className="titlebar flex items-center justify-between px-4 py-2.5 border-b border-cyber-border bg-cyber-surface/80 backdrop-blur-sm flex-shrink-0">
+      {/* Titlebar. `data-tauri-drag-region` is what makes a frameless Tauri v2
+          window draggable — the CSS `-webkit-app-region` this used before is an
+          Electron feature and does nothing in WebView2. */}
+      <div
+        data-tauri-drag-region
+        className="titlebar flex items-center justify-between px-4 py-2.5 border-b border-cyber-border bg-cyber-surface/80 backdrop-blur-sm flex-shrink-0"
+      >
         <div className="flex items-center gap-3">
           <button
             type="button"

@@ -72,20 +72,16 @@ impl Backend for PipBackend {
                 detail: "refusing to install without an exact target version".into(),
             });
         }
-        let out = proc::run(
-            "pip",
-            &[
-                "install",
-                "--upgrade",
-                &candidate.id.native,
-                candidate.available.raw(),
-            ],
-            INSTALL_TIMEOUT,
-        )
-        .await?;
+        // The version must be attached to the name as `name==version` in a
+        // single argument. Passing it as a separate arg made pip read it as a
+        // second package to install (literally named "1.5.1"), so every pip
+        // upgrade failed — the cause of a machine-full of "failed" history
+        // entries.
+        let spec = pip_install_spec(&candidate.id.native, candidate.available.raw());
+        let out = proc::run("pip", &["install", "--upgrade", &spec], INSTALL_TIMEOUT).await?;
         if !out.success() {
             return Err(Error::CommandFailed {
-                command: format!("pip install --upgrade {}", candidate.id.native),
+                command: format!("pip install --upgrade {spec}"),
                 code: out.code,
                 stderr: out.stderr,
             });
@@ -120,6 +116,11 @@ struct PipOutdated {
 struct PipInstalled {
     name: String,
     version: String,
+}
+
+/// Build the pinned requirement pip expects: `name==version`, one argument.
+fn pip_install_spec(name: &str, version: &str) -> String {
+    format!("{name}=={version}")
 }
 
 /// Parse `pip list --format=json`: `[{"name": "...", "version": "..."}, …]`.
@@ -443,10 +444,20 @@ impl Backend for GoBackend {
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
-        let out = proc::run("go", &["get", "-u", &candidate.id.native], INSTALL_TIMEOUT).await?;
+        if !candidate.available.is_known() {
+            return Err(Error::Verification {
+                package: candidate.id.to_string(),
+                detail: "refusing to install without an exact target version".into(),
+            });
+        }
+        // `go install pkg@version` is the supported way to install a pinned
+        // tool. `go get -u` upgraded to *latest* (ignoring the target version)
+        // and is deprecated for installing executables outside a module.
+        let spec = format!("{}@{}", candidate.id.native, candidate.available.raw());
+        let out = proc::run("go", &["install", &spec], INSTALL_TIMEOUT).await?;
         if !out.success() {
             return Err(Error::CommandFailed {
-                command: format!("go get -u {}", candidate.id.native),
+                command: format!("go install {spec}"),
                 code: out.code,
                 stderr: out.stderr,
             });
@@ -1206,6 +1217,14 @@ impl Backend for IntelDsaBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pip_pins_the_version_in_one_argument() {
+        // Regression: passing name and version as separate args made pip try to
+        // install a second package literally named "1.5.1", failing every
+        // upgrade. The pin must be a single `name==version` token.
+        assert_eq!(pip_install_spec("yfinance", "1.5.1"), "yfinance==1.5.1");
+    }
 
     #[test]
     fn parses_pip_list_json() {

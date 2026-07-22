@@ -40,7 +40,12 @@ impl Backend for WindowsDriverBackend {
     }
 
     async fn is_available(&self) -> bool {
-        cfg!(windows)
+        // Creating an IUpdateSession and searching Windows Update fails with
+        // access-denied without elevation, so an unelevated run would only ever
+        // surface a "could not be checked" error the user cannot act on.
+        // Reporting the backend unavailable instead keeps the Hardware page
+        // clean; its "Run as Admin" hint tells the user how to enable it.
+        cfg!(windows) && odysync_core::platform::is_elevated()
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
@@ -140,12 +145,22 @@ async fn scan_drivers_com() -> Result<Vec<UpdateCandidate>> {
                     format!("could not read ResultCode: {e}"),
                 )
             })?;
-            // OperationResultCode is a tuple struct (i32); 2 = orcFailed
+            // OperationResultCode is a tuple struct (i32); 2 = orcFailed.
+            //
+            // The online WUA driver search returns orcFailed routinely on
+            // consumer machines — driver updates are typically delivered
+            // through the Windows Update UI or vendor tools, not the WUA search
+            // API, and a metered/managed/paused Windows Update makes it fail
+            // outright. There is nothing the user can do about it, so treating
+            // it as "no driver updates from this source" (empty, logged) is far
+            // better than surfacing a red "could not be checked" banner they
+            // cannot act on.
             if code.0 == 2 {
-                return Err(Error::parse(
-                    "Windows Update Agent",
-                    "driver search returned orcFailed",
-                ));
+                tracing::info!(
+                    "Windows Update Agent driver search returned orcFailed; \
+                     no driver updates available from this source"
+                );
+                return Ok(Vec::new());
             }
 
             let updates: IUpdateCollection = unsafe { result.Updates() }.map_err(|e| {
