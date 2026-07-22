@@ -527,13 +527,50 @@ pub(crate) async fn query_file_trust(paths: &[String]) -> Result<TrustMap> {
         }
     }
 
-    // One `Get-AuthenticodeSignature` sweep per 120-path chunk. The chunks are
-    // independent, so they run concurrently — a machine with hundreds of
-    // candidate binaries used to pay for them one PowerShell process after
-    // another.
-    let chunk_futs = unique.chunks(120).map(|chunk| {
-        let script = format!(
-            r#"$ErrorActionPreference='SilentlyContinue'
+    // Split system-directory paths from the rest. A binary under C:\Windows or
+    // Program Files is trusted by location — Windows Resource Protection guards
+    // those directories, and every rule that consumes trust only escalates on
+    // *unsigned binaries in user-writable directories*. So system paths need
+    // only an existence check, skipping `Get-AuthenticodeSignature` entirely.
+    //
+    // That matters because `Get-AuthenticodeSignature` performs an online
+    // certificate-revocation check per signer, and on a normal machine the bulk
+    // of connection-owning and autostart processes are svchost/system binaries
+    // in System32. Signature-checking them was most of the network section's
+    // ~25s. The `foreach` is a single fast Test-Path pass; the slow full check
+    // runs only for the genuinely interesting paths.
+    let (system, other): (Vec<&String>, Vec<&String>) =
+        unique.iter().partition(|p| is_system_dir(p));
+
+    // (script, timeout) pairs, so every chunk runs through one identical async
+    // closure — two different `async move` blocks are distinct types and cannot
+    // share a `Vec`.
+    let mut jobs: Vec<(String, Duration)> = Vec::new();
+
+    // System paths: existence only, no signature query.
+    for chunk in system.chunks(400) {
+        let paths: Vec<String> = chunk.iter().map(|p| (*p).clone()).collect();
+        jobs.push((
+            format!(
+                r#"$ErrorActionPreference='SilentlyContinue'
+$paths = {}
+$out = foreach ($p in $paths) {{
+  $e = Test-Path -LiteralPath $p -PathType Leaf
+  [pscustomobject]@{{ path = $p; exists = [bool]$e; status = $(if ($e) {{ 'Valid' }} else {{ 'Missing' }}); signer = $(if ($e) {{ 'Windows system directory' }} else {{ $null }}) }}
+}}
+@($out) | ConvertTo-Json -Depth 3 -Compress"#,
+                ps_string_array(&paths)
+            ),
+            Duration::from_secs(60),
+        ));
+    }
+
+    // Everything else: the full Authenticode check.
+    for chunk in other.chunks(120) {
+        let paths: Vec<String> = chunk.iter().map(|p| (*p).clone()).collect();
+        jobs.push((
+            format!(
+                r#"$ErrorActionPreference='SilentlyContinue'
 $paths = {}
 $out = foreach ($p in $paths) {{
   $e = Test-Path -LiteralPath $p -PathType Leaf
@@ -548,13 +585,17 @@ $out = foreach ($p in $paths) {{
   [pscustomobject]@{{ path = $p; exists = [bool]$e; status = $st; signer = $sg }}
 }}
 @($out) | ConvertTo-Json -Depth 3 -Compress"#,
-            ps_string_array(chunk)
-        );
-        async move { ps_query(&script, Duration::from_secs(120)).await }
-    });
+                ps_string_array(&paths)
+            ),
+            Duration::from_secs(120),
+        ));
+    }
+
+    let results =
+        futures::future::join_all(jobs.iter().map(|(script, t)| ps_query(script, *t))).await;
 
     let mut map = TrustMap::new();
-    for result in futures::future::join_all(chunk_futs).await {
+    for result in results {
         for row in parse_ps_json::<FileTrust>(&result?) {
             map.insert(row.path.to_ascii_lowercase(), row);
         }
