@@ -26,6 +26,10 @@ interface Progress {
   package: string;
   current: number;
   total: number;
+  /** "installing" while working, "done" at the end. */
+  phase: string;
+  /** 0–100, computed from completed count. */
+  percent: number | null;
 }
 
 export default function Updates() {
@@ -176,15 +180,24 @@ export default function Updates() {
           className="rounded-lg border border-accent/30 bg-accent/5 p-4 scan-overlay"
         >
           <div className="flex items-center justify-between text-xs mb-2">
-            <span className="text-accent truncate">{progress.package}</span>
-            <span className="text-cyber-text-dim flex-shrink-0">
+            <span className="text-accent truncate">
+              {progress.phase === "done"
+                ? "Finishing up…"
+                : progress.package
+                  ? `Installing ${progress.package}`
+                  : "Working…"}
+            </span>
+            <span className="text-cyber-text-dim flex-shrink-0 font-mono">
               {progress.current}/{progress.total}
+              {progress.percent != null && ` · ${progress.percent}%`}
             </span>
           </div>
           <div className="h-1.5 bg-cyber-bg rounded-full overflow-hidden">
             <motion.div
               className="h-full bg-accent glow-cyan"
-              animate={{ width: `${(progress.current / progress.total) * 100}%` }}
+              animate={{
+                width: `${progress.percent ?? (progress.current / progress.total) * 100}%`,
+              }}
               transition={{ duration: 0.3 }}
             />
           </div>

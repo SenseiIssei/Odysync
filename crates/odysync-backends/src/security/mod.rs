@@ -223,15 +223,37 @@ pub const SECTIONS: &[&str] = &["defender", "persistence", "integrity", "network
 /// section failures land in [`ScanReport::sections`] instead of propagating.
 /// The sections are independent and each is dominated by process-spawn latency,
 /// so running them in sequence would make the sweep as slow as their sum.
+/// Live progress for one audit section, for a UI that shows work in flight.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionProgress {
+    pub name: String,
+    /// `started`, `done` or `failed`.
+    pub state: String,
+    /// Present on `done`/`failed`.
+    pub duration_ms: Option<u64>,
+    /// Findings produced, present on `done`.
+    pub findings: Option<usize>,
+}
+
+/// A sink for [`SectionProgress`] events. The Tauri layer forwards these to the
+/// frontend so the Security page can tick sections off as they finish, instead
+/// of showing one long unexplained spinner.
+pub type ProgressSink<'a> = &'a (dyn Fn(SectionProgress) + Send + Sync);
+
 pub async fn scan() -> ScanReport {
+    scan_with_progress(None).await
+}
+
+pub async fn scan_with_progress(progress: Option<ProgressSink<'_>>) -> ScanReport {
     let scanned_at = chrono::Utc::now().to_rfc3339();
 
     let (defender, persistence, integrity, network, posture) = futures::join!(
-        run_section("defender", defender::scan()),
-        run_section("persistence", persistence::scan()),
-        run_section("integrity", integrity::scan()),
-        run_section("network", network::scan()),
-        run_section("posture", posture::scan()),
+        run_section("defender", defender::scan(), progress),
+        run_section("persistence", persistence::scan(), progress),
+        run_section("integrity", integrity::scan(), progress),
+        run_section("network", network::scan(), progress),
+        run_section("posture", posture::scan(), progress),
     );
 
     let mut sections = Vec::new();
@@ -255,7 +277,17 @@ pub async fn scan() -> ScanReport {
 async fn run_section(
     name: &str,
     fut: impl std::future::Future<Output = Result<Vec<Finding>>>,
+    progress: Option<ProgressSink<'_>>,
 ) -> (SectionResult, Vec<Finding>) {
+    if let Some(p) = progress {
+        p(SectionProgress {
+            name: name.to_string(),
+            state: "started".to_string(),
+            duration_ms: None,
+            findings: None,
+        });
+    }
+
     let started = Instant::now();
     let (ok, error, findings) = match fut.await {
         Ok(f) => (true, None, f),
@@ -264,12 +296,23 @@ async fn run_section(
             (false, Some(e.to_string()), Vec::new())
         }
     };
+    let duration_ms = started.elapsed().as_millis() as u64;
+
+    if let Some(p) = progress {
+        p(SectionProgress {
+            name: name.to_string(),
+            state: if ok { "done" } else { "failed" }.to_string(),
+            duration_ms: Some(duration_ms),
+            findings: Some(findings.len()),
+        });
+    }
+
     (
         SectionResult {
             name: name.to_string(),
             ok,
             error,
-            duration_ms: started.elapsed().as_millis() as u64,
+            duration_ms,
         },
         findings,
     )
@@ -484,8 +527,11 @@ pub(crate) async fn query_file_trust(paths: &[String]) -> Result<TrustMap> {
         }
     }
 
-    let mut map = TrustMap::new();
-    for chunk in unique.chunks(120) {
+    // One `Get-AuthenticodeSignature` sweep per 120-path chunk. The chunks are
+    // independent, so they run concurrently — a machine with hundreds of
+    // candidate binaries used to pay for them one PowerShell process after
+    // another.
+    let chunk_futs = unique.chunks(120).map(|chunk| {
         let script = format!(
             r#"$ErrorActionPreference='SilentlyContinue'
 $paths = {}
@@ -504,9 +550,12 @@ $out = foreach ($p in $paths) {{
 @($out) | ConvertTo-Json -Depth 3 -Compress"#,
             ps_string_array(chunk)
         );
+        async move { ps_query(&script, Duration::from_secs(120)).await }
+    });
 
-        let stdout = ps_query(&script, Duration::from_secs(120)).await?;
-        for row in parse_ps_json::<FileTrust>(&stdout) {
+    let mut map = TrustMap::new();
+    for result in futures::future::join_all(chunk_futs).await {
+        for row in parse_ps_json::<FileTrust>(&result?) {
             map.insert(row.path.to_ascii_lowercase(), row);
         }
     }

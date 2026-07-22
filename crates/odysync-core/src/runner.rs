@@ -100,6 +100,26 @@ impl<'a> Runner<'a> {
         let total = plan.iter().filter(|p| p.is_actionable()).count();
         let mut current = 0usize;
 
+        let emit = |emitter: Option<&dyn ProgressEmitter>,
+                    package: &str,
+                    done: usize,
+                    phase: &str| {
+            if let Some(e) = emitter {
+                let percent = if total == 0 {
+                    Some(100)
+                } else {
+                    Some(((done as f64 / total as f64) * 100.0).round() as u8)
+                };
+                e.emit_progress(ProgressEvent {
+                    package: package.to_string(),
+                    current: done,
+                    total,
+                    phase: phase.to_string(),
+                    percent,
+                });
+            }
+        };
+
         for planned in plan {
             let candidate = &planned.candidate;
 
@@ -144,15 +164,11 @@ impl<'a> Runner<'a> {
                 "applying update"
             );
 
-            if let Some(emit) = emitter {
-                emit.emit_progress(ProgressEvent {
-                    package: candidate.name.clone(),
-                    current: current + 1,
-                    total,
-                    phase: "applying".to_string(),
-                    percent: None,
-                });
-            }
+            // `current` = items finished so far, so the bar reflects real
+            // progress. The previous code emitted `current + 1` before doing
+            // the work, so the last item showed 100% while it was still
+            // installing and no "done" event ever followed.
+            emit(emitter, &candidate.name, current, "installing");
 
             let outcome = self.apply_with_retry(*backend, planned).await;
 
@@ -172,6 +188,7 @@ impl<'a> Runner<'a> {
 
             report.push(candidate.id.clone(), candidate.name.clone(), outcome);
             current += 1;
+            emit(emitter, &candidate.name, current, "installing");
         }
 
         if let Some(history) = &self.history {
@@ -179,6 +196,10 @@ impl<'a> Runner<'a> {
                 tracing::warn!(error = %e, "failed to save update history");
             }
         }
+
+        // A terminal event so the UI can settle on "done" rather than being
+        // left at whatever the last per-item update happened to be.
+        emit(emitter, "", current, "done");
 
         report.finish();
     }

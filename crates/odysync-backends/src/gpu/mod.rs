@@ -63,7 +63,20 @@ pub struct GpuAdapter {
 /// Enumerate display adapters by shelling out to `pnputil /enum-devices /class Display`.
 ///
 /// On non-Windows platforms this returns an empty vec.
+/// The machine's display adapters, enumerated at most once per run.
+///
+/// All four GPU backends call this during availability detection, and again
+/// during scan — up to eight identical `pnputil /enum-devices` spawns for a
+/// list that does not change while the app runs. Memoized to one.
 pub async fn enumerate_display_adapters() -> Vec<GpuAdapter> {
+    static CACHE: tokio::sync::OnceCell<Vec<GpuAdapter>> = tokio::sync::OnceCell::const_new();
+    CACHE
+        .get_or_init(enumerate_display_adapters_uncached)
+        .await
+        .clone()
+}
+
+async fn enumerate_display_adapters_uncached() -> Vec<GpuAdapter> {
     if !cfg!(windows) {
         return Vec::new();
     }

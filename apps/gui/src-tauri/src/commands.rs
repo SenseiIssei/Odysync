@@ -1348,9 +1348,17 @@ pub async fn restart_as_admin(app: AppHandle) -> Result<(), String> {
 /// query still gets an answer for everything else — and the UI can say the
 /// audit was incomplete instead of implying the machine is clean.
 #[tauri::command]
-pub async fn security_scan() -> Result<security::ScanReport, String> {
+pub async fn security_scan(app: AppHandle) -> Result<security::ScanReport, String> {
     tracing::info!("starting security audit");
-    let report = security::scan().await;
+
+    // Forward each section's start/finish to the frontend so the Security page
+    // shows which checks are running and how long each took, rather than one
+    // opaque spinner for up to a minute and a half.
+    let emit_app = app.clone();
+    let on_progress = move |p: security::SectionProgress| {
+        let _ = emit_app.emit("security-progress", &p);
+    };
+    let report = security::scan_with_progress(Some(&on_progress)).await;
 
     // Log the shape of the result, not just the total. A count on its own hides
     // severity inflation: "131 findings" reads as an emergency when 121 of them
@@ -1367,6 +1375,12 @@ pub async fn security_scan() -> Result<security::ScanReport, String> {
             *by_title.entry(rule).or_insert(0) += 1;
         }
     }
+    // Per-section wall-clock, so a slow audit points at the section to fix
+    // rather than being one opaque number.
+    let mut section_ms: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
+    for s in &report.sections {
+        section_ms.insert(s.name.as_str(), s.duration_ms);
+    }
     tracing::info!(
         findings = report.findings.len(),
         critical = counts.get(&security::Severity::Critical).copied().unwrap_or(0),
@@ -1375,6 +1389,7 @@ pub async fn security_scan() -> Result<security::ScanReport, String> {
         low = counts.get(&security::Severity::Low).copied().unwrap_or(0),
         watching = counts.get(&security::Severity::Info).copied().unwrap_or(0),
         actionable_by_rule = ?by_title,
+        section_ms = ?section_ms,
         incomplete = report.incomplete(),
         "security audit complete"
     );

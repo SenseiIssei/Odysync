@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -14,6 +14,7 @@ import {
   Wrench,
 } from "lucide-react";
 import * as api from "../api";
+import { safeListen } from "../events";
 import { useStore } from "../store";
 import {
   Card,
@@ -24,7 +25,22 @@ import {
   errorText,
   formatDate,
 } from "../components/ui";
-import type { Remediation, SecurityFinding, Severity } from "../types";
+import type {
+  Remediation,
+  SectionProgress,
+  SecurityFinding,
+  Severity,
+} from "../types";
+
+const SECTION_LABELS: Record<string, string> = {
+  defender: "Microsoft Defender",
+  persistence: "Persistence & autostart",
+  integrity: "File & client integrity",
+  network: "Network connections",
+  posture: "System hardening",
+};
+
+const ALL_SECTIONS = ["defender", "persistence", "integrity", "network", "posture"];
 
 /** Severities that describe something wrong, as opposed to something noted. */
 const ACTIONABLE: Severity[] = ["critical", "high", "medium", "low"];
@@ -83,6 +99,21 @@ export default function Security() {
 
   const elevated = sysInfo.data?.elevated ?? false;
   const report = security.data;
+
+  // Live per-section progress, so a running audit shows which checks are in
+  // flight and how long each took rather than one opaque spinner.
+  const [sectionState, setSectionState] = useState<Record<string, SectionProgress>>({});
+  useEffect(
+    () =>
+      safeListen<SectionProgress>("security-progress", (e) => {
+        setSectionState((prev) => ({ ...prev, [e.payload.name]: e.payload }));
+      }),
+    [],
+  );
+  // Clear the per-section board when a fresh audit starts.
+  useEffect(() => {
+    if (security.loading) setSectionState({});
+  }, [security.loading]);
 
   const sorted = useMemo(
     () =>
@@ -300,12 +331,47 @@ export default function Security() {
         </div>
       )}
 
-      {security.loading && security.loadedAt === null && (
-        <EmptyState
-          icon={<RefreshCw className="w-12 h-12 animate-spin text-accent" />}
-          title="Auditing this machine..."
-          hint="Checking Defender, persistence, network listeners, file integrity and hardening."
-        />
+      {/* Live section board — shown whenever an audit is running, so the user
+          watches checks tick off with per-section timing instead of waiting on
+          a blank spinner. */}
+      {security.loading && (
+        <Card title="Audit in progress">
+          <div className="space-y-1.5">
+            {ALL_SECTIONS.map((name) => {
+              const s = sectionState[name];
+              const state = s?.state ?? "pending";
+              return (
+                <div key={name} className="flex items-center gap-2 text-xs">
+                  {state === "done" ? (
+                    <CheckCircle className="w-3.5 h-3.5 text-success flex-shrink-0" />
+                  ) : state === "failed" ? (
+                    <AlertTriangle className="w-3.5 h-3.5 text-danger flex-shrink-0" />
+                  ) : state === "started" ? (
+                    <RefreshCw className="w-3.5 h-3.5 text-accent animate-spin flex-shrink-0" />
+                  ) : (
+                    <div className="w-3.5 h-3.5 rounded-full border border-cyber-border flex-shrink-0" />
+                  )}
+                  <span
+                    className={`flex-1 ${
+                      state === "pending" ? "text-cyber-text-faint" : "text-cyber-text-dim"
+                    }`}
+                  >
+                    {SECTION_LABELS[name] ?? name}
+                  </span>
+                  {s?.durationMs != null && (
+                    <span className="text-cyber-text-faint font-mono flex-shrink-0">
+                      {(s.durationMs / 1000).toFixed(1)}s
+                      {s.findings != null && s.findings > 0 && ` · ${s.findings}`}
+                    </span>
+                  )}
+                  {state === "started" && (
+                    <span className="text-accent flex-shrink-0">running…</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
       )}
 
       {report && findings.length === 0 && (

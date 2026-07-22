@@ -248,6 +248,15 @@ export interface ScanReport {
   sections: SectionResult[];
 }
 
+/** Live per-section progress from the `security-progress` event. */
+export interface SectionProgress {
+  name: string;
+  /** "started" | "done" | "failed" */
+  state: string;
+  durationMs: number | null;
+  findings: number | null;
+}
+
 export interface DefenderStatusDto {
   real_time_protection: boolean;
   tamper_protection: boolean;

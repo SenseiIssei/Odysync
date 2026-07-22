@@ -36,7 +36,19 @@ impl OemManufacturer {
     /// Detect the OEM by querying WMI for `Win32_ComputerSystem.Manufacturer`.
     ///
     /// On non-Windows platforms this returns `Unknown`.
+    /// Detect the machine's manufacturer, computing it at most once per run.
+    ///
+    /// All eight OEM backends probe this during availability detection. Each
+    /// call spawned a fresh `powershell.exe` running the same CIM query — and
+    /// on this hardware a cold `powershell.exe` alone is ~1 s, so eight of them
+    /// firing together at startup was pure waste and process-contention. The
+    /// manufacturer cannot change while the app runs, so it is memoized.
     pub async fn detect() -> OemManufacturer {
+        static CACHE: tokio::sync::OnceCell<OemManufacturer> = tokio::sync::OnceCell::const_new();
+        *CACHE.get_or_init(Self::detect_uncached).await
+    }
+
+    async fn detect_uncached() -> OemManufacturer {
         if !cfg!(windows) {
             return OemManufacturer::Unknown;
         }
