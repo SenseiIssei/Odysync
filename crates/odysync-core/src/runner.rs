@@ -15,10 +15,10 @@ use crate::report::RunReport;
 use crate::restore::RestorePointGuard;
 use crate::version::Version;
 
-/// Applies planned updates using the supplied backends.
 /// Default number of retries when no explicit value is configured.
 pub const DEFAULT_MAX_RETRIES: u32 = 2;
 
+/// Applies planned updates using the supplied backends.
 pub struct Runner<'a> {
     backends: HashMap<BackendKind, &'a dyn Backend>,
     dry_run: bool,
@@ -100,25 +100,23 @@ impl<'a> Runner<'a> {
         let total = plan.iter().filter(|p| p.is_actionable()).count();
         let mut current = 0usize;
 
-        let emit = |emitter: Option<&dyn ProgressEmitter>,
-                    package: &str,
-                    done: usize,
-                    phase: &str| {
-            if let Some(e) = emitter {
-                let percent = if total == 0 {
-                    Some(100)
-                } else {
-                    Some(((done as f64 / total as f64) * 100.0).round() as u8)
-                };
-                e.emit_progress(ProgressEvent {
-                    package: package.to_string(),
-                    current: done,
-                    total,
-                    phase: phase.to_string(),
-                    percent,
-                });
-            }
-        };
+        let emit =
+            |emitter: Option<&dyn ProgressEmitter>, package: &str, done: usize, phase: &str| {
+                if let Some(e) = emitter {
+                    let percent = if total == 0 {
+                        Some(100)
+                    } else {
+                        Some(((done as f64 / total as f64) * 100.0).round() as u8)
+                    };
+                    e.emit_progress(ProgressEvent {
+                        package: package.to_string(),
+                        current: done,
+                        total,
+                        phase: phase.to_string(),
+                        percent,
+                    });
+                }
+            };
 
         for planned in plan {
             let candidate = &planned.candidate;
