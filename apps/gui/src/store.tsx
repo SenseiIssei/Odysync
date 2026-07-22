@@ -395,9 +395,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const refreshFns = useRef<Array<() => Promise<void>>>([]);
   refreshFns.current = resources.map((r) => r.refresh);
 
+  // The full audit is the heaviest thing the app does — ~15 PowerShell/CIM
+  // calls — and the least time-critical. Running it in the initial batch
+  // throttled the winget scan the user is actually watching (both fight for
+  // the same three heavy-queue slots and for winget itself). It is deferred to
+  // start once the rest of the boot has settled, so it costs nothing the user
+  // is waiting on while still running automatically at startup.
+  const refreshSecurityStartup = securityScan.refresh;
+  const deferSecurity = scanOnStartup;
+
   const [booting, setBooting] = useState(true);
   const [bootDone, setBootDone] = useState(0);
-  const bootTotal = resources.length;
+  // Security is loaded after the batch, so exclude it from the batch's count.
+  const bootTotal = resources.length - (deferSecurity ? 1 : 0);
 
   // Background-load everything, once, at startup. Cheap metadata first so the
   // shell fills in immediately; the expensive scans follow behind the queue.
@@ -407,19 +417,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     booted.current = true;
 
     let cancelled = false;
-    const tasks = refreshFns.current.map((fn) =>
+    // Everything except the deferred security audit (which, when present, is
+    // the last entry in refreshFns).
+    const batch = deferSecurity
+      ? refreshFns.current.slice(0, -1)
+      : refreshFns.current;
+
+    const tasks = batch.map((fn) =>
       fn().finally(() => {
         if (!cancelled) setBootDone((n) => n + 1);
       }),
     );
 
     Promise.allSettled(tasks).then(() => {
-      if (!cancelled) setBooting(false);
+      if (cancelled) return;
+      setBooting(false);
+      // Kick the audit off now the contention has cleared.
+      if (deferSecurity) void refreshSecurityStartup();
     });
 
     return () => {
       cancelled = true;
     };
+    // Intentionally run once; deferSecurity/refresh are stable for the session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshAll = useCallback(async () => {
