@@ -5,12 +5,19 @@ QMainWindow { background: #0b0f16; }
 #Header { background: rgba(255,255,255,0.04); border-bottom: 1px solid #1b2232; }
 #Header QLabel { color: #FFE58A; font-size: 18px; font-weight: 700; }
 
+/* Custom window title bar */
+#TitleBar { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #0f1522, stop:1 #101828); border-bottom: 1px solid #172032; }
+
 /* Title buttons (set objectName('TitleBtn') on min/max/close) */
 QPushButton#TitleBtn {
   background: transparent; border: none; padding: 0;
   min-width: 32px; min-height: 26px; qproperty-iconSize: 18px; /* centers the icon */
 }
 QPushButton#TitleBtn:hover { background: rgba(255,255,255,0.06); border-radius: 6px; }
+QPushButton#TitleBtn[btn="min"]:hover { background: rgba(143,183,255,0.18); }
+QPushButton#TitleBtn[btn="max"]:hover { background: rgba(168,127,255,0.18); }
+QPushButton#TitleBtn[btn="close"]:hover { background: rgba(255,96,96,0.28); }
+QPushButton#TitleBtn[btn="close"]:pressed { background: rgba(255,96,96,0.44); }
 
 /* Sidebar */
 #Sidebar { background: #0e1420; border-right: 1px solid #172032; }

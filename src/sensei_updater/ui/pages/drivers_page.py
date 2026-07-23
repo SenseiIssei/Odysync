@@ -1,8 +1,7 @@
-# sensei_updater/ui/pages/drivers_page.py
 from __future__ import annotations
 from typing import List, Dict, Any
 from PySide6.QtCore import Qt, QRectF, QSize, Signal, Slot, QTimer
-from PySide6.QtGui import QPainter, QFont, QPen
+from PySide6.QtGui import QPainter, QFont, QPen, QFontMetrics
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem, QStackedLayout, QSizePolicy
 from ..widgets import Header, GlassCard
 from ..async_utils import BusyOverlay, JobController, run_async
@@ -70,19 +69,17 @@ class Drivers(QWidget):
         self.drivers = driver_service
         self._last_pct = 0
         self.progressChanged.connect(self._on_progress_safe, Qt.QueuedConnection)
-
         root = QVBoxLayout(self); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
         root.addWidget(Header("Drivers"))
-
         card = GlassCard()
         top = QHBoxLayout(); top.setSpacing(8)
         self.btn_scan = QPushButton("Scan"); self.btn_scan.setObjectName("PrimaryButton")
         self.btn_install_sel = QPushButton("Update Selected"); self.btn_install_sel.setObjectName("PrimaryButton")
         self.btn_install_all = QPushButton("Update All"); self.btn_install_all.setObjectName("PrimaryButton")
-        top.addWidget(self.btn_scan); top.addWidget(self.btn_install_sel); top.addWidget(self.btn_install_all); top.addStretch(1)
-
+        self.btn_select_all = QPushButton("Select All"); self.btn_select_all.setObjectName("PrimaryButton")
+        self.btn_select_none = QPushButton("Select None"); self.btn_select_none.setObjectName("PrimaryButton")
+        top.addWidget(self.btn_scan); top.addWidget(self.btn_install_sel); top.addWidget(self.btn_install_all); top.addWidget(self.btn_select_all); top.addWidget(self.btn_select_none); top.addStretch(1)
         self.stack = QStackedLayout()
-
         self.panel_list = QWidget()
         pl = QVBoxLayout(self.panel_list); pl.setContentsMargins(0, 0, 0, 0)
         self.msg = QLabel(""); self.msg.setObjectName("Chip")
@@ -94,7 +91,6 @@ class Drivers(QWidget):
         self.list.setTextElideMode(Qt.ElideMiddle)
         pl.addWidget(self.msg)
         pl.addWidget(self.list)
-
         self.panel_progress = QWidget()
         pp = QVBoxLayout(self.panel_progress); pp.setContentsMargins(0, 32, 0, 32); pp.setSpacing(8)
         self.circle = _CircularProgress()
@@ -104,29 +100,36 @@ class Drivers(QWidget):
         self.label_line2.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         pp.addStretch(1); pp.addWidget(self.circle, 0, Qt.AlignCenter); pp.addSpacing(8)
         pp.addWidget(self.label_line1, 0, Qt.AlignCenter); pp.addWidget(self.label_line2, 0, Qt.AlignCenter); pp.addStretch(1)
-
         self.stack.addWidget(self.panel_list)
         self.stack.addWidget(self.panel_progress)
-
         card.v.addLayout(top)
         card.v.addLayout(self.stack)
-
         outer = QVBoxLayout(); outer.setContentsMargins(24, 24, 24, 24); outer.addWidget(card)
         root.addLayout(outer)
-
         self.overlay = BusyOverlay(self, compact=True)
         self.jobs = JobController(self, self.overlay)
-
         self.btn_scan.clicked.connect(self.scan)
         self.btn_install_all.clicked.connect(self.install_all)
         self.btn_install_sel.clicked.connect(self.install_selected)
+        self.btn_select_all.clicked.connect(self.select_all)
+        self.btn_select_none.clicked.connect(self.select_none)
+
+    def _elide(self, text: str) -> str:
+        fm = QFontMetrics(self.label_line1.font())
+        w = max(0, self.panel_progress.width() - 48)
+        return fm.elidedText(text or "", Qt.ElideMiddle, w)
+
+    def resizeEvent(self, e):
+        self.label_line1.setText(self._elide(self.label_line1.text()))
+        self.label_line2.setText(self._elide(self.label_line2.text()))
+        super().resizeEvent(e)
 
     def _populate(self, rows: List[Dict[str, Any]]):
         self.list.clear()
         if not rows:
-            it = QListWidgetItem("No driver updates found."); it.setFlags(Qt.NoItemFlags)
+            it = QListWidgetItem("No available updates"); it.setFlags(Qt.NoItemFlags)
             self.list.addItem(it)
-            self.msg.setText("No updates")
+            self.msg.setText("No available updates")
             return
         for r in rows:
             kb = r.get("kb") or ""
@@ -144,9 +147,11 @@ class Drivers(QWidget):
         p = max(self._last_pct, max(0, min(100, int(p))))
         self._last_pct = p
         self.circle.setValue(p)
-        self.circle.setTexts(line1 or "", line2 or "")
-        self.label_line1.setText(line1 or "")
-        self.label_line2.setText(line2 or "")
+        a = self._elide(line1)
+        b = self._elide(line2)
+        self.circle.setTexts(a or "", b or "")
+        self.label_line1.setText(a or "")
+        self.label_line2.setText(b or "")
 
     def _show_list(self):
         idx = self.stack.indexOf(self.panel_list)
@@ -182,6 +187,7 @@ class Drivers(QWidget):
             if isinstance(res, dict) and res.get("error"):
                 self._populate([])
                 self.list.addItem(QListWidgetItem(f"Scan error: {res['error']}"))
+                self.msg.setText(f"Scan error: {res['error']}")
                 self._show_list()
                 return
             self._populate(res)
@@ -202,6 +208,20 @@ class Drivers(QWidget):
                     out.append(kb)
         return out
 
+    def select_all(self):
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it and (it.flags() & Qt.ItemIsUserCheckable):
+                it.setCheckState(Qt.Checked)
+        self.msg.setText("")
+
+    def select_none(self):
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it and (it.flags() & Qt.ItemIsUserCheckable):
+                it.setCheckState(Qt.Unchecked)
+        self.msg.setText("")
+
     def install_selected(self):
         if not is_admin():
             self.msg.setText("Administrator required for driver installation")
@@ -212,14 +232,11 @@ class Drivers(QWidget):
             return
 
         def task(progress, message):
-            self.progressChanged.emit(10, "Installing selected drivers", "")
             message("Installing selected drivers…")
             try:
                 ok, reboot = self.drivers.install_kbs(kbs)
             except Exception as e:
                 return {"error": str(e)}
-            progress(100)
-            self.progressChanged.emit(100, "Done", "")
             return {"ok": ok, "reboot": reboot}
 
         def done(res):
@@ -240,14 +257,11 @@ class Drivers(QWidget):
             return
 
         def task(progress, message):
-            self.progressChanged.emit(10, "Installing available drivers", "")
             message("Installing available drivers…")
             try:
                 ok, reboot = self.drivers.update_drivers()
             except Exception as e:
                 return {"error": str(e)}
-            progress(100)
-            self.progressChanged.emit(100, "Done", "")
             return {"ok": ok, "reboot": reboot}
 
         def done(res):

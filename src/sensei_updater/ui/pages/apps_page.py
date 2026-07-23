@@ -1,7 +1,7 @@
 # sensei_updater/ui/pages/apps_page.py
 from __future__ import annotations
 from typing import List, Dict, Any
-from PySide6.QtCore import Qt, QRectF, QSize, Signal, Slot, QTimer
+from PySide6.QtCore import Qt, QRectF, QSize, Signal, Slot
 from PySide6.QtGui import QPainter, QFont, QPen, QFontMetrics
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem, QStackedLayout, QSizePolicy
 from ..widgets import Header, GlassCard
@@ -81,7 +81,10 @@ class Apps(QWidget):
         self.btn_scan = QPushButton("Scan"); self.btn_scan.setObjectName("PrimaryButton")
         self.btn_update_sel = QPushButton("Update Selected"); self.btn_update_sel.setObjectName("PrimaryButton")
         self.btn_update_all = QPushButton("Update All"); self.btn_update_all.setObjectName("PrimaryButton")
-        for b in (self.btn_scan, self.btn_update_sel, self.btn_update_all): top.addWidget(b)
+        self.btn_select_all = QPushButton("Select All"); self.btn_select_all.setObjectName("PrimaryButton")
+        self.btn_select_none = QPushButton("Select None"); self.btn_select_none.setObjectName("PrimaryButton")
+        for b in (self.btn_scan, self.btn_update_sel, self.btn_update_all, self.btn_select_all, self.btn_select_none):
+            top.addWidget(b)
         top.addStretch(1)
 
         self.stack = QStackedLayout()
@@ -122,6 +125,10 @@ class Apps(QWidget):
         self.btn_scan.clicked.connect(self.scan)
         self.btn_update_all.clicked.connect(self.update_all)
         self.btn_update_sel.clicked.connect(self.update_selected)
+        self.btn_select_all.clicked.connect(self.select_all)
+        self.btn_select_none.clicked.connect(self.select_none)
+
+        self._show_list()
 
     def _elide(self, text: str) -> str:
         fm = QFontMetrics(self.label_line1.font())
@@ -140,7 +147,7 @@ class Apps(QWidget):
             it = QListWidgetItem("No updatable apps found")
             it.setFlags(Qt.NoItemFlags)
             self.list.addItem(it)
-            self.msg.setText("No updates")
+            self.msg.setText("No available updates")
             return
         for r in rows:
             name = r.get("Name") or r.get("Id")
@@ -166,12 +173,10 @@ class Apps(QWidget):
         self.label_line2.setText(b)
 
     def _show_list(self):
-        idx = self.stack.indexOf(self.panel_list)
-        QTimer.singleShot(0, lambda: self.stack.setCurrentIndex(idx))
+        self.stack.setCurrentWidget(self.panel_list)
 
     def _show_progress(self):
-        idx = self.stack.indexOf(self.panel_progress)
-        QTimer.singleShot(0, lambda: self.stack.setCurrentIndex(idx))
+        self.stack.setCurrentWidget(self.panel_progress)
 
     def scan(self):
         self.msg.setText("")
@@ -206,7 +211,6 @@ class Apps(QWidget):
             if isinstance(res, dict) and res.get("error"):
                 self._populate([])
                 self.list.addItem(QListWidgetItem(f"Scan error: {res['error']}"))
-                self.msg.setText(f"Scan error: {res['error']}")
                 self._show_list()
                 return
             self._populate(res)
@@ -235,6 +239,20 @@ class Apps(QWidget):
         ids = self._checked_ids()
         self._run_update(ids, "Updating selected…")
 
+    def select_all(self):
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it and (it.flags() & Qt.ItemIsUserCheckable):
+                it.setCheckState(Qt.Checked)
+        self.msg.setText("")
+
+    def select_none(self):
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it and (it.flags() & Qt.ItemIsUserCheckable):
+                it.setCheckState(Qt.Unchecked)
+        self.msg.setText("")
+
     def _run_update(self, ids: List[str], label: str):
         def task(progress, message):
             if not ids:
@@ -250,6 +268,7 @@ class Apps(QWidget):
             if isinstance(res, dict) and res.get("error"):
                 self.msg.setText(f"Update error: {res['error']}")
                 self.list.addItem(QListWidgetItem(f"Update error: {res['error']}"))
+                self._show_list()
                 return
             upd = len(res.get("updated", []))
             rei = len(res.get("reinstalled", []))

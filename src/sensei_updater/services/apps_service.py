@@ -46,8 +46,8 @@ class AppService:
 
     def _winget_json(self, args: List[str]) -> Any:
         base = ["winget"] + args + ["--accept-source-agreements","--accept-package-agreements","--disable-interactivity","--output","json"]
-        rc, out = self.proc.run_capture(base)
-        if rc != 0 or not out:
+        rc, out, to = self.proc.run_capture_timeout(base, 60)
+        if to or rc != 0 or not out:
             return []
         s = (out or "").strip()
         if not s or (not s.startswith("{") and not s.startswith("[")):
@@ -138,12 +138,14 @@ class AppService:
     def _run_winget_sources(self) -> None:
         if not self._has("winget"):
             return
-        self.proc.run_capture(["winget","source","update"])
+        self.proc.run_capture_timeout([
+            "winget","source","update","--disable-interactivity"
+        ], 20)
 
     def _list_winget_fast(self) -> List[Dict[str, Any]]:
         if not self._has("winget"):
             return []
-        data = self._winget_json(["upgrade","--include-unknown"])
+        data = self._winget_json(["upgrade","--include-unknown","--source","winget"])
         rows: List[Dict[str, Any]] = []
         arr = data.get("InstalledPackages", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
         for p in arr or []:
@@ -160,8 +162,27 @@ class AppService:
             })
         if rows:
             return rows
-        rc, out = self.proc.run_capture(["winget","upgrade","--source","winget"])
-        if rc == 0 and out:
+        data2 = self._winget_json(["upgrade","--include-unknown"])
+        arr2 = data2.get("InstalledPackages", []) if isinstance(data2, dict) else (data2 if isinstance(data2, list) else [])
+        for p in arr2 or []:
+            pid = p.get("PackageIdentifier") or p.get("Id") or ""
+            if not looks_like_id(pid):
+                continue
+            rows.append({
+                "Id": pid,
+                "Name": p.get("PackageName") or p.get("Name") or pid,
+                "Version": p.get("InstalledVersion") or p.get("Version") or "",
+                "Available": p.get("AvailableVersion") or p.get("Available") or "",
+                "Source": (p.get("Source") or "winget"),
+                "Interactive": p.get("IsInteractive", False),
+            })
+        if rows:
+            return rows
+        rc, out, to = self.proc.run_capture_timeout([
+            "winget","upgrade","--source","winget","--include-unknown",
+            "--accept-source-agreements","--accept-package-agreements","--disable-interactivity"
+        ], 25)
+        if (rc == 0) and (not to) and out:
             return self._parse_table(out)
         return []
 
@@ -427,16 +448,16 @@ class AppService:
                 continue
             ok = False
             if self._has("winget"):
-                rc = self.proc.run_stream(["winget","upgrade","--id",pid,"--silent","--disable-interactivity","--accept-source-agreements","--accept-package-agreements","--force"])
-                ok = rc in (0,3010)
+                rc, to = self.proc.run_stream_timeout(["winget","upgrade","--id",pid,"--silent","--disable-interactivity","--accept-source-agreements","--accept-package-agreements","--force"], 900)
+                ok = (rc in (0,3010)) and (not to)
                 if not ok:
-                    rc2 = self.proc.run_stream(["winget","install","--id",pid,"--silent","--disable-interactivity","--accept-source-agreements","--accept-package-agreements","--force"])
-                    ok = rc2 in (0,3010)
+                    rc2, to2 = self.proc.run_stream_timeout(["winget","install","--id",pid,"--silent","--disable-interactivity","--accept-source-agreements","--accept-package-agreements","--force"], 900)
+                    ok = (rc2 in (0,3010)) and (not to2)
             if not ok and self._has("choco"):
-                rc = self.proc.run_stream(["choco","upgrade",pid,"-y"])
-                ok = (rc == 0)
+                rc, to = self.proc.run_stream_timeout(["choco","upgrade",pid,"-y"], 600)
+                ok = (rc == 0) and (not to)
             if not ok and self._has("scoop"):
-                rc = self.proc.run_stream(["scoop","update",pid])
-                ok = (rc == 0)
+                rc, to = self.proc.run_stream_timeout(["scoop","update",pid], 600)
+                ok = (rc == 0) and (not to)
             (results["updated"] if ok else results["failed"]).append(pid)
         return results

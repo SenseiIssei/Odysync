@@ -87,10 +87,10 @@ try {{ Add-WUServiceManager -MicrosoftUpdate -Confirm:$false | Out-Null }} catch
 Install-WindowsUpdate -MicrosoftUpdate -WindowsDriver -KBArticleID @({arr}) -AcceptAll -IgnoreReboot -Verbose
 if ($global:RebootRequired) {{ "REBOOT" }} else {{ "OK" }}
 '''
-        rc, out = self.proc.run_capture([self.ps.exe,"-NoLogo","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command", ps])
+        rc, out, to = self.proc.run_capture_timeout([self.ps.exe,"-NoLogo","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command", ps], 1800)
         txt = out or ""
         reboot = "REBOOT" in txt
-        ok = rc == 0
+        ok = (rc == 0) and (not to)
         return ok, reboot
 
     def update_drivers(self):
@@ -115,10 +115,10 @@ if ($drivers -and $drivers.Count -gt 0) {
   "NONE"
 }
 '''
-        rc, out = self.proc.run_capture([self.ps.exe, "-NoLogo","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command", ps])
+        rc, out, to = self.proc.run_capture_timeout([self.ps.exe, "-NoLogo","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command", ps], 2400)
         s = out or ""
         if "NONE" in s:
             return True, False
         if "REBOOT" in s:
             return True, True
-        return rc == 0, False
+        return (rc == 0) and (not to), False

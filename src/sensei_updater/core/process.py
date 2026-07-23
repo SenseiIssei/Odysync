@@ -142,3 +142,42 @@ class Process:
             return p.wait(timeout=1)
         except Exception:
             return 1
+
+    def run_stream_timeout(self, cmd: list[int|str], timeout_s: float) -> tuple[int, bool]:
+        self._dbg(cmd)
+        if self.dry_run:
+            return 0, False
+        try:
+            p = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+                shell=False, **self._win_kwargs
+            )
+        except Exception:
+            return 1, False
+        start = time.time()
+        try:
+            assert p.stdout is not None
+            while True:
+                if p.poll() is not None:
+                    break
+                if time.time() - start > timeout_s:
+                    try: p.terminate()
+                    except Exception: pass
+                    try: p.kill()
+                    except Exception: pass
+                    return 124, True
+                line = p.stdout.readline()
+                if line:
+                    print(line.rstrip("\r\n"))
+                else:
+                    time.sleep(0.05)
+        except Exception:
+            try: p.kill()
+            except Exception: pass
+            return 1, False
+        try:
+            rc = p.wait(timeout=1)
+        except Exception:
+            rc = 1
+        return rc, False
