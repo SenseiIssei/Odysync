@@ -34,3 +34,6 @@ tracing-appender = "0.2"
 chrono = { workspace = true }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 directories = { workspace = true }
+
+[lints]
+workspace = true

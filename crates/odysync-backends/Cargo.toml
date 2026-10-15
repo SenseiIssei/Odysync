@@ -44,3 +44,6 @@ windows = { version = "0.62", features = [
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tempfile = "3"
+
+[lints]
+workspace = true
