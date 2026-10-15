@@ -274,7 +274,7 @@ function TitleBar({
             <IconButton label="Maximize" onClick={() => windowAction("toggleMaximize")}>
               <Square className="w-3.5 h-3.5" />
             </IconButton>
-            <IconButton label="Close to tray" danger onClick={() => void api.quitApp()}>
+            <IconButton label="Quit Odysync" danger onClick={() => void api.quitApp()}>
               <X className="w-4 h-4" />
             </IconButton>
           </div>
