@@ -1,158 +1,76 @@
 # What is left, and what is known
 
-Written at the end of the `dev/iobit-parity` work, on a machine that is about
-to be wiped of this checkout. Everything here is reconstructable from the
-repository alone — no local state is assumed, because none survives.
-
-`PLAN.md` records what was done and why. This file is the forward-looking half:
-what remains, what was learned that a future session would otherwise have to
-rediscover, and in what order it is worth doing.
+State after 3.0.0 (2026-10-16). Everything here is reconstructable from the
+repository alone.
 
 ---
 
-## 0. Immediate: the branch is not merged
+## 1. Code signing — still the one thing gating the rest
 
-`dev/iobit-parity` is ahead of `main` by nine commits and has never been
-merged. Nothing is lost — the branch is on the remote — but `main` does not yet
-have the Windows Update backend, driver backup, cleanup, or any of the Phase F
-work.
+Fully documented in [`docs/SIGNING.md`](docs/SIGNING.md). The release workflow
+signs the CLI and the Windows installer as soon as the `SIGNING_ENABLED`
+repository variable and the Trusted Signing secrets exist; nothing else has to
+change. Until then SmartScreen warns on every install, and **self-update stays
+check-only** (`UpdateCheck::is_installable`, and the test
+`odysync_refuses_to_install_its_own_updates_while_releases_are_unsigned`, which
+will fail on purpose the day signing lands).
 
-```sh
-git checkout main
-git merge --no-ff dev/iobit-parity
-git push
-```
+macOS needs a Developer ID certificate and notarisation before the `.dmg`
+opens without the right-click workaround the README describes.
 
-Deliberately **not tagged**. Tagging `v2.2.0` triggers `release.yml`, which
-publishes a public GitHub release. Two reasons to think before doing that:
+## 2. Verified where, and how
 
-1. Releases are unsigned (§1), so every user gets a SmartScreen warning.
-2. Two code paths are still unverified (§2).
+| Path | How it was verified |
+|---|---|
+| `direct`, per-user install | End to end on a real machine: VS Code 1.140.0 → 1.142.0 downloaded, hash and signature checked, installed silently, version read back. |
+| `direct`, verification chain | Unit tests against real Windows files: right signer passes; another publisher, a changed byte and a wrong SHA-256/SHA-512 are refused; the locked file cannot be written or deleted. |
+| `direct`, machine-wide installs (MSI/NSIS/Inno) | Scan verified (Notepad++, Git, GitHub CLI, Node.js found with correct versions); install not run — it needs an elevated session. Same code path as the per-user install apart from `msiexec`. |
+| NVIDIA driver | Lookup verified against NVIDIA's service for an RTX 4080 (616.92 → 617.42). The 1 GB install was not run: it needs elevation and restarts the display stack. |
+| Runtimes, device problems, system info, startup manager, cleanup | Run against the real machine (Windows) and, for cleanup and startup, a Linux container as an ordinary user. |
+| macOS Sparkle updates | Pure parts tested everywhere, including a real Rectangle release's Ed25519 signature; the bundle swap is tested with fake bundles. The full install has not run on a real Mac — **first thing to try on one**. |
+| Windows Update install, driver restore | Unchanged from 2.2: unit-tested, not exercised elevated. See the history notes. |
 
-Neither is a blocker if the release is understood to be a pre-signing one. The
-version numbers are already bumped to 2.2.0 across `Cargo.toml`,
-`tauri.conf.json` and `apps/gui/package.json`.
+## 3. Worth doing next
 
-**Old branches, once merged.** These are fully contained in `main` and safe to
-delete:
-
-```sh
-git push origin --delete dev/rust-rewrite dev/updateMilestone2
-```
-
-These two are **not** safe to delete as-is:
-
-| Branch | Unique commits | Why it needs care |
-|---|---|---|
-| `backup/pre-trailer-strip` | 4 | The safety net from a completed history rewrite. Its purpose is served, and the legacy Python tree it carries also exists at tag `v1.3.0`. Safe once you accept that. |
-| `dev/ms3` | 3 | *"backup: work in progress before PC reset"*, plus a Python-era drivers-page UI and cycle/reports/schedule pages. **No tag contains these commits** — deleting the branch makes them unreachable. Tag it first (`git tag archive/ms3 origin/dev/ms3 && git push --tags`) and then the branch can go. |
-
----
-
-## 1. Code signing — the one thing blocking everything else
-
-Fully documented in [`docs/SIGNING.md`](docs/SIGNING.md): why it matters, the
-certificate comparison, the exact repository variables and secrets, and how to
-verify a signed artifact.
-
-The CI side is **done and inert**. `release.yml` signs both the CLI binaries
-and the NSIS installer, gated on a `SIGNING_ENABLED` repository variable. It
-was built this way on purpose: the pipeline change does not have to be
-remembered at the same moment the identity validation clears. Set the variable
-and the secrets, and the next tag is signed.
-
-Azure Trusted Signing, ~10 USD/month. The awkward requirement is that an
-individual subscriber's identity must have existed for three years; if that
-cannot be satisfied, an OV certificate is the fallback and early releases will
-still warn.
-
-**This gates automatic self-update, and the ordering is not negotiable.**
-`self_update.rs` checks for a newer release and refuses to install it.
-`ARCHITECTURE.md` criticises v1 for fetching a PowerShell module at runtime as
-Administrator and trusting whatever answered; downloading an unsigned
-executable and running it elevated is the same hole with our own name on it.
-`UpdateCheck::is_installable` is the single place that decision lives, and the
-test `odysync_refuses_to_install_its_own_updates_while_releases_are_unsigned`
-is what will fail — deliberately — on the day signing lands. That failure is
-the reminder.
-
----
-
-## 2. Two paths that still have not been exercised
-
-Everything else in this branch was verified against a real system. These two
-were not, and the reason is worth recording so the next attempt does not
-repeat it.
-
-Both need **administrator rights**. Neither has anything to do with the
-certificate — that conflation cost an afternoon.
-
-### Windows Update install
-
-The scan half is verified: it finds real pending updates on a real machine.
-The install half is covered only by unit tests.
-
-The elevated attempt failed with `0x8024001E`, and the cause is specific:
-**UAC on that machine elevated into a different account** (`VISICON\jahoadm`)
-than the interactive one (`VISICON\jaho`), and the Windows Update Agent will
-not start its server outside the session it belongs to. The interactive user
-*was* in Administrators, so this was policy, not permissions.
-
-That is now explained in `explain_hresult` rather than surfacing as a hex
-number, which is a genuine improvement that came out of the failure. But the
-install path is still unproven.
-
-**To verify:** an elevated session running as the *signed-in* account, on a
-machine where UAC does not switch users — a non-domain machine is the easy
-case. Then:
-
-```sh
-odysync scan --show-skipped          # confirm the WUA search works elevated
-odysync apply --yes --only KB5101650 # one real update, scoped by KB number
-```
-
-Scoping by KB also exercises the `PackageId` alias matching in a real apply.
-Expect a reboot prompt afterwards for a cumulative update.
-
-### Driver restore
-
-Backup, list and prune **are** verified elevated — and the restore run is what
-found the `ERROR_NO_MORE_ITEMS` defect now fixed. What has not been seen is a
-restore that actually installs a driver onto a device, because the test
-deliberately used an already-current package.
-
-**To verify:** back up a package, let Windows Update replace that driver with a
-newer one, then restore and confirm `restored` (not `already_current`) comes
-back non-empty. Note the documented limit: this is not a forced downgrade, so
-if the newer package is still in the store Windows may keep preferring it, and
-`already_current` is then the *correct* answer.
-
----
-
-## 3. Carried over from PLAN.md, unchanged
-
-- **GUI:** a Windows Update card exists; the driver-backup UI on the Hardware
-  page does not. `drivers backup|list|rollback|prune` are CLI-only.
-- **Startup impact score:** deliberately not built. Task Manager's rating comes
-  from undocumented telemetry, and a number that looks like it but disagrees is
-  worse than none. Offering *delay* as well as disable is still worthwhile and
-  needs no score.
-- **Large-file and duplicate reporting:** report-only and genuinely useful, but
-  a full-disk hash walk could not be verified in the time available. Left open
-  rather than shipped unverified.
-- **Publisher allow-list:** dropped. With no installer on the apply path, its
-  only possible site is the offline cache, and an allow-list of one is a
-  configuration burden rather than a control. Revisit if a backend ever
-  downloads its own payload.
-- **macOS/Linux signing:** Developer ID plus notarisation for macOS (Gatekeeper
-  refuses unnotarised apps outright, so this is required before a macOS GUI
-  release). Signed repository packaging for Linux.
+- **Grow the catalog.** Each entry needs its signer read from a real installer;
+  a pin that stops matching fails safe (the update is refused), so a signer
+  change at a publisher shows up as a refused update, not a bad install.
+- **AMD and Intel GPU drivers without winget.** Neither vendor publishes a
+  machine-readable feed; today these come from Windows Update (default) or
+  winget (opt-in).
+- **Startup: offer "delay" as well as "off".** Still no fake impact score.
+- **Duplicate files**, report-only, if a full-disk hash walk can be made fast
+  enough to verify properly.
+- **Old branches.** `dev/rust-rewrite`, `dev/updateMilestone2` and
+  `dev/iobit-parity` are fully contained in `main`. `dev/ms3` has three
+  commits no tag contains — tag it (`archive/ms3`) before deleting it.
 
 ---
 
 ## 4. Things learned that are not obvious from the code
 
-Recorded because each one cost real time and none of them are guessable.
+**Windows PowerShell inherits PowerShell 7's module path.** Started from
+`pwsh`, `powershell.exe` loads PS7's copy of `Microsoft.PowerShell.Security`,
+which fails, so `Get-AuthenticodeSignature` "could not be loaded" and every
+signature check failed. CI found it — GitHub's Windows runners run steps in
+`pwsh`. `proc::build` now removes `PSModulePath` for `powershell.exe`.
+
+**Console tools translate their labels — the GPU detector had the same bug as
+the driver-backup parser.** It matched `Instance ID:` in pnputil output; a
+German Windows prints `Instanz-ID:`, so no GPU was ever found and all four GPU
+backends were silently dead. Read values from CIM/JSON, never labels.
+
+**Windows PowerShell writes redirected output in the OEM code page.** A device
+named "Unbekanntes USB-Gerät" arrived with a replacement character. Every
+script now starts by setting `[Console]::OutputEncoding` to UTF-8.
+
+**A schedule must point at a binary that understands the schedule.** The
+scheduler registered `current_exe() apply --yes`; from the app, that is the
+GUI, which ignores arguments — so the schedule opened a window and updated
+nothing. The app now bundles the CLI and schedules that.
+
+**Shader caches are the biggest junk on a gaming PC.** 50.6 GB on the
+development machine, more than temp files and browser caches together.
 
 **`pnputil` output is fully localised, and the console mangles it.** On a
 German machine `Published Name` reads `Veröffentlichter Name`, with the umlaut
@@ -191,7 +109,7 @@ wiring it into the runner would have produced a hook that never fires. The one
 real call site is the offline cache. `verification_of` exists to answer "who
 checked this?" honestly instead of showing a tick that could be misread.
 
-**Measure before trusting a number the tool prints.** Every figure in `PLAN.md`
+**Measure before trusting a number the tool prints.** Every figure in the 2.2 plan (`docs/history/`)
 was checked against an independent count. Two matched exactly, one did not —
 and the one that did not was the *check* being wrong, not the tool. That is
 only distinguishable because both were computed.

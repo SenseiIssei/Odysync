@@ -5,7 +5,66 @@ All notable changes to Odysync will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.0] - 2026-10-16
+
+### Added
+- **Updates without winget.** A new `direct` source reads the operating
+  system's own list of installed programs, recognises them from a curated
+  catalog and fetches installers straight from the publisher (GitHub releases,
+  the VS Code update API, the Node.js release index). Before one runs: the
+  version must equal the approved one, the URL must belong to the publisher,
+  the file is locked and re-hashed, the published SHA-256 must match, and the
+  Authenticode signer must be the one the catalog pins. Installers only run
+  over an install of the same technology, never while the program is running.
+- **NVIDIA drivers straight from NVIDIA**, looked up per GPU device id on
+  NVIDIA's own service, WHQL only, refused unless signed by NVIDIA Corporation.
+- **Mac apps through their own Sparkle feeds**: Ed25519 signature from the
+  installed app's key, same Team ID, Gatekeeper approval, reversible swap.
+- **Cross-platform cleanup**: Trash, caches and crash reports on macOS and
+  Linux; new opt-in categories for GPU shader caches and the recently-opened
+  files list; `odysync large-files` (report only).
+- **Runtimes** (`odysync components`): Visual C++ v14, the legacy DirectX
+  runtime and .NET patches, from Microsoft's installers, checked against the
+  SHA-512 Microsoft publishes.
+- **Device problems** (`odysync devices`): Device Manager codes in plain words.
+- **Startup manager on Linux and macOS** (XDG autostart overrides, launchctl),
+  and Odysync's own start-at-sign-in on both. `odysync startup`.
+- **System info on every platform** (`odysync sysinfo`).
+- **Redesigned app**: calm light and dark themes, grouped navigation, update
+  tables, cleanup grouped by risk, runtimes, device problems and driver
+  backups in the app, optional sources switchable in Settings.
+- Platform-native packaging: NSIS on Windows, `.dmg` on macOS, `.deb`, `.rpm`
+  and AppImage on Linux, each with the CLI bundled for scheduled runs.
+- `--backend` on `scan` and `apply`; `--only` matches catalog ids.
+- Frontend tests (Vitest + Testing Library) in CI on all three platforms.
+
+### Changed
+- **winget is opt-in**, together with everything that shells out to it
+  (Microsoft Store, AMD/Intel/Qualcomm GPU, virtualization guest tools).
+- Dependencies: reqwest 0.13, zip 9, directories 6, sha2 0.11, Tailwind 4,
+  TypeScript 7, lucide 1.x; framer-motion removed. MSRV 1.90.
+- PowerShell output is read as UTF-8, so localised names survive.
+
+### Fixed
+- GPU detection found no adapter on non-English Windows: pnputil translates
+  its labels. Adapters now come from `Win32_VideoController`.
+- Signature checks failed when Odysync was started from PowerShell 7, whose
+  module path Windows PowerShell inherited.
+- Schedules created in the app registered the GUI binary, which ignores
+  command-line verbs, so they never updated anything.
+- Optional sources could not be enabled from the app.
+- The build failed on Linux and four cleanup tests failed on macOS/Linux.
+
+### Removed
+- `odysync-version-source`: never called, and its default endpoint pointed at
+  a domain that does not exist.
+
+The changes listed under 2.2.0 below were never released on their own and
+ship as part of 3.0.0.
+
+## [2.2.0] - not released separately
+
+### Unreleased fixes folded into 3.0.0
 
 ### Fixed
 - **A driver restore reported failure when it had succeeded.** `pnputil
@@ -35,7 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the whole driver store. A name that matches nothing is an error rather than
   an empty backup, which would look like success right until someone needed it.
 
-## [2.2.0]
+### Included from the 2.2 line
 
 ### Added
 - **Windows Update.** Odysync now installs Windows' own security, quality and

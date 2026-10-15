@@ -342,7 +342,7 @@ function Sidebar({
         open ? "w-[224px]" : "w-[60px]"
       }`}
     >
-      <div className="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2.5 space-y-4">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2.5 space-y-3">
         {NAV_GROUPS.map((group) => (
           <div key={group || "top"}>
             {group && open && (
@@ -357,7 +357,7 @@ function Sidebar({
           </div>
         ))}
       </div>
-      <div className="border-t border-line py-2 px-2.5 space-y-0.5">
+      <div className="border-t border-line py-1.5 px-2.5 space-y-0.5">
         {NAV_ITEMS.filter((n) => n.group === "footer").map(item)}
       </div>
     </nav>
@@ -383,7 +383,7 @@ function NavButton({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       title={compact ? item.label : undefined}
-      className={`group relative w-full flex items-center gap-3 h-9 rounded-lg text-sm transition-colors ${
+      className={`group relative w-full flex items-center gap-3 h-8 rounded-lg text-sm transition-colors ${
         compact ? "justify-center px-0" : "px-2.5"
       } ${
         active
@@ -392,7 +392,7 @@ function NavButton({
       }`}
     >
       {active && (
-        <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-accent" aria-hidden />
+        <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full bg-accent" aria-hidden />
       )}
       <span className={active ? "text-accent" : "text-faint group-hover:text-muted"}>
         {item.icon}

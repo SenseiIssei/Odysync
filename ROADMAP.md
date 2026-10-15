@@ -1,9 +1,10 @@
 # Odysync v2 — Roadmap
 
 > **This file describes phases 1–6 of the Rust rewrite, all of which shipped.**
-> Work from 2026-07-27 onwards — Windows Update, installer verification, driver
-> rollback, deep clean, code signing — is planned in [PLAN.md](PLAN.md), which
-> also records the defects found auditing this code against its own docs.
+> The 2.2 work (Windows Update, installer verification, driver rollback, deep
+> clean) is recorded in [docs/history](docs/history/2026-07-iobit-parity-plan.md);
+> what 3.0 added is in the [CHANGELOG](CHANGELOG.md), and what is still open
+> in [NEXT.md](NEXT.md).
 
 Status as of 2026-07-20. Branch: `dev/rust-rewrite`.
 

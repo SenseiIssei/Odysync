@@ -1,315 +1,171 @@
 <div align="center">
 
+<img src="apps/gui/src-tauri/icons/128x128.png" width="88" alt="Odysync logo">
+
 # Odysync
 
-### Safe, fast software & driver updates for Windows, macOS, and Linux
+**Safe software and driver updates for Windows, macOS and Linux — as a desktop app and a command-line tool.**
 
-[![Release](https://img.shields.io/github/v/release/SenseiIssei/Odysync?style=for-the-badge&logo=github&color=blue)](https://github.com/SenseiIssei/Odysync/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=opensourceinitiative)](https://opensource.org/licenses/MIT)
-[![Tauri](https://img.shields.io/badge/Tauri-v2-orange?style=for-the-badge&logo=tauri&logoColor=white)](https://v2.tauri.app)
-[![React](https://img.shields.io/badge/React-19-61dafb?style=for-the-badge&logo=react&logoColor=white)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-6-3178c6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Rust](https://img.shields.io/badge/Rust-1.82+-ce422b?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![TailwindCSS](https://img.shields.io/badge/TailwindCSS-3-38bdf8?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
+Odysync keeps installed programs, drivers, runtimes and the system itself up to date, cleans up what is safe to clean, and explains what it finds. It is free and open source, and it is built around one rule: never break a working machine.
 
-<br>
-
-[![CI](https://img.shields.io/github/actions/workflow/status/SenseiIssei/Odysync/rust.yml?style=flat-square&logo=githubactions&label=CI)](https://github.com/SenseiIssei/Odysync/actions/workflows/rust.yml)
-[![Security Audit](https://img.shields.io/badge/cargo--audit-passing-brightgreen?style=flat-square&logo=rust)](https://github.com/SenseiIssei/Odysync/actions)
-[![cargo-deny](https://img.shields.io/badge/cargo--deny-checked-brightgreen?style=flat-square&logo=rust)](https://github.com/SenseiIssei/Odysync/actions)
-[![SBOM](https://img.shields.io/badge/SBOM-CycloneDX-blue?style=flat-square)](https://github.com/SenseiIssei/Odysync/actions)
-[![Tests](https://img.shields.io/badge/tests-439%20passing-brightgreen?style=flat-square)](https://github.com/SenseiIssei/Odysync/actions)
-[![Clippy](https://img.shields.io/badge/clippy-clean-brightgreen?style=flat-square&logo=rust)](https://github.com/SenseiIssei/Odysync/actions)
-[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/odysync)
+[![CI](https://img.shields.io/github/actions/workflow/status/SenseiIssei/Odysync/rust.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/SenseiIssei/Odysync/actions/workflows/rust.yml)
+[![Release](https://img.shields.io/github/v/release/SenseiIssei/Odysync?logo=github)](https://github.com/SenseiIssei/Odysync/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-5a6ad8)
+![Rust](https://img.shields.io/badge/Rust-1.90%2B-ce422b?logo=rust&logoColor=white)
+![Tauri](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)
 
 <br>
 
-<a href="https://ko-fi.com/senseiissei">
-  <img src="https://ko-fi.com/img/githubbutton_2.svg" alt="Support me on Ko-fi" height="40">
-</a>
+<img src="docs/screenshots/dashboard-dark.png" alt="Odysync overview, dark theme" width="860">
 
 </div>
 
 ---
 
-## Overview
+## Why Odysync
 
-Odysync is a complete Rust rewrite of the original Python updater, built with a strict safety policy engine, a CLI, and a Tauri v2 + React desktop GUI. It fixes four defects from the original that could corrupt installations, and adds cross-platform support.
+Most "PC optimizer" suites mix a few genuinely useful tools with features that only look busy — registry cleaners, RAM boosters, "internet speed-ups" — and update drivers from their own repackaged databases. Odysync does the useful part, does it carefully, and leaves the rest out on purpose.
 
-<table>
-<tr>
-<td width="50%" align="center">
-
-### CLI
-
-```sh
-odysync scan
-odysync apply --yes
-odysync daemon --interval 60
-```
-
-</td>
-<td width="50%" align="center">
-
-### GUI
-
-```sh
-cd apps/gui
-npm install
-npx tauri dev
-```
-
-</td>
-</tr>
-</table>
-
----
-
-## Stats
-
-<div align="center">
-
-| Metric | Value |
-|:------:|:-----:|
-| Language | Rust + TypeScript |
-| Crates | 5 |
-| Unit Tests | 487 |
-| Backends | 47 across three platforms (39 on Windows) |
-| Binary Size | ~1 MB (CLI) |
-| Platforms | Windows, macOS, Linux |
-| GUI Framework | Tauri v2 + React 19 |
-| License | MIT |
-
-</div>
-
----
-
-## Repository Activity
-
-<div align="center">
-
-<img src="https://img.shields.io/github/commit-activity/m/SenseiIssei/Odysync?style=flat-square&logo=git&label=Commits%2FMonth&color=blue" alt="Commit Activity">
-<img src="https://img.shields.io/github/last-commit/SenseiIssei/Odysync?style=flat-square&logo=git&label=Last%20Commit&color=blue" alt="Last Commit">
-<img src="https://img.shields.io/github/contributors/SenseiIssei/Odysync?style=flat-square&logo=github&label=Contributors&color=blue" alt="Contributors">
-<img src="https://img.shields.io/github/repo-size/SenseiIssei/Odysync?style=flat-square&logo=github&label=Repo%20Size&color=blue" alt="Repo Size">
-<img src="https://img.shields.io/github/issues/SenseiIssei/Odysync?style=flat-square&logo=github&label=Issues&color=yellow" alt="Issues">
-<img src="https://img.shields.io/github/issues-closed/SenseiIssei/Odysync?style=flat-square&logo=github&label=Closed%20Issues&color=brightgreen" alt="Closed Issues">
-<img src="https://img.shields.io/github/stars/SenseiIssei/Odysync?style=flat-square&logo=github&label=Stars&color=yellow" alt="Stars">
-<img src="https://img.shields.io/github/forks/SenseiIssei/Odysync?style=flat-square&logo=github&label=Forks&color=blue" alt="Forks">
-
-</div>
-
-<br>
-
-<div align="center">
-  <img src="https://img.shields.io/github/languages/count/SenseiIssei/Odysync?style=flat-square&label=Languages&color=blue" alt="Language Count">
-  <img src="https://img.shields.io/github/languages/top/SenseiIssei/Odysync?style=flat-square&label=Top%20Language&color=blue" alt="Top Language">
-  <img src="https://img.shields.io/github/languages/code-size/SenseiIssei/Odysync?style=flat-square&label=Code%20Size&color=blue" alt="Code Size">
-  <img src="https://img.shields.io/github/downloads/SenseiIssei/Odysync/total?style=flat-square&logo=github&label=Downloads&color=blue" alt="Downloads">
-</div>
-
----
-
-## Language Breakdown
-
-<div align="center">
-
-```
-Rust       ████████████████████████████████████████████████████  68.4%
-TypeScript ██████████████████████                               21.2%
-CSS        ████                                                  4.8%
-HTML       ██                                                    2.1%
-Other      ████                                                  3.5%
-```
-
-</div>
-
----
-
-## Why v2?
-
-The original Python updater had four defects that could corrupt installations:
-
-| # | Defect | Fix in v2 |
-|:-:|:-------|:----------|
-| 1 | Upgraded packages with `Unknown` installed versions, causing sidegrades/downgrades | Policy engine refuses unknown versions by default |
-| 2 | Compared versions as strings (`1.10` < `1.9`) | Proper semver ordering via `odysync-core` |
-| 3 | On failed upgrade, fell back to reinstalling from scratch, wiping state | No reinstall fallback; convergence verified post-apply |
-| 4 | Installed third-party PowerShell module from PSGallery as Admin | Built-in Windows Update Agent COM API, no third-party deps |
-
----
+- **No dependency on winget.** Installed programs are updated straight from their publishers (GitHub releases, vendor update feeds). winget, Chocolatey and Scoop are optional extra sources.
+- **Nothing runs unverified.** Every installer Odysync downloads itself must carry a valid code signature *from the publisher it expects*; a valid signature from anyone else is refused.
+- **Never downgrade, never guess, never reinstall.** A failed update stays failed; an unreadable version is a reason to skip, not to install.
+- **Says who checked.** Each update source names who verified what it installs — "verified by Odysync", "verified by the Windows Update Agent", "verified by apt" — instead of a generic tick.
 
 ## Features
 
-- **47 backends** across Windows, macOS and Linux:
-  - *Windows Update*: security & quality updates, Defender definitions,
-    drivers, and feature upgrades (opt-in) via the Windows Update Agent COM API
-  - *Windows packages*: winget, Microsoft Store, Chocolatey, Scoop
-  - *GPU drivers*: NVIDIA, AMD, Intel, Qualcomm
-  - *OEM tools*: Dell, HP, Lenovo, MSI, ASUS, Gigabyte, Acer, Razer
-  - *Firmware*: Dell, HP, Lenovo, `fwupd`, Mac firmware
-  - *Language ecosystems*: pip, cargo, npm, go, dotnet tools, VS Code
-    extensions, JetBrains plugins, PowerShell modules
-  - *Unix*: Homebrew, apt, dnf, pacman, zypper, snap, flatpak, nix, AppImage
-- **Safety policy**: stable-only by default, semver version comparison, holds/pins, exclusions, elevation rules
-- **Restore points**: system restore point before applying (Windows)
-- **Maintenance**: temp cleanup, recycle bin, DISM/SFC, startup programs
-- **Security audit**: Defender, persistence, integrity, network and hardening
-- **Scheduling**: Task Scheduler (Windows), launchd (macOS), systemd (Linux)
-- **Diagnostics**: zip bundle for troubleshooting
-- **GUI**: Tauri v2 + React + TypeScript + TailwindCSS desktop app with dark/light mode
-- **Daemon**: background scan mode with system tray icon
-- **Cross-platform**: Windows, macOS, and Linux from a single codebase
+| | Windows | macOS | Linux |
+|---|:---:|:---:|:---:|
+| **Programs, direct from the publisher** — signature-pinned installers from GitHub releases and vendor feeds | ✓ | ✓ (Sparkle apps) | — |
+| **System package managers** — Homebrew, apt, dnf, pacman, zypper, Flatpak, Snap, Nix, Chocolatey, Scoop | ✓ | ✓ | ✓ |
+| **Language ecosystems** — pip, npm, cargo, go, .NET tools, VS Code and JetBrains extensions | ✓ | ✓ | ✓ |
+| **OS updates** — Windows Update (security, quality, Defender), `softwareupdate` | ✓ | ✓ | via package manager |
+| **Drivers** — Windows Update drivers, NVIDIA straight from NVIDIA, OEM tools (Dell, HP, Lenovo…), `fwupd` firmware | ✓ | firmware | ✓ (`fwupd`) |
+| **Driver backup and restore** — export the driver store, roll back after a bad update | ✓ | — | — |
+| **Runtimes** — Visual C++, DirectX, .NET patches, from Microsoft's own installers | ✓ | — | — |
+| **Device problems** — Device Manager error codes explained in plain words | ✓ | — | — |
+| **Cleanup** — temp files, caches, trash, shader caches, recent-files list; measure first, ask before anything permanent | ✓ | ✓ | ✓ |
+| **Large files** — the biggest files in your home folder, report only | ✓ | ✓ | ✓ |
+| **Startup manager** — turn sign-in programs off and back on, reversibly | ✓ | ✓ (LaunchAgents) | ✓ (XDG autostart) |
+| **Security audit** — persistence, tampering, network exposure, hardening, Microsoft Defender | ✓ | — | — |
+| **Restore points, disk optimisation, system file repair** | ✓ | — | — |
+| **System info, schedules, profiles, update history** | ✓ | ✓ | ✓ |
 
----
+Everything in the app is also in the CLI.
+
+<table>
+<tr>
+<td><img src="docs/screenshots/updates-light.png" alt="Updates, light theme"></td>
+<td><img src="docs/screenshots/drivers-dark.png" alt="Drivers, runtimes and device problems"></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/maintenance-dark.png" alt="Cleanup grouped by risk"></td>
+<td><img src="docs/screenshots/settings-light.png" alt="Settings with optional sources"></td>
+</tr>
+</table>
+
+## How it stays safe
+
+**Before an installer Odysync downloaded runs**, all of these must hold — each one is fatal on its own:
+
+1. The release is exactly the version you approved; if the publisher shipped another one in between, Odysync stops and asks for a new scan.
+2. The download URL belongs to the publisher the catalog names (a GitHub asset must be a release of *that* repository), over HTTPS on every redirect.
+3. The file is locked against writes and deletion, then re-hashed from disk — so nothing can swap it between the check and the run, even when the installer runs elevated.
+4. The SHA-256 matches whatever the source publishes (GitHub, VS Code and Node.js all publish one; .NET publishes SHA-512).
+5. The Authenticode signature is valid **and** issued to the expected publisher — parsed from the certificate subject, so `GitHub, Inc. Evil` does not pass for `GitHub, Inc.`.
+
+Installers only run over an install of the same kind (MSI over MSI, Inno over Inno), never while the program is running. On macOS, an app update must carry a valid Ed25519 signature from the key *in the app you already have*, the same Apple Team ID, and Gatekeeper's approval; the old app is kept until the new one is in place.
+
+**What Odysync deliberately does not do**, and why:
+
+| Feature found in optimizer suites | Why it is not here |
+|---|---|
+| Registry cleaner | No measurable benefit on modern Windows; Microsoft does not support them and the failure mode is an unbootable system. |
+| RAM "booster" | Freeing working sets pushes pages to disk and makes the machine slower. |
+| "Internet boost" TCP tweaks | Windows auto-tunes TCP; the tweaks are folklore that can break networking. |
+| Drivers from a third-party database | Odysync uses Windows Update and the hardware makers only. |
+| Dropping "missing DLLs" into System32 | That is how DLL-download sites work; Odysync installs Microsoft's own runtime packages instead. |
+| Deleting browser history or cookies | That is your data, and browsers clear it correctly themselves. Odysync clears caches only. |
+| A startup "impact score" | Task Manager's score comes from undocumented telemetry; a number that disagrees with it is worse than none. |
+
+## Install
+
+Download the package for your system from the [latest release](https://github.com/SenseiIssei/Odysync/releases/latest). Every file has a `.sha256` next to it.
+
+| System | App | CLI |
+|---|---|---|
+| Windows 10/11 (x64) | `Odysync_<version>_x64-setup.exe` | `odysync-windows-x86_64.zip` |
+| macOS 11+ | `Odysync_<version>_aarch64.dmg` (Apple Silicon) | `odysync-macos-arm64.tar.gz`, `odysync-macos-x86_64.tar.gz` |
+| Linux (x64) | `.deb`, `.rpm` or `.AppImage` | `odysync-linux-x86_64.tar.gz` |
+
+> **The releases are not code-signed yet.** Windows SmartScreen will show "Windows protected your PC" — choose *More info → Run anyway* after checking the SHA-256. On macOS, open the app with right-click → *Open* the first time (or run `xattr -dr com.apple.quarantine /Applications/Odysync.app`). Signing is wired into the release workflow and switches on as soon as a certificate exists; see [docs/SIGNING.md](docs/SIGNING.md).
+
+The app installs the CLI next to itself; scheduled runs use it.
+
+## Command line
+
+```sh
+odysync scan                         # what can be updated, and what is held back and why
+odysync apply                        # install everything that passes the safety rules
+odysync apply --only vscode --yes    # one package, no prompt
+odysync scan --backend direct        # ask one source only (naming an opt-in source enables it for this run)
+
+odysync clean                        # measure reclaimable space; deletes nothing
+odysync clean --apply                # remove the safe-by-default categories
+odysync large-files --min-mb 500     # the biggest files in your home folder
+
+odysync drivers backup               # export the driver store (Windows)
+odysync components                   # Visual C++, DirectX and .NET status (Windows)
+odysync devices                      # devices Windows reports as not working
+odysync startup                      # programs that start at sign-in
+odysync sysinfo                      # processor, memory, graphics, disks
+
+odysync hold vscode                  # never update this one
+odysync schedule --frequency daily --time 09:00
+odysync backends                     # every source, and who verifies what it installs
+```
+
+`odysync --help` and `odysync <command> --help` list everything; `--json` gives machine-readable output.
+
+## Build from source
+
+Requirements: Rust 1.90+, Node.js 22+, and on Linux the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+
+```sh
+cargo build --release -p odysync-cli          # the CLI, in target/release/
+cd apps/gui && npm ci && npx tauri dev        # the app, with hot reload
+npm run dev                                   # the UI alone in a browser, on demo data
+```
+
+Tests and lints, as CI runs them:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --lib
+cd apps/gui && npx tsc -b && npx oxlint && npm test
+```
+
+CI runs all of this on Windows, macOS and Linux, packages the app on all three, and adds `cargo audit`, `cargo deny`, `npm audit` and a CycloneDX SBOM.
 
 ## Architecture
 
 ```
-odysync-core      Policy engine, version algebra, planner, runner, config
-    |
-odysync-verify    Installer digest and signature verification
-    |
-odysync-backends  winget, msstore, Windows drivers, homebrew, apt, flatpak
-    |
-    +-- odysync-cli      The `odysync` command-line tool
-    |
-    +-- odysync-gui      Tauri v2 + React desktop app
+odysync-core      domain model, version algebra, safety policy, planner, runner
+  └─ pure and fully unit-tested; knows no package manager
+odysync-verify    SHA-256 and platform code-signature verification
+odysync-backends  every update source, cleanup, drivers, runtimes, startup, system info
+  ├─ odysync-cli  the `odysync` command
+  └─ apps/gui     Tauri 2 + React 19 + TypeScript 7 + Tailwind 4
 ```
 
-Every safety decision lives in `odysync-core`. The CLI and GUI are thin shells over the engine -- they cannot drift apart in what they consider safe.
-
-See `ARCHITECTURE.md` for details.
-
----
-
-## Quick Start (CLI)
-
-```sh
-# Scan for available updates
-odysync scan
-
-# Apply all safe updates
-odysync apply --yes
-
-# Hold a package (prevent updates)
-odysync hold Mozilla.Firefox
-
-# Schedule daily scans
-odysync schedule --daily --time 09:00
-
-# Run maintenance
-odysync maintain --action temp-cleanup
-
-# Background daemon
-odysync daemon --interval 60
-
-# Create diagnostics bundle
-odysync diagnostics --out bundle.zip
-```
-
-## Quick Start (GUI)
-
-```sh
-cd apps/gui
-npm install
-npx tauri dev
-```
-
----
-
-## Building
-
-```sh
-# CLI only
-cargo build --release -p odysync-cli
-
-# GUI (requires Node.js 20+)
-cd apps/gui && npm install
-npx tauri build
-
-# Run tests
-cargo test --workspace --lib
-
-# Lint
-cargo clippy --workspace --all-targets
-cargo fmt --all -- --check
-```
-
----
-
-## Tech Stack
-
-<div align="center">
-
-| Layer | Technology |
-|:-----:|:-----------|
-| Core Engine | Rust, `tokio`, `serde`, `clap` |
-| Windows APIs | `windows` crate (COM, Update Agent, Restore Points) |
-| GUI Framework | Tauri v2 |
-| Frontend | React 19, TypeScript 6 |
-| Styling | TailwindCSS 3 |
-| Icons | Lucide React |
-| Build Tool | Vite 8 |
-| CI/CD | GitHub Actions |
-| Security | `cargo-audit`, `cargo-deny`, CycloneDX SBOM |
-
-</div>
-
----
-
-## Security
-
-- Policy engine refuses downgrades, same-version reinstalls, and pre-releases by default
-- Store apps refused while elevated (cannot update from elevated context)
-- Driver updates refused without elevation
-- `cargo-audit` and `cargo-deny` run on every CI build
-- CycloneDX SBOM generated per build
-- SHA-256 checksums published for every release artifact
-
-- The offline cache downloads over **HTTPS only**, checks the Authenticode
-  signature before the file is kept, and refuses a signature that does not
-  validate
-- `odysync backends` names **who** verified each payload — winget, apt, the
-  Windows Update Agent — rather than showing a tick that could be misread as a
-  check Odysync performed. Odysync almost never holds an installer file; the
-  package manager downloads and validates it inside its own process.
-
-One thing this list does **not** claim, stated plainly because the previous
-version of it did: Odysync's own releases are unsigned, so SmartScreen warns on
-every install. That is Phase F of [PLAN.md](PLAN.md), and
-[NEXT.md](NEXT.md) is the current state of what remains.
-
----
+Every safety decision lives in `odysync-core`; the CLI and the app are thin shells over the same engine and cannot disagree about what is safe. Adding an update source means implementing one five-method trait. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## License
 
-MIT
-
----
-
-## Migration from v1
-
-v1 profiles map to v2 config `profiles` entries. Holds and pins use the same `backend:id` syntax. The config file lives at:
-
-| Platform | Path |
-|:---------|:-----|
-| Windows | `%APPDATA%\Odysync\config.json` |
-| macOS | `~/Library/Application Support/Odysync/config.json` |
-| Linux | `~/.config/odysync/config.json` |
-
----
+[MIT](LICENSE) © SenseiIssei
 
 <div align="center">
-
-### Support the Project
-
-<a href="https://ko-fi.com/senseiissei">
-  <img src="https://ko-fi.com/img/githubbutton_2.svg" alt="Support me on Ko-fi" height="40">
-</a>
-
-<br><br>
-
-Made with Rust by [SenseiIssei](https://github.com/SenseiIssei)
-
+<br>
+<a href="https://ko-fi.com/senseiissei"><img src="https://ko-fi.com/img/githubbutton_2.svg" alt="Support on Ko-fi" height="34"></a>
 </div>

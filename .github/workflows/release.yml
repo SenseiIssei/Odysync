@@ -7,38 +7,49 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build-cli:
-    name: build CLI (${{ matrix.os }})
+    name: CLI (${{ matrix.archive }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
+            target: x86_64-pc-windows-msvc
             artifact: odysync.exe
             archive: odysync-windows-x86_64.zip
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
             artifact: odysync
             archive: odysync-linux-x86_64.tar.gz
-          # `macos-latest` is Apple Silicon; naming this x86_64 would ship an
-          # arm64 binary to Intel users. Intel Macs are not built at all — add
-          # a `macos-13` entry if that is wanted.
+          # Both Mac architectures are built on the Apple Silicon runner: the
+          # Xcode SDK cross-compiles to Intel without any extra toolchain.
           - os: macos-latest
+            target: aarch64-apple-darwin
             artifact: odysync
             archive: odysync-macos-arm64.tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: odysync
+            archive: odysync-macos-x86_64.tar.gz
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
       - name: Build release
-        run: cargo build --release -p odysync-cli
+        run: cargo build --release -p odysync-cli --target ${{ matrix.target }}
 
       # Signing is a no-op until the Trusted Signing secrets exist, so the
       # workflow keeps working today and starts signing the moment they are
@@ -48,7 +59,7 @@ jobs:
       # Signing happens before the archive is built, so the zip contains the
       # signed binary rather than an unsigned one next to a signature.
       - name: Sign the CLI (Windows)
-        if: matrix.os == 'windows-latest' && vars.SIGNING_ENABLED == 'true'
+        if: runner.os == 'Windows' && vars.SIGNING_ENABLED == 'true'
         uses: azure/trusted-signing-action@v0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -57,31 +68,28 @@ jobs:
           endpoint: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.TRUSTED_SIGNING_PROFILE }}
-          files-folder: target/release
+          files-folder: target/${{ matrix.target }}/release
           files-folder-filter: exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
       - name: Archive (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: pwsh
-        run: 7z a ${{ matrix.archive }} target/release/${{ matrix.artifact }}
+        run: 7z a ${{ matrix.archive }} target/${{ matrix.target }}/release/${{ matrix.artifact }}
 
       - name: Archive (Unix)
-        if: matrix.os != 'windows-latest'
-        run: tar czf ${{ matrix.archive }} -C target/release ${{ matrix.artifact }}
+        if: runner.os != 'Windows'
+        run: tar czf ${{ matrix.archive }} -C target/${{ matrix.target }}/release ${{ matrix.artifact }}
 
       - name: Generate SHA-256
         shell: bash
         run: |
           # One format on every platform: "<hash>  <filename>", the shape
-          # `sha256sum -c` expects. certutil printed a bare hash with a
-          # trailing CR, so the Windows checksum file could not be verified
-          # the same way as the others.
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            hash=$(certutil -hashfile "${{ matrix.archive }}" SHA256 | sed -n 2p | tr -d ' \r\n')
-            echo "$hash  ${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+          # `sha256sum -c` expects.
+          if command -v sha256sum >/dev/null; then
+            sha256sum "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
           else
             shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
           fi
@@ -89,18 +97,38 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.archive }}
+          name: cli-${{ matrix.target }}
           path: |
             ${{ matrix.archive }}
             ${{ matrix.archive }}.sha256
+          if-no-files-found: error
 
-  build-gui-windows:
-    name: build GUI (Windows)
-    runs-on: windows-latest
+  build-gui:
+    name: app (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            config: src-tauri/release-windows.conf.json
+            bundles: |
+              target/release/bundle/nsis/*.exe
+          # 22.04 rather than latest: the .deb and AppImage link against the
+          # build machine's glibc, and an older one runs on more systems.
+          - os: ubuntu-22.04
+            config: src-tauri/release-unix.conf.json
+            bundles: |
+              target/release/bundle/deb/*.deb
+              target/release/bundle/rpm/*.rpm
+              target/release/bundle/appimage/*.AppImage
+          - os: macos-latest
+            config: src-tauri/release-unix.conf.json
+            bundles: |
+              target/release/bundle/dmg/*.dmg
+
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -108,20 +136,33 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/gui/package-lock.json
 
-      - name: Install frontend deps
+      - name: Install Tauri system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            patchelf libfuse2 file
+
+      - name: Install frontend dependencies
         working-directory: apps/gui
         run: npm ci
 
-      - name: Build Tauri app
+      # The release config also builds the CLI and bundles it, because the
+      # app's scheduler runs the CLI rather than the GUI binary.
+      - name: Build the app
         working-directory: apps/gui
-        run: npx tauri build
+        run: npx tauri build --config ${{ matrix.config }}
 
       # The installer is the artifact SmartScreen actually judges — a user
       # double-clicks this, not the CLI — so it matters more than the binaries.
-      - name: Sign the installer
-        if: vars.SIGNING_ENABLED == 'true'
+      - name: Sign the installer (Windows)
+        if: runner.os == 'Windows' && vars.SIGNING_ENABLED == 'true'
         uses: azure/trusted-signing-action@v0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -136,59 +177,40 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      # Published alongside the installer so a user can verify the download
+      # Published alongside each package so a user can verify the download
       # without trusting the page it came from.
-      - name: Generate SHA-256 for the installer
+      - name: Collect packages with checksums
         shell: bash
         run: |
-          cd target/release/bundle/nsis
-          for f in *.exe; do
-            sha256sum "$f" > "$f.sha256"
+          set -euo pipefail
+          mkdir -p dist-out
+          for f in ${{ matrix.bundles }}; do
+            cp "$f" dist-out/
+          done
+          cd dist-out
+          for f in *; do
+            if command -v sha256sum >/dev/null; then sha256sum "$f" > "$f.sha256"; else shasum -a 256 "$f" > "$f.sha256"; fi
             cat "$f.sha256"
           done
 
-      # `src-tauri` is a workspace member, so cargo puts its output in the
-      # workspace-root `target/`, not `apps/gui/src-tauri/target/`. Combined
-      # with `if-no-files-found: warn` that meant the installer was quietly
-      # never uploaded — every release shipped CLI binaries only.
-      - name: Upload NSIS installer
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: odysync-gui-windows
-          path: |
-            target/release/bundle/nsis/*.exe
-            target/release/bundle/nsis/*.exe.sha256
+          name: app-${{ matrix.os }}
+          path: dist-out/*
           if-no-files-found: error
 
   publish:
-    needs: [build-cli, build-gui-windows]
+    needs: [build-cli, build-gui]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/download-artifact@v4
         with:
-          name: odysync-windows-x86_64.zip
           path: artifacts
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: odysync-linux-x86_64.tar.gz
-          path: artifacts
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: odysync-macos-arm64.tar.gz
-          path: artifacts
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: odysync-gui-windows
-          path: artifacts
+          merge-multiple: true
 
       # A tool whose entire purpose is keeping other software current should be
       # installable with `winget install Odysync`. The manifests are generated
@@ -199,7 +221,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          installer=$(ls artifacts/*.exe | head -n1)
+          installer=$(ls artifacts/*setup.exe | head -n1)
           sha=$(sha256sum "$installer" | cut -d' ' -f1 | tr 'a-f' 'A-F')
           url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$installer")"
           out="winget/SenseiIssei.Odysync/${version}"
@@ -239,7 +261,7 @@ jobs:
           PackageUrl: https://github.com/${GITHUB_REPOSITORY}
           License: MIT
           LicenseUrl: https://github.com/${GITHUB_REPOSITORY}/blob/main/LICENSE
-          ShortDescription: Safe, fast software and driver updates for Windows, macOS and Linux.
+          ShortDescription: Safe software and driver updates for Windows, macOS and Linux.
           Tags:
             - updater
             - drivers
@@ -248,8 +270,6 @@ jobs:
           ManifestType: defaultLocale
           ManifestVersion: 1.6.0
           EOF
-
-          echo "Generated manifests for ${version}:"
           find winget -type f
 
       - uses: actions/upload-artifact@v4
@@ -258,10 +278,17 @@ jobs:
           path: winget/**
           if-no-files-found: error
 
+      - name: Release notes
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes="docs/release-notes/v${version}.md"
+          if [ -f "$notes" ]; then cp "$notes" release-notes.md; else echo "Odysync ${version}" > release-notes.md; fi
+
       - name: Publish GitHub Release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          generateReleaseNotes: true
+          name: Odysync ${{ github.ref_name }}
+          bodyFile: release-notes.md
           artifacts: "artifacts/*"
