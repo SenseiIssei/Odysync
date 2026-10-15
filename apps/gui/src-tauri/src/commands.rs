@@ -112,6 +112,9 @@ pub struct SkippedDto {
     pub id: String,
     pub name: String,
     pub reason: String,
+    /// The versions involved, so a held-back update still says what it is.
+    pub installed: String,
+    pub available: String,
 }
 
 #[derive(Serialize)]
@@ -120,13 +123,23 @@ pub struct BackendDto {
     pub name: String,
     /// Present and usable on this machine.
     pub available: bool,
-    /// Not switched off by the user in config.
+    /// Switched on — by default, or by the user for an opt-in backend.
     pub enabled: bool,
+    /// Off until the user switches it on (winget and what depends on it,
+    /// Windows feature upgrades). Toggled through `enabled_backends` rather
+    /// than `disabled_backends`.
+    pub opt_in: bool,
+    /// Who checks the payload before it runs, e.g. "verified by Odysync".
+    pub verification: String,
+    /// The full sentence behind `verification`.
+    pub verification_detail: String,
 }
 
 #[derive(Serialize)]
 pub struct SystemInfoDto {
     pub os: String,
+    /// `windows`, `macos` or `linux` — for decisions, where `os` is for display.
+    pub platform: String,
     pub elevated: bool,
     pub version: String,
     /// Non-null when the config file on disk could not be parsed at startup.
@@ -212,6 +225,10 @@ pub struct ProfileDto {
 pub struct ConfigDto {
     pub policy: PolicyDto,
     pub disabled_backends: Vec<String>,
+    /// Opt-in backends the user switched on. `default` so a front-end built
+    /// before this field existed can still save.
+    #[serde(default)]
+    pub enabled_backends: Vec<String>,
     /// Read-only here; use the profile commands to change them.
     #[serde(skip_deserializing)]
     pub profiles: Vec<ProfileDto>,
@@ -244,6 +261,7 @@ impl From<&Config> for ConfigDto {
                     .collect(),
             },
             disabled_backends: c.disabled_backends.clone(),
+            enabled_backends: c.enabled_backends.clone(),
             profiles: c
                 .profiles
                 .iter()
@@ -279,6 +297,7 @@ impl ConfigDto {
             .collect();
 
         config.disabled_backends = self.disabled_backends;
+        config.enabled_backends = self.enabled_backends;
         config.restore_point = self.restore_point;
         config.scan_interval_hours = self.scan_interval_hours.min(24 * 7);
         config.concurrency = self.concurrency.clamp(1, 16);
@@ -349,6 +368,8 @@ pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
                     id: entry.candidate.id.to_string(),
                     name: entry.candidate.name.clone(),
                     reason: reason.to_string(),
+                    installed: entry.candidate.installed.raw().to_string(),
+                    available: entry.candidate.available.raw().to_string(),
                 }),
                 None => actionable.push(UpdateDto {
                     backend: kind_id.clone(),
@@ -495,11 +516,18 @@ pub async fn list_backends(state: State<'_, AppState>) -> Result<Vec<BackendDto>
     let probed = state.probed_backends().await;
     Ok(probed
         .iter()
-        .map(|p| BackendDto {
-            kind: p.backend.kind().id().to_string(),
-            name: p.backend.display_name().to_string(),
-            available: p.available,
-            enabled: p.enabled,
+        .map(|p| {
+            let kind = p.backend.kind();
+            let verification = odysync_core::verification_of(kind);
+            BackendDto {
+                kind: kind.id().to_string(),
+                name: p.backend.display_name().to_string(),
+                available: p.available,
+                enabled: p.enabled,
+                opt_in: !kind.enabled_by_default(),
+                verification: verification.label(),
+                verification_detail: verification.detail(),
+            }
         })
         .collect())
 }
@@ -519,9 +547,15 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigDto, String>
 #[tauri::command]
 pub async fn save_config(config: ConfigDto, state: State<'_, AppState>) -> Result<(), String> {
     let mut current = state.config();
-    let disabled_before = current.disabled_backends.clone();
+    let before = (
+        current.disabled_backends.clone(),
+        current.enabled_backends.clone(),
+    );
     config.apply_to(&mut current);
-    let disabled_changed = current.disabled_backends != disabled_before;
+    let disabled_changed = (
+        current.disabled_backends.clone(),
+        current.enabled_backends.clone(),
+    ) != before;
 
     state.save_config(current).map_err(|e| e.to_string())?;
 
@@ -644,6 +678,7 @@ pub async fn create_diagnostics(
 pub async fn get_system_info(state: State<'_, AppState>) -> Result<SystemInfoDto, String> {
     Ok(SystemInfoDto {
         os: odysync_core::platform::os_label().to_string(),
+        platform: std::env::consts::OS.to_string(),
         elevated: odysync_core::platform::is_elevated(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         config_error: state.config_load_error.clone(),
@@ -1478,6 +1513,9 @@ pub async fn disable_autostart() -> Result<(), String> {
 #[derive(Serialize)]
 pub struct StartupProgramDto {
     pub name: String,
+    /// Display name, when it differs from the identifying `name` (Linux
+    /// `.desktop` files are identified by file name but titled by `Name=`).
+    pub label: Option<String>,
     pub command: String,
     pub location: String,
     pub enabled: bool,
@@ -1485,107 +1523,19 @@ pub struct StartupProgramDto {
 
 #[tauri::command]
 pub async fn list_startup_programs() -> Result<Vec<StartupProgramDto>, String> {
-    #[cfg(not(windows))]
-    {
-        Ok(Vec::new())
-    }
-
-    #[cfg(windows)]
-    {
-        tracing::info!("listing startup programs");
-        // The StartupApproved keys hold a 12-byte blob per entry whose first
-        // byte encodes the state: even values are enabled, odd are disabled.
-        // The previous version compared `$_.Name -eq $_.Name` (always true) and
-        // rebound `$_` inside the loop, so every entry reported "enabled".
-        let script = r#"
-$ErrorActionPreference = 'SilentlyContinue'
-
-function Get-ApprovalMap([string]$approvedPath) {
-    $map = @{}
-    if (Test-Path $approvedPath) {
-        $key = Get-Item $approvedPath
-        foreach ($valueName in $key.GetValueNames()) {
-            $bytes = $key.GetValue($valueName)
-            if ($bytes -is [byte[]] -and $bytes.Length -gt 0) {
-                $map[$valueName] = (($bytes[0] % 2) -eq 0)
-            }
-        }
-    }
-    return $map
-}
-
-$result = New-Object System.Collections.ArrayList
-
-$runKeys = @(
-    @{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-       Approved = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' },
-    @{ Path = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
-       Approved = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' }
-)
-
-foreach ($entry in $runKeys) {
-    if (-not (Test-Path $entry.Path)) { continue }
-    $approved = Get-ApprovalMap $entry.Approved
-    $key = Get-Item $entry.Path
-    foreach ($valueName in $key.GetValueNames()) {
-        if ([string]::IsNullOrEmpty($valueName)) { continue }
-        $enabled = $true
-        if ($approved.ContainsKey($valueName)) { $enabled = $approved[$valueName] }
-        [void]$result.Add([PSCustomObject]@{
-            Name     = $valueName
-            Command  = [string]$key.GetValue($valueName)
-            Location = $entry.Path
-            Enabled  = $enabled
+    let items = odysync_backends::startup_items::list()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(items
+        .into_iter()
+        .map(|i| StartupProgramDto {
+            name: i.name,
+            label: i.label,
+            command: i.command,
+            location: i.location,
+            enabled: i.enabled,
         })
-    }
-}
-
-$startupFolders = @(
-    [Environment]::GetFolderPath('Startup'),
-    (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Startup')
-)
-foreach ($folder in $startupFolders) {
-    if ([string]::IsNullOrEmpty($folder) -or -not (Test-Path $folder)) { continue }
-    foreach ($file in Get-ChildItem -LiteralPath $folder -File) {
-        # `.disabled` is the marker this app writes when turning an entry off.
-        $isDisabled = $file.Name -like '*.disabled'
-        $displayName = $file.BaseName -replace '\.disabled$', ''
-        [void]$result.Add([PSCustomObject]@{
-            Name     = $displayName
-            Command  = $file.FullName
-            Location = $folder
-            Enabled  = (-not $isDisabled)
-        })
-    }
-}
-
-@($result | Sort-Object Name) | ConvertTo-Json -Depth 3 -Compress
-"#;
-        let out = proc::powershell(script, std::time::Duration::from_secs(30))
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let programs: Vec<StartupProgramJson> = parse_ps_json(&out.stdout);
-        Ok(programs
-            .into_iter()
-            .map(|p| StartupProgramDto {
-                name: p.name,
-                command: p.command.unwrap_or_default(),
-                location: p.location,
-                enabled: p.enabled,
-            })
-            .collect())
-    }
-}
-
-#[cfg(windows)]
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct StartupProgramJson {
-    name: String,
-    command: Option<String>,
-    location: String,
-    enabled: bool,
+        .collect())
 }
 
 #[tauri::command]
@@ -1594,73 +1544,9 @@ pub async fn toggle_startup_program(
     location: String,
     enable: bool,
 ) -> Result<(), String> {
-    #[cfg(not(windows))]
-    {
-        let _ = (name, location, enable);
-        Err("Startup program management is only available on Windows".to_string())
-    }
-
-    #[cfg(windows)]
-    {
-        // `$enable` used to be referenced but never defined, so every toggle
-        // took the disable branch and an entry could never be switched back on.
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Stop'
-$name = {name}
-$location = {location}
-$enable = ${enable}
-
-if ($location -like 'HKCU:*' -or $location -like 'HKLM:*') {{
-    $hive = if ($location -like 'HKLM:*') {{ 'HKLM:' }} else {{ 'HKCU:' }}
-    $approvedPath = "$hive\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
-    if (-not (Test-Path $approvedPath)) {{
-        New-Item -Path $approvedPath -Force | Out-Null
-    }}
-    # First byte even = enabled, odd = disabled. The remaining 11 bytes are a
-    # timestamp Windows does not require us to fill in.
-    $first = if ($enable) {{ 0x02 }} else {{ 0x03 }}
-    $blob = [byte[]]($first,0,0,0,0,0,0,0,0,0,0,0)
-    Set-ItemProperty -LiteralPath $approvedPath -Name $name -Value $blob -Type Binary
-}} else {{
-    $enabledPath  = Join-Path $location "$name.lnk"
-    $disabledPath = Join-Path $location "$name.lnk.disabled"
-    if ($enable) {{
-        if (Test-Path -LiteralPath $disabledPath) {{
-            Rename-Item -LiteralPath $disabledPath -NewName "$name.lnk" -Force
-        }} elseif (-not (Test-Path -LiteralPath $enabledPath)) {{
-            throw "No startup entry found for $name"
-        }}
-    }} else {{
-        if (Test-Path -LiteralPath $enabledPath) {{
-            Rename-Item -LiteralPath $enabledPath -NewName "$name.lnk.disabled" -Force
-        }} elseif (-not (Test-Path -LiteralPath $disabledPath)) {{
-            throw "No startup entry found for $name"
-        }}
-    }}
-}}
-Write-Output "ODYSYNC_OK"
-"#,
-            name = ps_quote(&name),
-            location = ps_quote(&location),
-            enable = if enable { "true" } else { "false" },
-        );
-
-        let out = proc::powershell(&script, std::time::Duration::from_secs(20))
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if out.stdout.contains("ODYSYNC_OK") {
-            Ok(())
-        } else {
-            let detail = out.stderr.trim();
-            Err(if detail.is_empty() {
-                "Failed to change the startup entry.".to_string()
-            } else {
-                format!("Failed to change the startup entry: {detail}")
-            })
-        }
-    }
+    odysync_backends::startup_items::set_enabled(&name, &location, enable)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ── Backup / Restore Points ──────────────────────────────────────────────────
@@ -2004,6 +1890,7 @@ mod tests {
                     "exclude": ["  Some.Package  ", ""]
                 },
                 "disabled_backends": ["scoop"],
+                "enabled_backends": ["winget"],
                 "restore_point": false,
                 "scan_interval_hours": 6,
                 "concurrency": 99,
@@ -2024,6 +1911,7 @@ mod tests {
         assert!(!config.policy.stable_only);
         assert!(!config.skip_prerelease, "kept in sync with stable_only");
         assert_eq!(config.disabled_backends, vec!["scoop".to_string()]);
+        assert_eq!(config.enabled_backends, vec!["winget".to_string()]);
         assert_eq!(config.concurrency, 16, "clamped to the supported range");
         assert_eq!(config.backend_timeout_secs, 10, "clamped to the minimum");
         assert_eq!(config.proxy_url, None, "blank proxy becomes None");
@@ -2037,6 +1925,7 @@ mod tests {
         for key in [
             "policy",
             "disabled_backends",
+            "enabled_backends",
             "profiles",
             "restore_point",
             "scan_interval_hours",

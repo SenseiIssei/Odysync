@@ -76,7 +76,7 @@ export default function History() {
         <div className="flex gap-4 text-xs">
           <span className="text-success">{successCount} successful</span>
           <span className="text-danger">{failCount} failed</span>
-          <span className="text-cyber-text-dim">{entries.length} total</span>
+          <span className="text-muted">{entries.length} total</span>
         </div>
       )}
 
@@ -86,7 +86,7 @@ export default function History() {
           placeholder="Search history..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-surface text-sm focus:border-accent"
+          className="w-full px-3 py-2 rounded-lg border border-line bg-surface text-sm focus:border-accent"
         />
       )}
 
@@ -110,22 +110,22 @@ export default function History() {
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: Math.min(i * 0.02, 0.4) }}
-              className="flex items-center gap-3 p-3 rounded-lg bg-cyber-surface border border-cyber-border text-xs"
+              className="flex items-center gap-3 p-3 rounded-lg bg-surface border border-line text-xs"
             >
               <OutcomeIcon status={e.status} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium text-cyber-text truncate">{e.package}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyber-bg text-cyber-text-dim font-mono flex-shrink-0">
+                  <span className="font-medium text-fg truncate">{e.package}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-canvas text-muted font-mono flex-shrink-0">
                     {e.backend}
                   </span>
                 </div>
-                <div className="text-cyber-text-faint mt-0.5">
+                <div className="text-faint mt-0.5">
                   {e.from_version} -&gt; {e.to_version} · {formatDate(e.timestamp)}
                 </div>
               </div>
               <span
-                className="text-cyber-text-faint flex-shrink-0 max-w-[40%] truncate"
+                className="text-faint flex-shrink-0 max-w-[40%] truncate"
                 title={e.detail}
               >
                 {e.status === "updated" ? "updated" : e.detail || e.status}

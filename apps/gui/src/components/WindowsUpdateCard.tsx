@@ -1,5 +1,5 @@
 import { ShieldCheck, ShieldAlert, Cpu, ArrowUpCircle } from "lucide-react";
-import { Card } from "./ui";
+import { Badge, Card } from "./ui";
 import type { ScanResult } from "../types";
 
 /**
@@ -13,15 +13,15 @@ const WINDOWS_UPDATE_BACKENDS = [
     id: "windows-update",
     label: "Security & quality",
     icon: ShieldCheck,
-    tone: "text-accent",
+    tone: "text-muted",
   },
   {
     id: "windows-defender-update",
     label: "Defender definitions",
     icon: ShieldAlert,
-    tone: "text-accent",
+    tone: "text-muted",
   },
-  { id: "windows-drivers", label: "Drivers", icon: Cpu, tone: "text-accent" },
+  { id: "windows-drivers", label: "Drivers", icon: Cpu, tone: "text-muted" },
   {
     id: "windows-feature-update",
     label: "Feature upgrades",
@@ -81,45 +81,46 @@ export default function WindowsUpdateCard({
   );
 
   return (
-    <Card title={`Windows Update — ${total} pending`}>
-      <div className="space-y-2">
+    <Card
+      title="Windows Update"
+      description={`${total} pending from Microsoft, installed by Windows' own update agent.`}
+      padded={false}
+    >
+      <ul className="divide-y divide-line border-t border-line">
         {rows.map((row) => {
           const Icon = row.icon;
           return (
-            <div key={row.label} className="flex items-start gap-3 text-xs">
-              <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${row.tone}`} />
-              <span className="flex-1 text-cyber-text">{row.label}</span>
-              <div className="text-right">
-                {row.actionable > 0 && (
-                  <div className="text-success">{row.actionable} ready</div>
-                )}
+            <li key={row.label} className="flex items-center gap-3 px-5 py-3 text-sm">
+              <Icon className={`w-4 h-4 flex-shrink-0 ${row.tone}`} />
+              <span className="flex-1 text-fg">{row.label}</span>
+              <div className="flex items-center gap-2">
+                {row.actionable > 0 && <Badge tone="success">{row.actionable} ready</Badge>}
                 {row.blocked > 0 && (
                   // `title` alone would become the accessible name and replace
                   // the visible "N blocked" entirely, so a screen reader would
                   // hear the reason and never the count. aria-label carries
                   // both.
-                  <div
-                    className="text-cyber-text-dim"
+                  <span
                     title={row.reasons.join("; ")}
-                    aria-label={`${row.blocked} blocked: ${row.reasons.join("; ")}`}
+                    aria-label={`${row.blocked} waiting: ${row.reasons.join("; ")}`}
                   >
-                    {row.blocked} blocked
-                  </div>
+                    <Badge tone="neutral">{row.blocked} waiting</Badge>
+                  </span>
                 )}
               </div>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ul>
 
       {/* The single most common reason a Windows update cannot be applied, and
           one the user can act on immediately. Shown only when it is actually
           the cause, so it does not become background noise. */}
       {blockedByElevation && !elevated && (
-        <p className="mt-3 pt-3 border-t border-cyber-border text-xs text-warning">
-          Installing Windows updates needs administrator rights. Scanning does not
-          — that is why they are listed here. Restart Odysync as administrator to
-          apply them.
+        <p className="px-5 py-3 border-t border-line text-sm text-muted">
+          Installing Windows updates needs administrator rights; checking for them does not.
+          Use <span className="text-fg font-medium">Run as admin</span> in the title bar to
+          install them.
         </p>
       )}
 
@@ -128,11 +129,9 @@ export default function WindowsUpdateCard({
           scan. So the note explains why they are showing, not how to show
           them. */}
       {rows.some((r) => r.label === "Feature upgrades") && (
-        <p className="mt-3 pt-3 border-t border-cyber-border text-xs text-warning">
-          Feature upgrades replace the Windows version and take far longer than a
-          normal update. They are listed because{" "}
-          <code className="text-accent">windows-feature-update</code> is in your{" "}
-          <code className="text-accent">enabled-backends</code>.
+        <p className="px-5 py-3 border-t border-line text-sm text-warning">
+          Feature upgrades replace the Windows version and take far longer than a normal
+          update. They are listed because you turned them on in Settings.
         </p>
       )}
     </Card>

@@ -21,6 +21,8 @@ export interface SkippedDto {
   id: string;
   name: string;
   reason: string;
+  installed: string;
+  available: string;
 }
 
 export interface BackendErrorDto {
@@ -40,10 +42,17 @@ export interface BackendDto {
   name: string;
   available: boolean;
   enabled: boolean;
+  /** Off until switched on: winget and what depends on it, feature upgrades. */
+  opt_in: boolean;
+  /** e.g. "verified by Odysync", "verified by winget". */
+  verification: string;
+  verification_detail: string;
 }
 
 export interface SystemInfoDto {
   os: string;
+  /** "windows" | "macos" | "linux" */
+  platform: string;
   elevated: boolean;
   version: string;
   config_error: string | null;
@@ -111,6 +120,8 @@ export interface PolicyConfig {
 export interface Config {
   policy: PolicyConfig;
   disabled_backends: string[];
+  /** Opt-in backends the user has switched on. */
+  enabled_backends: string[];
   /** Read-only: managed through the profile commands. */
   profiles: Profile[];
   restore_point: boolean;
@@ -189,6 +200,8 @@ export interface OfflineManifestEntryDto {
 
 export interface StartupProgramDto {
   name: string;
+  /** Display name when it differs from `name`. */
+  label?: string | null;
   command: string;
   location: string;
   enabled: boolean;
@@ -270,4 +283,86 @@ export interface DefenderStatusDto {
 export interface AutostartConfig {
   enabled: boolean;
   minimized: boolean;
+}
+
+// ── Maintenance tools ───────────────────────────────────────────────────────
+
+export type Reversibility = "regenerated" | "discardable" | "loses-capability";
+
+export interface CleanupItemDto {
+  id: string;
+  label: string;
+  consequence: string;
+  bytes: number;
+  file_count: number;
+  note: string | null;
+  error: string | null;
+  reversibility: Reversibility;
+  selected_by_default: boolean;
+  report_only: boolean;
+  needs_confirmation: boolean;
+}
+
+export interface CleanupResultDto {
+  id: string;
+  label: string;
+  removed_bytes: number;
+  removed_files: number;
+  skipped: string[];
+}
+
+export interface LargeFileDto {
+  path: string;
+  bytes: number;
+}
+
+export interface LargeFileReport {
+  files: LargeFileDto[];
+  scanned: number;
+  truncated: boolean;
+}
+
+export type ComponentState = "missing" | "installed" | "outdated" | "out-of-support";
+
+/** camelCase on the wire — see `ComponentStatus` in `odysync_backends::components`. */
+export interface ComponentStatus {
+  id: string;
+  name: string;
+  installed: string | null;
+  latest: string | null;
+  state: ComponentState;
+  installable: boolean;
+  note: string;
+}
+
+/** camelCase on the wire — see `DeviceProblem` in `odysync_backends::devices`. */
+export interface DeviceProblem {
+  name: string;
+  class: string;
+  deviceId: string;
+  code: number;
+  meaning: string;
+  suggestion: string;
+}
+
+export interface DriverBackupDto {
+  id: string;
+  created_at: string;
+  reason: string;
+  package_count: number;
+  size_bytes: number;
+  complete: boolean;
+}
+
+export interface DriverRestoreDto {
+  restored: string[];
+  already_current: string[];
+  failed: string[];
+  reboot_required: boolean;
+}
+
+export interface VolumeOptimization {
+  drive: string;
+  media_type: string;
+  operation: string;
 }

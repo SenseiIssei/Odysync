@@ -66,8 +66,8 @@ export default function Logs() {
     if (l.includes("ERROR")) return "text-danger";
     if (l.includes("WARN")) return "text-warning";
     if (l.includes("INFO")) return "text-accent";
-    if (l.includes("DEBUG") || l.includes("TRACE")) return "text-cyber-text-faint";
-    return "text-cyber-text-dim";
+    if (l.includes("DEBUG") || l.includes("TRACE")) return "text-faint";
+    return "text-muted";
   };
 
   return (
@@ -80,7 +80,7 @@ export default function Logs() {
 
       {logs.error && <ErrorBar message={logs.error} />}
 
-      <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4 space-y-4">
+      <div className="rounded-lg border border-line bg-surface p-4 space-y-4">
         <Toggle
           label="Follow log"
           description={`Re-read the log every ${AUTO_REFRESH_MS / 1000} seconds`}
@@ -108,7 +108,7 @@ export default function Logs() {
             placeholder="Filter messages..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-surface text-sm focus:border-accent"
+            className="w-full px-3 py-2 rounded-lg border border-line bg-surface text-sm focus:border-accent"
           />
 
           {levels.length > 0 && (
@@ -119,7 +119,7 @@ export default function Logs() {
                 className={`px-3 py-1 rounded-full text-xs ${
                   levelFilter === ""
                     ? "bg-accent/20 text-accent"
-                    : "bg-cyber-surface text-cyber-text-dim"
+                    : "bg-surface text-muted"
                 }`}
               >
                 All
@@ -132,7 +132,7 @@ export default function Logs() {
                   className={`px-3 py-1 rounded-full text-xs ${
                     levelFilter === l
                       ? "bg-accent/20 text-accent"
-                      : "bg-cyber-surface text-cyber-text-dim"
+                      : "bg-surface text-muted"
                   }`}
                 >
                   {l}
@@ -161,15 +161,15 @@ export default function Logs() {
           <div
             ref={viewportRef}
             onScroll={onScroll}
-            className="rounded-lg border border-cyber-border bg-cyber-surface p-4 max-h-[60vh] overflow-y-auto font-mono text-xs space-y-1 select-text"
+            className="rounded-lg border border-line bg-surface p-4 max-h-[60vh] overflow-y-auto font-mono text-xs space-y-1 select-text"
           >
             {filtered.map((l, i) => (
               <div key={i} className="flex gap-3">
                 {l.timestamp && (
-                  <span className="text-cyber-text-faint flex-shrink-0">{l.timestamp}</span>
+                  <span className="text-faint flex-shrink-0">{l.timestamp}</span>
                 )}
                 <span className={`flex-shrink-0 ${levelColor(l.level)}`}>{l.level}</span>
-                <span className="text-cyber-text-dim break-all">{l.message}</span>
+                <span className="text-muted break-all">{l.message}</span>
               </div>
             ))}
           </div>

@@ -1,90 +1,75 @@
 import { useCallback, useMemo, useState } from "react";
-import { motion } from "framer-motion";
 import {
   AlertTriangle,
-  Cpu,
+  ArrowRight,
+  Archive,
+  CheckCircle2,
   Download,
-  MemoryStick,
   RefreshCw,
-  ShieldCheck,
-  Zap,
+  RotateCcw,
+  Wrench,
 } from "lucide-react";
 import * as api from "../api";
 import { useStore } from "../store";
 import {
+  Badge,
+  Button,
   Card,
+  Checkbox,
   EmptyState,
   ErrorBar,
+  InfoBar,
   PageHeader,
+  SuccessBar,
+  WarningBar,
   errorText,
+  formatDate,
   formatSize,
 } from "../components/ui";
-import {
-  GROUP_HINTS,
-  GROUP_LABELS,
-  hardwareGroupOf,
-  isHardwareBackend,
-  type HardwareGroup,
-} from "../hardware-backends";
-import type { ApplyResultDto, UpdateDto } from "../types";
+import { GROUP_LABELS, hardwareGroupOf, isHardwareBackend } from "../hardware-backends";
+import type { ApplyResultDto, ComponentStatus, UpdateDto } from "../types";
 import { OutcomeIcon } from "./Updates";
 
-const GROUP_ORDER: HardwareGroup[] = ["driver", "firmware", "oem"];
-
 export default function Drivers() {
-  const { scan, hardware, sysInfo, backends, history, backup } = useStore();
+  const { scan, sysInfo, history, backup } = useStore();
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApplyResultDto | null>(null);
   const [deselected, setDeselected] = useState<Set<string>>(new Set());
   const [confirmFirmware, setConfirmFirmware] = useState(false);
 
-  const elevated = sysInfo.data?.elevated ?? false;
+  const info = sysInfo.data;
+  const elevated = info?.elevated ?? false;
+  const windows = (info?.platform ?? "windows") === "windows";
 
-  const hardwareUpdates = useMemo(
+  const updates = useMemo(
     () => (scan.data?.actionable ?? []).filter((u) => isHardwareBackend(u.backend)),
     [scan.data],
   );
-
-  const grouped = useMemo(() => {
-    const map: Record<HardwareGroup, UpdateDto[]> = { driver: [], firmware: [], oem: [] };
-    for (const u of hardwareUpdates) {
-      const g = hardwareGroupOf(u.backend);
-      if (g) map[g].push(u);
-    }
-    return map;
-  }, [hardwareUpdates]);
-
-  const selected = useMemo(
-    () => hardwareUpdates.filter((u) => !deselected.has(u.id)),
-    [hardwareUpdates, deselected],
+  const waiting = useMemo(
+    () => (scan.data?.skipped ?? []).filter((s) => isHardwareBackend(s.backend)),
+    [scan.data],
   );
-
-  const selectedHasFirmware = selected.some(
-    (u) => hardwareGroupOf(u.backend) === "firmware",
-  );
-
-  // Hardware backends that reported an error are worth showing prominently:
-  // a driver backend that cannot enumerate looks identical to "no updates".
-  const hardwareScanFailures = useMemo(
+  const failures = useMemo(
     () => (scan.data?.failed_backends ?? []).filter((f) => isHardwareBackend(f.backend)),
     [scan.data],
   );
-
-  const hardwareBackendsPresent = useMemo(
-    () => backends.data.filter((b) => isHardwareBackend(b.kind) && b.available),
-    [backends.data],
+  const selected = useMemo(
+    () => updates.filter((u) => !deselected.has(key(u))),
+    [updates, deselected],
   );
+  const selectedHasFirmware = selected.some((u) => hardwareGroupOf(u.backend) === "firmware");
 
-  const toggle = (id: string) =>
+  const toggle = (u: UpdateDto) =>
     setDeselected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const k = key(u);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
       return next;
     });
 
-  const applySelected = useCallback(async () => {
+  const install = useCallback(async () => {
     if (selected.length === 0) return;
     if (selectedHasFirmware && !confirmFirmware) {
       setConfirmFirmware(true);
@@ -111,215 +96,386 @@ export default function Drivers() {
   }, [selected, selectedHasFirmware, confirmFirmware, scan, history, backup]);
 
   return (
-    <div className="max-w-4xl mx-auto space-y-4">
+    <>
       <PageHeader
-        title="Hardware Updates"
-        subtitle="Drivers, firmware and vendor update tools"
+        title="Drivers"
+        subtitle="Driver updates from Windows Update and the hardware makers, the runtimes games and apps need, and devices that are not working."
         actions={
-          <button
-            type="button"
+          <Button
             onClick={() => void scan.refresh()}
-            disabled={scan.loading || applying}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-cyber-border text-xs text-cyber-text-dim hover:text-accent hover:border-accent/30 disabled:opacity-50 transition-all"
+            busy={scan.loading}
+            disabled={applying}
+            icon={<RefreshCw className="w-4 h-4" />}
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${scan.loading ? "animate-spin" : ""}`} />
-            {scan.loading ? "Scanning..." : "Rescan"}
-          </button>
+            Rescan
+          </Button>
         }
       />
 
-      {!elevated && (
-        <div className="flex items-start gap-2 text-xs text-warning bg-warning/5 rounded-lg px-4 py-3 border border-warning/30">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-px" />
-          <span>
-            Driver and firmware updates require administrator rights. Without them Windows
-            refuses the driver search entirely, so this page will look empty even when
-            updates exist. Use "Run as Admin" in the title bar.
-          </span>
-        </div>
+      {windows && !elevated && (
+        <InfoBar message="Checking for drivers works without administrator rights; installing them does not. Use Run as admin in the title bar when you are ready to install." />
       )}
 
-      {/* Detected hardware, so the page is useful even with nothing to install. */}
-      {hardware.data && (
-        <Card title="Detected hardware">
-          <div className="space-y-1.5 text-xs">
-            <div className="flex items-center gap-2">
-              <Cpu className="w-3.5 h-3.5 text-accent flex-shrink-0" />
-              <span className="text-cyber-text-dim truncate">{hardware.data.cpu}</span>
-            </div>
-            {hardware.data.gpu.map((g, i) => (
-              <div key={`${g.name}-${i}`} className="flex items-center gap-2">
-                <Zap className="w-3.5 h-3.5 text-purple-neon flex-shrink-0" />
-                <span className="text-cyber-text-dim truncate flex-1">{g.name}</span>
-                <span className="text-cyber-text-faint font-mono flex-shrink-0">
-                  driver {g.driver_version || "unknown"}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {hardwareScanFailures.length > 0 && (
-        <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-xs text-warning space-y-1">
-          <div className="font-medium">
-            {hardwareScanFailures.length} hardware source could not be checked
-          </div>
-          {hardwareScanFailures.map((f) => (
-            <div key={f.backend} className="font-mono break-words">
-              {f.backend}: {f.error}
-            </div>
-          ))}
-        </div>
+      {failures.length > 0 && (
+        <WarningBar
+          message={
+            <>
+              {failures.length} driver source{failures.length === 1 ? "" : "s"} could not be
+              checked:{" "}
+              <span className="font-mono text-xs">
+                {failures.map((f) => `${f.backend}: ${f.error}`).join("; ")}
+              </span>
+            </>
+          }
+        />
       )}
 
       {error && <ErrorBar message={error} />}
 
       {result && (
-        <Card title="Results">
-          <div className="flex gap-6 text-xs flex-wrap">
-            <span className="text-success">{result.updated} updated</span>
-            <span className="text-danger">{result.failed} failed</span>
-            <span className="text-cyber-text-dim">{result.skipped} skipped</span>
-            {result.reboot_required && (
-              <span className="text-warning font-medium">Reboot required</span>
-            )}
-          </div>
-          <div className="space-y-1 mt-3">
+        <Card
+          title="Driver installation finished"
+          description={`${result.updated} updated, ${result.failed} failed${result.reboot_required ? " — restart to finish" : ""}.`}
+          padded={false}
+        >
+          <ul className="divide-y divide-line border-t border-line">
             {result.entries.map((e, i) => (
-              <div
-                key={`${e.name}-${i}`}
-                className="flex items-center gap-2 text-xs py-1 border-t border-cyber-border"
-              >
+              <li key={`${e.name}-${i}`} className="flex items-start gap-3 px-5 py-3 text-sm">
                 <OutcomeIcon status={e.status} />
-                <span className="flex-1 text-cyber-text truncate">{e.name}</span>
-                <span className="text-cyber-text-faint truncate max-w-[50%]" title={e.detail}>
-                  {e.detail}
-                </span>
-              </div>
+                <span className="flex-1">{e.name}</span>
+                <span className="text-muted text-right max-w-[55%] break-words">{e.detail}</span>
+              </li>
             ))}
-          </div>
+          </ul>
         </Card>
       )}
 
-      {hardwareUpdates.length > 0 && (
-        <>
-          <div className="flex items-center gap-3 flex-wrap">
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={applySelected}
-              disabled={applying || scan.loading || selected.length === 0}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg border font-medium text-sm disabled:opacity-50 transition-all ${
-                confirmFirmware
-                  ? "bg-danger/10 border-danger/30 text-danger hover:bg-danger/20"
-                  : "bg-success/10 border-success/30 text-success hover:bg-success/20 glow-green"
-              }`}
+      <Card
+        title="Driver updates"
+        description="WHQL-certified drivers only, from Windows Update or straight from the maker. A restore point is taken first."
+        padded={false}
+        actions={
+          updates.length > 0 ? (
+            <Button
+              variant={confirmFirmware ? "danger" : "primary"}
+              onClick={install}
+              busy={applying}
+              disabled={scan.loading || selected.length === 0}
+              icon={<Download className="w-4 h-4" />}
             >
-              <Download className={`w-4 h-4 ${applying ? "animate-pulse" : ""}`} />
-              {applying
-                ? "Installing..."
-                : confirmFirmware
-                  ? "Confirm — this includes firmware"
-                  : `Install ${selected.length} hardware update${selected.length !== 1 ? "s" : ""}`}
-            </motion.button>
-            <span className="flex items-center gap-1.5 text-xs text-cyber-text-dim">
-              <ShieldCheck className="w-3.5 h-3.5 text-accent" />
-              A restore point is always taken before hardware updates
-            </span>
+              {confirmFirmware ? "Confirm: includes firmware" : `Install ${selected.length}`}
+            </Button>
+          ) : undefined
+        }
+      >
+        {confirmFirmware && (
+          <div className="px-5 pb-4">
+            <WarningBar message="Your selection includes firmware or BIOS updates. Keep the machine on mains power and do not shut it down while they run — an interrupted firmware update can leave a device unbootable." />
           </div>
-
-          {confirmFirmware && (
-            <div className="flex items-start gap-2 text-xs text-danger bg-danger/5 rounded-lg px-4 py-3 border border-danger/30">
-              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-px" />
-              <span>
-                Your selection includes firmware/BIOS updates. Do not shut down or unplug the
-                machine while these run — an interrupted firmware flash can leave a device
-                unbootable. Run on mains power.
-              </span>
-            </div>
-          )}
-        </>
-      )}
-
-      {GROUP_ORDER.map((group) => {
-        const items = grouped[group];
-        if (items.length === 0) return null;
-        return (
-          <div key={group} className="space-y-2">
-            <div>
-              <h3 className="font-bold text-sm">
-                {GROUP_LABELS[group]}{" "}
-                <span className="text-cyber-text-faint font-normal">({items.length})</span>
-              </h3>
-              <p className="text-xs text-cyber-text-dim">{GROUP_HINTS[group]}</p>
-            </div>
-            {items.map((u, i) => (
-              <motion.label
-                key={`${u.backend}:${u.id}`}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: Math.min(i * 0.03, 0.3) }}
-                className={`flex items-start gap-3 p-4 rounded-lg border cursor-pointer transition-all ${
-                  !deselected.has(u.id)
-                    ? group === "firmware"
-                      ? "bg-warning/5 border-warning/30"
-                      : "bg-accent/5 border-accent/30 glow-cyan"
-                    : "bg-cyber-surface border-cyber-border hover:border-cyber-border-bright"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={!deselected.has(u.id)}
-                  onChange={() => toggle(u.id)}
-                  className="mt-1 accent-accent"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm truncate">{u.name}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyber-bg text-cyber-text-dim font-mono flex-shrink-0">
-                      {u.backend}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3 mt-1 text-xs text-cyber-text-dim">
-                    <span className="font-mono">
-                      {u.installed} <span className="text-cyber-text-faint">-&gt;</span>{" "}
-                      <span className="text-accent font-medium">{u.available}</span>
-                    </span>
-                    {u.size_bytes != null && u.size_bytes > 0 && (
-                      <span>{formatSize(u.size_bytes)}</span>
-                    )}
-                  </div>
-                </div>
-              </motion.label>
+        )}
+        {updates.length === 0 && waiting.length === 0 ? (
+          <div className="border-t border-line">
+            <EmptyState
+              icon={
+                scan.loading ? (
+                  <RefreshCw className="animate-spin text-accent" />
+                ) : (
+                  <CheckCircle2 className="text-success" />
+                )
+              }
+              title={scan.loading ? "Checking driver sources…" : "No driver updates"}
+              hint={
+                scan.loading
+                  ? undefined
+                  : "Windows Update and the hardware makers have nothing newer for this machine."
+              }
+            />
+          </div>
+        ) : (
+          <ul className="divide-y divide-line border-t border-line">
+            {updates.map((u) => {
+              const group = hardwareGroupOf(u.backend);
+              const checked = !deselected.has(key(u));
+              return (
+                <li key={key(u)} className="flex items-center gap-3 px-5 py-3 text-sm">
+                  <Checkbox label={`Include ${u.name}`} checked={checked} onChange={() => toggle(u)} />
+                  <span className="flex-1 min-w-0 truncate font-medium" title={u.name}>
+                    {u.name}
+                  </span>
+                  {group && (
+                    <Badge tone={group === "firmware" ? "warning" : "neutral"}>
+                      {GROUP_LABELS[group]}
+                    </Badge>
+                  )}
+                  <VersionJump from={u.installed} to={u.available} />
+                </li>
+              );
+            })}
+            {waiting.map((s, i) => (
+              <li key={`${s.backend}:${s.id}:${i}`} className="flex items-center gap-3 px-5 py-3 text-sm">
+                <span className="w-4" />
+                <span className="flex-1 min-w-0 truncate text-muted" title={s.name}>
+                  {s.name}
+                </span>
+                <span className="text-sm text-faint">{s.reason}</span>
+                {s.installed && s.available && s.available !== "1" && (
+                  <VersionJump from={s.installed} to={s.available} />
+                )}
+              </li>
             ))}
-          </div>
-        );
-      })}
+          </ul>
+        )}
+      </Card>
 
-      {hardwareUpdates.length === 0 && !scan.loading && (
-        <EmptyState
-          icon={<MemoryStick className="w-12 h-12" />}
-          title={
-            scan.loadedAt === null
-              ? "No scan results yet."
-              : "No hardware updates available."
-          }
-          hint={
-            hardwareBackendsPresent.length === 0
-              ? "No hardware update sources were detected on this machine."
-              : `Checked ${hardwareBackendsPresent.length} hardware source${hardwareBackendsPresent.length !== 1 ? "s" : ""}.`
-          }
-        />
-      )}
+      <DeviceProblems />
+      {windows && <Runtimes elevated={elevated} />}
+      {windows && <DriverBackups elevated={elevated} />}
+    </>
+  );
+}
 
-      {scan.loading && scan.loadedAt === null && (
-        <EmptyState
-          icon={<RefreshCw className="w-12 h-12 animate-spin text-accent" />}
-          title="Checking hardware sources..."
-        />
+function key(u: UpdateDto) {
+  return `${u.backend}:${u.id}`;
+}
+
+function VersionJump({ from, to }: { from: string; to: string }) {
+  return (
+    <span className="font-mono text-[13px] whitespace-nowrap selectable">
+      <span className="text-muted">{from || "—"}</span>
+      <ArrowRight className="inline w-3.5 h-3.5 mx-1.5 text-faint -mt-0.5" />
+      <span className="text-fg">{to}</span>
+    </span>
+  );
+}
+
+function DeviceProblems() {
+  const { devices } = useStore();
+  return (
+    <Card
+      title="Devices"
+      description="What Device Manager knows but hides behind a number, in plain words."
+      padded={false}
+      actions={
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => void devices.refresh()}
+          busy={devices.loading}
+          icon={<RefreshCw className="w-3.5 h-3.5" />}
+        >
+          Check again
+        </Button>
+      }
+    >
+      {devices.data.length === 0 ? (
+        <div className="border-t border-line px-5 py-4 text-sm text-muted flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-success" />
+          {devices.loadedAt === null ? "Checking devices…" : "Every device reports that it is working."}
+        </div>
+      ) : (
+        <ul className="divide-y divide-line border-t border-line">
+          {devices.data.map((d) => (
+            <li key={d.deviceId} className="px-5 py-4">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0" />
+                <span className="text-sm font-medium text-fg">{d.name}</span>
+                <Badge>{d.class || "Device"}</Badge>
+                <span className="text-xs text-faint ml-auto">code {d.code}</span>
+              </div>
+              <p className="text-sm text-muted mt-1.5 ml-6">{d.meaning}</p>
+              <p className="text-sm text-fg/90 mt-0.5 ml-6">{d.suggestion}</p>
+            </li>
+          ))}
+        </ul>
       )}
-    </div>
+    </Card>
+  );
+}
+
+const STATE_BADGE: Record<ComponentStatus["state"], { tone: "success" | "warning" | "danger" | "neutral"; label: string }> = {
+  installed: { tone: "success", label: "Installed" },
+  outdated: { tone: "warning", label: "Update available" },
+  missing: { tone: "neutral", label: "Not installed" },
+  "out-of-support": { tone: "danger", label: "Out of support" },
+};
+
+function Runtimes({ elevated }: { elevated: boolean }) {
+  const { components } = useStore();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const install = async (c: ComponentStatus) => {
+    setBusy(c.id);
+    setMessage(null);
+    try {
+      const text = await api.componentInstall(c.id);
+      setMessage({ ok: true, text });
+      await components.refresh();
+    } catch (e) {
+      setMessage({ ok: false, text: errorText(e) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card
+      title="Game & app runtimes"
+      description="Visual C++, DirectX and .NET, installed or repaired with Microsoft's own installers — never loose DLLs from a download site."
+      padded={false}
+    >
+      {message && (
+        <div className="px-5 pb-4">
+          {message.ok ? <SuccessBar message={message.text} /> : <ErrorBar message={message.text} />}
+        </div>
+      )}
+      <ul className="divide-y divide-line border-t border-line">
+        {components.loadedAt === null && (
+          <li className="px-5 py-4 text-sm text-muted">Checking runtimes…</li>
+        )}
+        {components.data.map((c) => {
+          const badge = STATE_BADGE[c.state];
+          const action =
+            c.state === "outdated" ? "Update" : c.state === "missing" ? "Install" : "Repair";
+          return (
+            <li key={c.id} className="flex items-center gap-4 px-5 py-3.5">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-fg">{c.name}</span>
+                  <Badge tone={badge.tone}>{badge.label}</Badge>
+                </div>
+                <p className="text-sm text-muted mt-0.5">{c.note}</p>
+              </div>
+              <span className="font-mono text-[13px] text-muted whitespace-nowrap selectable">
+                {c.state === "outdated" && c.installed && c.latest ? (
+                  <VersionJump from={c.installed} to={c.latest} />
+                ) : (
+                  c.installed ?? ""
+                )}
+              </span>
+              {c.installable && (
+                <Button
+                  size="sm"
+                  variant={c.state === "installed" ? "ghost" : "secondary"}
+                  busy={busy === c.id}
+                  disabled={!elevated || (busy !== null && busy !== c.id)}
+                  title={elevated ? undefined : "Needs administrator rights"}
+                  icon={c.state === "installed" ? <Wrench className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />}
+                  onClick={() => void install(c)}
+                >
+                  {action}
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
+
+function DriverBackups({ elevated }: { elevated: boolean }) {
+  const { driverBackups } = useStore();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+
+  const run = async (label: string, work: () => Promise<string>) => {
+    setBusy(label);
+    setMessage(null);
+    try {
+      setMessage({ ok: true, text: await work() });
+      await driverBackups.refresh();
+    } catch (e) {
+      setMessage({ ok: false, text: errorText(e) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const backupNow = () =>
+    run("backup", async () => {
+      const b = await api.driverBackupCreate("taken from the Odysync app");
+      return `Saved ${b.package_count} driver packages (${formatSize(b.size_bytes)}).${b.complete ? "" : " Some packages could not be exported."}`;
+    });
+
+  const restore = (id: string) => {
+    if (confirmRestore !== id) {
+      setConfirmRestore(id);
+      return;
+    }
+    setConfirmRestore(null);
+    void run(`restore:${id}`, async () => {
+      const r = await api.driverBackupRestore(id);
+      const parts = [
+        `${r.restored.length} restored`,
+        `${r.already_current.length} already current`,
+        r.failed.length > 0 ? `${r.failed.length} failed` : null,
+      ].filter(Boolean);
+      return `${parts.join(", ")}.${r.reboot_required ? " Restart to finish." : ""}`;
+    });
+  };
+
+  return (
+    <Card
+      title="Driver backups"
+      description="A copy of every third-party driver package, so a driver update can be undone. Windows keeps only the single previous driver on its own."
+      padded={false}
+      actions={
+        <Button
+          size="sm"
+          onClick={() => void backupNow()}
+          busy={busy === "backup"}
+          disabled={busy !== null && busy !== "backup"}
+          icon={<Archive className="w-3.5 h-3.5" />}
+        >
+          Back up now
+        </Button>
+      }
+    >
+      {message && (
+        <div className="px-5 pb-4">
+          {message.ok ? <SuccessBar message={message.text} /> : <ErrorBar message={message.text} />}
+        </div>
+      )}
+      {driverBackups.data.length === 0 ? (
+        <div className="border-t border-line px-5 py-4 text-sm text-muted">
+          No backups yet. A full backup is usually 3–6 GB, so Odysync does not take one
+          automatically unless you turn that on in Settings.
+        </div>
+      ) : (
+        <ul className="divide-y divide-line border-t border-line">
+          {driverBackups.data.map((b) => (
+            <li key={b.id} className="flex items-center gap-4 px-5 py-3.5">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-fg">{formatDate(b.created_at)}</div>
+                <div className="text-sm text-muted">
+                  {b.package_count} packages · {formatSize(b.size_bytes)} · {b.reason}
+                  {!b.complete && " · incomplete"}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant={confirmRestore === b.id ? "danger" : "ghost"}
+                busy={busy === `restore:${b.id}`}
+                disabled={!elevated || (busy !== null && busy !== `restore:${b.id}`)}
+                title={elevated ? undefined : "Needs administrator rights"}
+                icon={<RotateCcw className="w-3.5 h-3.5" />}
+                onClick={() => restore(b.id)}
+              >
+                {confirmRestore === b.id ? "Confirm restore" : "Restore"}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {confirmRestore && (
+        <p className="px-5 py-3 border-t border-line text-sm text-muted">
+          Restoring re-adds the saved packages and lets Windows install them where they fit.
+          It does not force a downgrade: if a newer driver is still installed, Windows may
+          keep preferring it.
+        </p>
+      )}
+    </Card>
   );
 }

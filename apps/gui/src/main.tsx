@@ -3,6 +3,10 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
 import { reportFrontendError } from "./api";
+import { applySavedTheme } from "./theme";
+
+// Before the first render, so the window never flashes the wrong theme.
+applySavedTheme();
 
 // A release webview has no console the user can open, so anything that escapes
 // React's error boundaries is forwarded to odysync.log instead of vanishing.

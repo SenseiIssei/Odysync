@@ -73,9 +73,9 @@ const SEVERITY_STYLE: Record<Severity, { text: string; border: string; bg: strin
     // suspected malware. Presenting them alongside threats made the whole page
     // read as an infection report.
     info: {
-      text: "text-cyber-text-dim",
-      border: "border-cyber-border",
-      bg: "bg-cyber-surface",
+      text: "text-muted",
+      border: "border-line",
+      bg: "bg-surface",
       label: "Watching",
     },
   };
@@ -190,7 +190,7 @@ export default function Security() {
             type="button"
             onClick={() => void security.refresh()}
             disabled={security.loading || busy !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-cyber-border text-xs text-cyber-text-dim hover:text-accent hover:border-accent/30 disabled:opacity-50 transition-all"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-xs text-muted hover:text-accent hover:border-accent/30 disabled:opacity-50 transition-all"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${security.loading ? "animate-spin" : ""}`} />
             {security.loading ? "Auditing..." : "Re-audit"}
@@ -200,12 +200,12 @@ export default function Security() {
 
       {/* Honesty about what this is. Overstating it would be worse than useless
           for someone who has just been compromised. */}
-      <div className="flex items-start gap-2 text-xs text-cyber-text-dim bg-cyber-surface rounded-lg px-4 py-3 border border-cyber-border">
+      <div className="flex items-start gap-2 text-xs text-muted bg-surface rounded-lg px-4 py-3 border border-line">
         <ShieldAlert className="w-4 h-4 flex-shrink-0 mt-px text-accent" />
         <span>
           This audits your system's security posture and known compromise indicators, and
           drives Microsoft Defender for the actual malware scanning. It is{" "}
-          <strong className="text-cyber-text">not an antivirus engine of its own</strong>, and
+          <strong className="text-fg">not an antivirus engine of its own</strong>, and
           a clean result here does not prove the machine is clean. For a suspected active
           infection, also run a Microsoft Defender Offline scan.
         </span>
@@ -238,7 +238,7 @@ export default function Security() {
                 ok={defender.data.signature_age_days <= 7}
               />
             </div>
-            <div className="text-xs text-cyber-text-faint space-y-0.5">
+            <div className="text-xs text-faint space-y-0.5">
               <div>Signature version: {defender.data.signature_version || "unknown"}</div>
               {defender.data.last_quick_scan && (
                 <div>Last quick scan: {defender.data.last_quick_scan}</div>
@@ -249,7 +249,7 @@ export default function Security() {
             </div>
           </div>
         ) : (
-          <p className="text-xs text-cyber-text-faint">
+          <p className="text-xs text-faint">
             {defender.loading ? "Querying Defender..." : "Defender status unavailable."}
           </p>
         )}
@@ -286,7 +286,7 @@ export default function Security() {
             }
           />
         </div>
-        <p className="text-xs text-cyber-text-faint mt-2">
+        <p className="text-xs text-faint mt-2">
           A full scan reads every file on every drive and can run for hours. It keeps going if
           you close this window to the tray.
         </p>
@@ -304,13 +304,13 @@ export default function Security() {
                 key={sev}
                 onClick={() => setSeverityFilter(active ? "all" : sev)}
                 className={`p-3 rounded-xl border text-left transition-all ${style.border} ${
-                  active ? style.bg : "bg-cyber-surface"
+                  active ? style.bg : "bg-surface"
                 } hover:${style.bg}`}
               >
-                <div className={`text-xl font-bold ${counts[sev] > 0 ? style.text : "text-cyber-text-faint"}`}>
+                <div className={`text-xl font-bold ${counts[sev] > 0 ? style.text : "text-faint"}`}>
                   {counts[sev]}
                 </div>
-                <div className="text-xs text-cyber-text-dim">{style.label}</div>
+                <div className="text-xs text-muted">{style.label}</div>
               </button>
             );
           })}
@@ -349,17 +349,17 @@ export default function Security() {
                   ) : state === "started" ? (
                     <RefreshCw className="w-3.5 h-3.5 text-accent animate-spin flex-shrink-0" />
                   ) : (
-                    <div className="w-3.5 h-3.5 rounded-full border border-cyber-border flex-shrink-0" />
+                    <div className="w-3.5 h-3.5 rounded-full border border-line flex-shrink-0" />
                   )}
                   <span
                     className={`flex-1 ${
-                      state === "pending" ? "text-cyber-text-faint" : "text-cyber-text-dim"
+                      state === "pending" ? "text-faint" : "text-muted"
                     }`}
                   >
                     {SECTION_LABELS[name] ?? name}
                   </span>
                   {s?.durationMs != null && (
-                    <span className="text-cyber-text-faint font-mono flex-shrink-0">
+                    <span className="text-faint font-mono flex-shrink-0">
                       {(s.durationMs / 1000).toFixed(1)}s
                       {s.findings != null && s.findings > 0 && ` · ${s.findings}`}
                     </span>
@@ -393,7 +393,7 @@ export default function Security() {
       {findings.length > 0 && (
         <div className="space-y-2">
           {report && (
-            <div className="text-xs text-cyber-text-faint">
+            <div className="text-xs text-faint">
               Audited {formatDate(report.scannedAt)}
             </div>
           )}
@@ -414,14 +414,14 @@ export default function Security() {
       {/* Inventory, collapsed. Your own apps, games and tools live here — this
           is "what is running on this machine", not "what is wrong with it". */}
       {severityFilter === "all" && watching.length > 0 && (
-        <details className="rounded-lg border border-cyber-border bg-cyber-surface/50">
-          <summary className="cursor-pointer px-4 py-3 text-sm text-cyber-text-dim hover:text-cyber-text">
+        <details className="rounded-lg border border-line bg-surface/50">
+          <summary className="cursor-pointer px-4 py-3 text-sm text-muted hover:text-fg">
             <Eye className="w-4 h-4 inline mr-2 -mt-0.5" />
             Watching — {watching.length} item{watching.length !== 1 ? "s" : ""} noted, none
             flagged as a problem
           </summary>
           <div className="px-3 pb-3 space-y-2">
-            <p className="text-xs text-cyber-text-faint px-1">
+            <p className="text-xs text-faint px-1">
               Autostart entries, network listeners and browser extensions found on this
               machine. Normal software — your own projects, games, Spotify — appears here.
               Nothing in this list is being called malware; it is listed so you can spot
@@ -520,12 +520,12 @@ function FindingCard({
             <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${style.text}`}>
               {style.label}
             </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyber-bg text-cyber-text-dim font-mono">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-canvas text-muted font-mono">
               {finding.category}
             </span>
             <span className="font-medium text-sm">{finding.title}</span>
           </div>
-          <p className="text-xs text-cyber-text-dim mt-1">{finding.detail}</p>
+          <p className="text-xs text-muted mt-1">{finding.detail}</p>
 
           {finding.evidence.length > 0 && (
             <>
@@ -537,7 +537,7 @@ function FindingCard({
                 {open ? "Hide" : "Show"} evidence ({finding.evidence.length})
               </button>
               {open && (
-                <pre className="mt-2 text-[11px] whitespace-pre-wrap break-all font-mono bg-cyber-bg/60 border border-cyber-border rounded p-2 max-h-40 overflow-y-auto select-text text-cyber-text-dim">
+                <pre className="mt-2 text-[11px] whitespace-pre-wrap break-all font-mono bg-canvas/60 border border-line rounded p-2 max-h-40 overflow-y-auto select-text text-muted">
                   {finding.evidence.join("\n")}
                 </pre>
               )}
@@ -553,7 +553,7 @@ function FindingCard({
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium flex-shrink-0 disabled:opacity-50 transition-all ${
               confirming
                 ? "bg-danger/10 border-danger/40 text-danger hover:bg-danger/20"
-                : "bg-cyber-surface border-cyber-border text-cyber-text-dim hover:text-accent hover:border-accent/30"
+                : "bg-surface border-line text-muted hover:text-accent hover:border-accent/30"
             }`}
           >
             {busy ? (
@@ -567,7 +567,7 @@ function FindingCard({
       </div>
 
       {finding.remediation?.kind === "manual" && (
-        <p className="text-xs text-cyber-text-dim mt-3 pt-3 border-t border-cyber-border">
+        <p className="text-xs text-muted mt-3 pt-3 border-t border-line">
           <span className="text-accent font-medium">What to do: </span>
           {finding.remediation.instructions}
         </p>

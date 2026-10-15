@@ -55,14 +55,14 @@ export default function Hardware() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.05 }}
-                  className="p-4 rounded-xl bg-cyber-surface border border-cyber-border glow-cyan"
+                  className="p-4 rounded-xl bg-surface border border-line"
                 >
                   <div className="text-accent mb-2">{c.icon}</div>
                   <div className="text-sm font-bold truncate" title={c.value}>
                     {c.value}
                   </div>
-                  <div className="text-xs text-cyber-text-dim mt-0.5">{c.sub}</div>
-                  <div className="text-[10px] text-cyber-text-faint mt-1 uppercase tracking-wider">
+                  <div className="text-xs text-muted mt-0.5">{c.sub}</div>
+                  <div className="text-[10px] text-faint mt-1 uppercase tracking-wider">
                     {c.label}
                   </div>
                 </motion.div>
@@ -75,14 +75,14 @@ export default function Hardware() {
                   {info.gpu.map((g, i) => (
                     <div
                       key={`${g.name}-${i}`}
-                      className="flex items-center gap-3 p-3 rounded-lg bg-cyber-bg/50 border border-cyber-border text-xs"
+                      className="flex items-center gap-3 p-3 rounded-lg bg-canvas/50 border border-line text-xs"
                     >
-                      <Zap className="w-4 h-4 text-purple-neon flex-shrink-0" />
+                      <Zap className="w-4 h-4 text-info flex-shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium text-cyber-text truncate">{g.name}</div>
-                        <div className="text-cyber-text-faint truncate">{g.vendor}</div>
+                        <div className="font-medium text-fg truncate">{g.name}</div>
+                        <div className="text-faint truncate">{g.vendor}</div>
                       </div>
-                      <span className="text-cyber-text-dim font-mono flex-shrink-0">
+                      <span className="text-muted font-mono flex-shrink-0">
                         Driver: {g.driver_version || "unknown"}
                       </span>
                     </div>
@@ -97,16 +97,16 @@ export default function Hardware() {
                   {info.disks.map((d, i) => (
                     <div
                       key={`${d.name}-${i}`}
-                      className="flex items-center gap-3 p-3 rounded-lg bg-cyber-bg/50 border border-cyber-border text-xs"
+                      className="flex items-center gap-3 p-3 rounded-lg bg-canvas/50 border border-line text-xs"
                     >
                       <HardDrive className="w-4 h-4 text-success flex-shrink-0" />
-                      <span className="font-medium text-cyber-text flex-1 truncate">
+                      <span className="font-medium text-fg flex-1 truncate">
                         {d.name}
                       </span>
-                      <span className="text-cyber-text-dim font-mono">
+                      <span className="text-muted font-mono">
                         {d.size_gb.toFixed(0)} GB
                       </span>
-                      <span className="text-cyber-text-faint">{d.filesystem}</span>
+                      <span className="text-faint">{d.filesystem}</span>
                     </div>
                   ))}
                 </div>

@@ -121,6 +121,15 @@ fn build<S: AsRef<OsStr>>(program: &str, args: &[S]) -> Command {
     #[cfg(windows)]
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
+        // Windows PowerShell 5.1 must not inherit a PowerShell 7 module path.
+        // Started from `pwsh`, Odysync's environment carries PSModulePath
+        // entries for PowerShell 7's own modules; 5.1 then loads those first,
+        // they fail to load, and every built-in cmdlet that lives in a module —
+        // `Get-AuthenticodeSignature` among them — reports that its module
+        // "could not be loaded". Unset, 5.1 computes its own default path.
+        if is_windows_powershell(program) {
+            cmd.env_remove("PSModulePath");
+        }
     }
 
     // Force machine-readable, untranslated output. Parsing localised package
@@ -128,6 +137,16 @@ fn build<S: AsRef<OsStr>>(program: &str, args: &[S]) -> Command {
     cmd.env("LC_ALL", "C").env("LANG", "C");
 
     cmd
+}
+
+/// Whether `program` names Windows PowerShell (5.1), however it is spelled.
+#[cfg(windows)]
+fn is_windows_powershell(program: &str) -> bool {
+    let name = std::path::Path::new(program)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    name == "powershell.exe" || name == "powershell"
 }
 
 /// Run `program` with `args`, capturing output, killed after `timeout`.

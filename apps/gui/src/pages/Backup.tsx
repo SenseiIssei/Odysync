@@ -88,7 +88,7 @@ export default function Backup() {
             type="text"
             value={backupName}
             onChange={(e) => setBackupName(e.target.value)}
-            className="flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+            className="flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-line bg-canvas text-sm focus:border-accent"
             placeholder="Description (optional)"
           />
           <motion.button
@@ -97,13 +97,13 @@ export default function Backup() {
             whileTap={{ scale: 0.98 }}
             onClick={create}
             disabled={creating}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50 transition-all glow-cyan"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50 transition-all"
           >
             <DatabaseBackup className={`w-4 h-4 ${creating ? "animate-pulse" : ""}`} />
             {creating ? "Creating..." : "Create"}
           </motion.button>
         </div>
-        <p className="text-xs text-cyber-text-faint mt-2">
+        <p className="text-xs text-faint mt-2">
           Windows only creates one automatic restore point per 24 hours by default; a manual
           one may be silently skipped if a recent one exists.
         </p>
@@ -133,12 +133,12 @@ export default function Backup() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: Math.min(i * 0.03, 0.3) }}
-              className="flex items-center gap-3 p-3 rounded-lg bg-cyber-surface border border-cyber-border text-xs"
+              className="flex items-center gap-3 p-3 rounded-lg bg-surface border border-line text-xs"
             >
               <DatabaseBackup className="w-4 h-4 text-accent flex-shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-cyber-text truncate">{b.name}</div>
-                <div className="text-cyber-text-faint mt-0.5">
+                <div className="font-medium text-fg truncate">{b.name}</div>
+                <div className="text-faint mt-0.5">
                   #{b.sequence_number} · {formatDate(b.created_at)} · {b.backup_type}
                 </div>
               </div>
