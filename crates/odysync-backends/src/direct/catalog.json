@@ -1,0 +1,210 @@
+{
+  "schema": 1,
+  "apps": [
+    {
+      "id": "notepad-plus-plus",
+      "name": "Notepad++",
+      "homepage": "https://notepad-plus-plus.org/",
+      "match": { "display_name": "^Notepad\\+\\+", "publisher": "^Notepad\\+\\+" },
+      "source": {
+        "type": "github",
+        "repo": "notepad-plus-plus/notepad-plus-plus",
+        "tag": "^v(?P<v>\\d+(?:\\.\\d+)+)$",
+        "assets": {
+          "x64": "^npp\\.[\\d.]+\\.Installer\\.x64\\.exe$",
+          "x86": "^npp\\.[\\d.]+\\.Installer\\.exe$",
+          "arm64": "^npp\\.[\\d.]+\\.Installer\\.arm64\\.exe$"
+        }
+      },
+      "installer": "nsis",
+      "signer": "NOTEPAD++"
+    },
+    {
+      "id": "git",
+      "name": "Git for Windows",
+      "homepage": "https://gitforwindows.org/",
+      "match": { "display_name": "^Git$", "publisher": "^The Git Development Community$" },
+      "source": {
+        "type": "github",
+        "repo": "git-for-windows/git",
+        "tag": "^v(?P<v>\\d+\\.\\d+\\.\\d+)\\.windows\\.(?P<rev>\\d+)$",
+        "assets": {
+          "x64": "^Git-[\\d.]+-64-bit\\.exe$",
+          "arm64": "^Git-[\\d.]+-arm64\\.exe$"
+        }
+      },
+      "installer": "inno",
+      "extra_args": ["/NOCANCEL"],
+      "signer": "Johannes Schindelin"
+    },
+    {
+      "id": "github-cli",
+      "name": "GitHub CLI",
+      "homepage": "https://cli.github.com/",
+      "match": { "display_name": "^GitHub CLI$" },
+      "source": {
+        "type": "github",
+        "repo": "cli/cli",
+        "tag": "^v(?P<v>\\d+\\.\\d+\\.\\d+)$",
+        "assets": {
+          "x64": "^gh_[\\d.]+_windows_amd64\\.msi$",
+          "x86": "^gh_[\\d.]+_windows_386\\.msi$",
+          "arm64": "^gh_[\\d.]+_windows_arm64\\.msi$"
+        }
+      },
+      "installer": "msi",
+      "signer": "GitHub, Inc."
+    },
+    {
+      "id": "telegram-desktop",
+      "name": "Telegram Desktop",
+      "homepage": "https://desktop.telegram.org/",
+      "match": { "display_name": "^Telegram Desktop", "publisher": "^Telegram" },
+      "source": {
+        "type": "github",
+        "repo": "telegramdesktop/tdesktop",
+        "tag": "^v(?P<v>\\d+\\.\\d+\\.\\d+)$",
+        "assets": {
+          "x64": "^td-setup-win-x64-[\\d.]+\\.exe$",
+          "x86": "^td-setup-win-x86-[\\d.]+\\.exe$",
+          "arm64": "^td-setup-win-arm-[\\d.]+\\.exe$"
+        }
+      },
+      "installer": "inno",
+      "signer": "Telegram FZ-LLC"
+    },
+    {
+      "id": "keepassxc",
+      "name": "KeePassXC",
+      "homepage": "https://keepassxc.org/",
+      "match": { "display_name": "^KeePassXC$" },
+      "source": {
+        "type": "github",
+        "repo": "keepassxreboot/keepassxc",
+        "tag": "^(?P<v>\\d+\\.\\d+\\.\\d+)$",
+        "assets": { "x64": "^KeePassXC-[\\d.]+-Win64\\.msi$" }
+      },
+      "installer": "msi",
+      "signer": "DroidMonkey Apps, LLC"
+    },
+    {
+      "id": "obs-studio",
+      "name": "OBS Studio",
+      "homepage": "https://obsproject.com/",
+      "match": { "display_name": "^OBS Studio", "publisher": "^OBS Project" },
+      "source": {
+        "type": "github",
+        "repo": "obsproject/obs-studio",
+        "tag": "^(?P<v>\\d+\\.\\d+\\.\\d+)$",
+        "assets": { "x64": "^OBS-Studio-[\\d.]+-Windows-x64-Installer\\.exe$" }
+      },
+      "installer": "nsis",
+      "signer": "OBS Project, LLC"
+    },
+    {
+      "id": "audacity",
+      "name": "Audacity",
+      "homepage": "https://www.audacityteam.org/",
+      "match": { "display_name": "^Audacity\\b" },
+      "source": {
+        "type": "github",
+        "repo": "audacity/audacity",
+        "tag": "^Audacity-(?P<v>\\d+\\.\\d+\\.\\d+)$",
+        "assets": { "x64": "^audacity-win-[\\d.]+-x86_64\\.msi$" }
+      },
+      "installer": "msi",
+      "signer": "MUSECY SM LTD"
+    },
+    {
+      "id": "handbrake",
+      "name": "HandBrake",
+      "homepage": "https://handbrake.fr/",
+      "match": { "display_name": "^HandBrake\\b" },
+      "source": {
+        "type": "github",
+        "repo": "HandBrake/HandBrake",
+        "tag": "^(?P<v>\\d+\\.\\d+\\.\\d+)$",
+        "assets": { "x64": "^HandBrake-[\\d.]+-x86_64-Win_GUI\\.exe$" }
+      },
+      "installer": "nsis",
+      "signer": "Open Source Developer, Scott Rae"
+    },
+    {
+      "id": "winmerge",
+      "name": "WinMerge",
+      "homepage": "https://winmerge.org/",
+      "match": { "display_name": "^WinMerge\\b" },
+      "source": {
+        "type": "github",
+        "repo": "WinMerge/winmerge",
+        "tag": "^v(?P<v>\\d+(?:\\.\\d+)+)$",
+        "assets": {
+          "x64": "^WinMerge-[\\d.]+-x64-Setup\\.exe$",
+          "x86": "^WinMerge-[\\d.]+-Setup\\.exe$"
+        },
+        "user_assets": { "x64": "^WinMerge-[\\d.]+-x64-PerUser-Setup\\.exe$" }
+      },
+      "installer": "inno",
+      "signer": "Takashi Sawanaka"
+    },
+    {
+      "id": "localsend",
+      "name": "LocalSend",
+      "homepage": "https://localsend.org/",
+      "match": { "display_name": "^LocalSend\\b" },
+      "source": {
+        "type": "github",
+        "repo": "localsend/localsend",
+        "tag": "^v(?P<v>\\d+\\.\\d+\\.\\d+)$",
+        "assets": { "x64": "^LocalSend-[\\d.]+-windows-x86-64\\.exe$" }
+      },
+      "installer": "inno",
+      "signer": "Tien Do Nam"
+    },
+    {
+      "id": "rustdesk",
+      "name": "RustDesk",
+      "homepage": "https://rustdesk.com/",
+      "match": { "display_name": "^RustDesk$" },
+      "source": {
+        "type": "github",
+        "repo": "rustdesk/rustdesk",
+        "tag": "^(?P<v>\\d+\\.\\d+\\.\\d+)$",
+        "assets": { "x64": "^rustdesk-[\\d.]+-x86_64\\.msi$" }
+      },
+      "installer": "msi",
+      "signer": "PURSLANE"
+    },
+    {
+      "id": "vscode",
+      "name": "Visual Studio Code",
+      "homepage": "https://code.visualstudio.com/",
+      "match": { "display_name": "^Microsoft Visual Studio Code", "publisher": "^Microsoft Corporation$" },
+      "source": {
+        "type": "json",
+        "endpoints": {
+          "user-x64": "https://update.code.visualstudio.com/api/update/win32-x64-user/stable/latest",
+          "user-arm64": "https://update.code.visualstudio.com/api/update/win32-arm64-user/stable/latest",
+          "machine-x64": "https://update.code.visualstudio.com/api/update/win32-x64/stable/latest",
+          "machine-arm64": "https://update.code.visualstudio.com/api/update/win32-arm64/stable/latest"
+        },
+        "version_field": "productVersion",
+        "url_field": "url",
+        "sha256_field": "sha256hash",
+        "download_prefix": "https://vscode.download.prss.microsoft.com/"
+      },
+      "installer": "inno",
+      "extra_args": ["/MERGETASKS=!runcode"],
+      "signer": "Microsoft Corporation"
+    },
+    {
+      "id": "nodejs",
+      "name": "Node.js",
+      "homepage": "https://nodejs.org/",
+      "match": { "display_name": "^Node\\.js$" },
+      "source": { "type": "nodejs" },
+      "installer": "msi",
+      "signer": "OpenJS Foundation"
+    }
+  ]
+}

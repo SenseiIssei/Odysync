@@ -60,14 +60,11 @@ pub struct GpuAdapter {
     pub name: String,
 }
 
-/// Enumerate display adapters by shelling out to `pnputil /enum-devices /class Display`.
-///
-/// On non-Windows platforms this returns an empty vec.
 /// The machine's display adapters, enumerated at most once per run.
 ///
 /// All four GPU backends call this during availability detection, and again
-/// during scan — up to eight identical `pnputil /enum-devices` spawns for a
-/// list that does not change while the app runs. Memoized to one.
+/// during scan; the list does not change while the app runs, so it is
+/// memoized to a single query.
 pub async fn enumerate_display_adapters() -> Vec<GpuAdapter> {
     static CACHE: tokio::sync::OnceCell<Vec<GpuAdapter>> = tokio::sync::OnceCell::const_new();
     CACHE
@@ -76,90 +73,81 @@ pub async fn enumerate_display_adapters() -> Vec<GpuAdapter> {
         .clone()
 }
 
+/// Ask WMI for every video controller, as JSON.
+///
+/// This used to parse `pnputil /enum-devices /class Display`, matching on the
+/// labels `Instance ID:` and `Device Description:`. pnputil translates those
+/// labels — a German Windows prints `Instanz-ID:` and `Gerätebeschreibung:` —
+/// so on every non-English machine no adapter was ever found and all four GPU
+/// backends silently reported nothing. `Win32_VideoController` returns
+/// property *names* that are never translated, and also carries the driver
+/// version the backends need.
+#[cfg(windows)]
 async fn enumerate_display_adapters_uncached() -> Vec<GpuAdapter> {
-    if !cfg!(windows) {
-        return Vec::new();
-    }
-
-    let out = match proc::run(
-        "pnputil",
-        &["/enum-devices", "/class", "Display"],
-        Duration::from_secs(15),
-    )
-    .await
-    {
-        Ok(o) => o,
+    let script = "Get-CimInstance Win32_VideoController | \
+                  Select-Object Name, PNPDeviceID, DriverVersion | ConvertTo-Json -Compress";
+    match proc::powershell(script, Duration::from_secs(30)).await {
+        Ok(out) => parse_video_controllers(&out.stdout),
         Err(e) => {
-            tracing::warn!(error = %e, "pnputil /enum-devices failed");
-            return Vec::new();
+            tracing::warn!(error = %e, "could not enumerate display adapters");
+            Vec::new()
         }
-    };
-
-    parse_pnputil_display(&out.stdout)
+    }
 }
 
-/// Parse `pnputil /enum-devices /class Display` output.
+#[cfg(not(windows))]
+async fn enumerate_display_adapters_uncached() -> Vec<GpuAdapter> {
+    Vec::new()
+}
+
+/// Parse `Win32_VideoController` rows emitted by `ConvertTo-Json`.
 ///
-/// The output looks like:
-/// ```text
-/// Instance ID:    PCI\VEN_10DE&DEV_2489&SUBSYS_...
-/// Device Description:  NVIDIA GeForce RTX 3060
-/// Driver Name:    oemNN.inf
-/// ...
-/// ```
-///
-/// We extract the vendor/device ID from the Instance ID line and the device
-/// name from the Device Description line.  The driver version is not directly
-/// available from pnputil; each vendor backend reads it from the registry.
-pub fn parse_pnputil_display(output: &str) -> Vec<GpuAdapter> {
-    let mut adapters = Vec::new();
-    let mut current_vendor = GpuVendor::Unknown;
-    let mut current_device_id = String::new();
-    let mut current_name = String::new();
-
-    for line in output.lines() {
-        let line = line.trim();
-
-        if line.starts_with("Instance ID:") {
-            // Push the previous adapter if we have one.
-            if current_vendor != GpuVendor::Unknown && !current_name.is_empty() {
-                adapters.push(GpuAdapter {
-                    vendor: current_vendor,
-                    device_id: current_device_id.clone(),
-                    driver_version: String::new(),
-                    name: current_name.clone(),
-                });
-            }
-            current_vendor = GpuVendor::Unknown;
-            current_device_id.clear();
-            current_name.clear();
-
-            // Parse VEN_XXXX&DEV_XXXX from the instance ID.
-            if let Some(vid) = parse_hex_field(line, "VEN_") {
-                current_vendor = GpuVendor::from_pci_id(vid);
-            }
-            if let Some(did) = parse_hex_field(line, "DEV_") {
-                current_device_id = format!("{:04X}", did);
-            }
-        } else if line.starts_with("Device Description:") {
-            current_name = line
-                .trim_start_matches("Device Description:")
-                .trim()
-                .to_string();
-        }
+/// PowerShell emits a bare object rather than a one-element array when there
+/// is a single adapter, so both shapes are accepted. Adapters that are not on
+/// the PCI bus (a remote-display or virtual adapter) are skipped, since no
+/// vendor feed knows them.
+pub fn parse_video_controllers(json: &str) -> Vec<GpuAdapter> {
+    #[derive(serde::Deserialize)]
+    struct Row {
+        #[serde(rename = "Name")]
+        name: Option<String>,
+        #[serde(rename = "PNPDeviceID")]
+        pnp_device_id: Option<String>,
+        #[serde(rename = "DriverVersion")]
+        driver_version: Option<String>,
     }
 
-    // Push the last adapter.
-    if current_vendor != GpuVendor::Unknown && !current_name.is_empty() {
-        adapters.push(GpuAdapter {
-            vendor: current_vendor,
-            device_id: current_device_id,
-            driver_version: String::new(),
-            name: current_name,
-        });
+    let json = json.trim();
+    if json.is_empty() {
+        return Vec::new();
     }
+    let rows: Vec<Row> = if json.starts_with('[') {
+        serde_json::from_str(json).unwrap_or_default()
+    } else {
+        serde_json::from_str::<Row>(json)
+            .map(|r| vec![r])
+            .unwrap_or_default()
+    };
 
-    adapters
+    rows.into_iter()
+        .filter_map(|row| {
+            let pnp = row.pnp_device_id?;
+            if !pnp.to_ascii_uppercase().starts_with("PCI\\") {
+                return None;
+            }
+            let vendor = GpuVendor::from_pci_id(parse_hex_field(&pnp, "VEN_")?);
+            if vendor == GpuVendor::Unknown {
+                return None;
+            }
+            let device_id = format!("{:04X}", parse_hex_field(&pnp, "DEV_")?);
+            Some(GpuAdapter {
+                vendor,
+                device_id,
+                driver_version: row.driver_version.unwrap_or_default().trim().to_string(),
+                name: row.name.unwrap_or_default().trim().to_string(),
+            })
+        })
+        .collect()
 }
 
 /// Extract a 4-digit hex value from a field like `VEN_10DE` or `DEV_2489`.
@@ -209,59 +197,37 @@ pub async fn read_driver_version_from_registry(
 mod tests {
     use super::*;
 
-    #[test]
-    fn parses_pnputil_display_output_with_nvidia_adapter() {
-        let output = "\
-Instance ID:    PCI\\VEN_10DE&DEV_2489&SUBSYS_39701462&REV_A1\\4&30B728B&0&0008
-Device Description:  NVIDIA GeForce RTX 3060
-Driver Name:    oem42.inf
-";
-        let adapters = parse_pnputil_display(output);
-        assert_eq!(adapters.len(), 1);
-        assert_eq!(adapters[0].vendor, GpuVendor::Nvidia);
-        assert_eq!(adapters[0].device_id, "2489");
-        assert!(adapters[0].name.contains("RTX 3060"));
-    }
+    /// Captured from a German Windows 11 machine with two adapters. The old
+    /// pnputil parser returned nothing for this machine.
+    const REAL: &str = r#"[{"Name":"NVIDIA GeForce RTX 4080","PNPDeviceID":"PCI\\VEN_10DE&DEV_2704&SUBSYS_51121462&REV_A1\\4&8FC2AB9&0&0009","DriverVersion":"32.0.16.1692"},{"Name":"AMD Radeon(TM) Graphics","PNPDeviceID":"PCI\\VEN_1002&DEV_13C0&SUBSYS_7E261462&REV_CB\\4&16ADCFD2&0&0041","DriverVersion":"32.0.21042.62"}]"#;
 
     #[test]
-    fn parses_multiple_adapters() {
-        let output = "\
-Instance ID:    PCI\\VEN_10DE&DEV_2489&SUBSYS_...\\4&...
-Device Description:  NVIDIA GeForce RTX 3060
-
-Instance ID:    PCI\\VEN_1002&DEV_73BF&SUBSYS_...\\4&...
-Device Description:  AMD Radeon RX 7900 XT
-";
-        let adapters = parse_pnputil_display(output);
+    fn video_controllers_are_parsed_whatever_the_os_language() {
+        let adapters = parse_video_controllers(REAL);
         assert_eq!(adapters.len(), 2);
         assert_eq!(adapters[0].vendor, GpuVendor::Nvidia);
+        assert_eq!(adapters[0].device_id, "2704");
+        assert_eq!(adapters[0].driver_version, "32.0.16.1692");
+        assert_eq!(adapters[0].name, "NVIDIA GeForce RTX 4080");
         assert_eq!(adapters[1].vendor, GpuVendor::Amd);
-        assert_eq!(adapters[1].device_id, "73BF");
+        assert_eq!(adapters[1].device_id, "13C0");
     }
 
     #[test]
-    fn parses_intel_adapter() {
-        let output = "\
-Instance ID:    PCI\\VEN_8086&DEV_9A49&SUBSYS_...\\4&...
-Device Description:  Intel(R) Iris(R) Xe Graphics
-";
-        let adapters = parse_pnputil_display(output);
+    fn a_single_adapter_emitted_as_a_bare_object_is_accepted() {
+        let one = r#"{"Name":"Intel(R) Iris(R) Xe Graphics","PNPDeviceID":"PCI\\VEN_8086&DEV_9A49&SUBSYS_0","DriverVersion":"31.0.101.5186"}"#;
+        let adapters = parse_video_controllers(one);
         assert_eq!(adapters.len(), 1);
         assert_eq!(adapters[0].vendor, GpuVendor::Intel);
         assert_eq!(adapters[0].device_id, "9A49");
     }
 
     #[test]
-    fn ignores_non_display_entries() {
-        let output = "Instance ID:    USB\\VID_046D&PID_C52B\\5&...\nDevice Description:  Logitech USB Receiver\n";
-        let adapters = parse_pnputil_display(output);
-        // USB device — vendor 0x046D is Logitech, not a known GPU vendor.
-        assert_eq!(adapters.len(), 0);
-    }
-
-    #[test]
-    fn empty_output_yields_empty_vec() {
-        assert!(parse_pnputil_display("").is_empty());
+    fn virtual_and_unknown_adapters_are_skipped() {
+        let json = r#"[{"Name":"Microsoft Remote Display Adapter","PNPDeviceID":"SWD\\REMOTEDISPLAYENUM\\RDPIDD","DriverVersion":"10.0"},{"Name":"Mystery","PNPDeviceID":"PCI\\VEN_1234&DEV_0001","DriverVersion":"1.0"}]"#;
+        assert!(parse_video_controllers(json).is_empty());
+        assert!(parse_video_controllers("").is_empty());
+        assert!(parse_video_controllers("not json").is_empty());
     }
 
     #[test]

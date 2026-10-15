@@ -12,6 +12,7 @@ pub mod autostart;
 pub mod chocolatey;
 pub mod cleanup;
 pub mod diagnostics;
+pub mod direct;
 pub mod dnf;
 #[cfg(windows)]
 pub mod driver_backup;
@@ -64,6 +65,10 @@ use odysync_core::config::Config;
 #[allow(clippy::vec_init_then_push)]
 fn all_backends() -> Vec<Box<dyn Backend>> {
     let mut v: Vec<Box<dyn Backend>> = Vec::new();
+
+    // Needs no package manager, so it comes first: on a machine without
+    // winget it is the source of software updates.
+    v.push(Box::new(direct::DirectBackend::new()));
 
     #[cfg(windows)]
     {
@@ -220,6 +225,7 @@ mod tests {
         assert!(kinds.contains(&BackendKind::Homebrew));
         assert!(kinds.contains(&BackendKind::Apt));
         assert!(kinds.contains(&BackendKind::Flatpak));
+        assert!(kinds.contains(&BackendKind::Direct));
 
         #[cfg(windows)]
         {

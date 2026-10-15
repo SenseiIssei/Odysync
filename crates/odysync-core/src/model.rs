@@ -104,6 +104,11 @@ pub enum BackendKind {
     HpFirmware,
     /// Windows: Lenovo firmware updates via SUHelper.
     LenovoFirmware,
+    /// Installers fetched straight from the publisher — GitHub releases or a
+    /// vendor's own update feed — for apps found in the OS's list of installed
+    /// programs. Needs no package manager at all, which is what lets Odysync
+    /// work on a machine where winget is missing or disabled.
+    Direct,
 }
 
 impl BackendKind {
@@ -165,6 +170,7 @@ impl BackendKind {
         BackendKind::DellFirmware,
         BackendKind::HpFirmware,
         BackendKind::LenovoFirmware,
+        BackendKind::Direct,
     ];
 
     /// Parse the [`id`](BackendKind::id) form back into a kind.
@@ -227,6 +233,7 @@ impl BackendKind {
             BackendKind::DellFirmware => "dell-firmware",
             BackendKind::HpFirmware => "hp-firmware",
             BackendKind::LenovoFirmware => "lenovo-firmware",
+            BackendKind::Direct => "direct",
         }
     }
 
@@ -283,6 +290,9 @@ impl BackendKind {
             BackendKind::VscodeExtension => false,
             BackendKind::PowerShellModule => false,
             BackendKind::JetbrainsPlugin => false,
+            // Decided per package: a per-user install needs no rights, a
+            // machine-wide one does. See [`UpdateCandidate::requires_elevation`].
+            BackendKind::Direct => false,
         }
     }
 
@@ -308,8 +318,34 @@ impl BackendKind {
     /// already run the tool once. A method on the kind applies to everybody,
     /// including existing installs, and the user opts in by name through
     /// `enabled-backends`.
+    ///
+    /// winget and the Microsoft Store (which Odysync drives through winget)
+    /// are also opt-in. Odysync has its own source for installed programs —
+    /// [`BackendKind::Direct`] — and depending on winget by default meant a
+    /// machine without it, or with a broken App Installer, silently got no
+    /// software updates at all. Users who prefer winget enable it by name.
     pub fn enabled_by_default(&self) -> bool {
-        !matches!(self, BackendKind::WindowsFeatureUpdate)
+        !matches!(self, BackendKind::WindowsFeatureUpdate) && !self.delivered_through_winget()
+    }
+
+    /// Whether this backend shells out to winget to do its work.
+    ///
+    /// These are opt-in together with winget itself: enabling them without
+    /// winget would make every scan fail, and enabling them by default would
+    /// bring back the dependency on winget that [`BackendKind::Direct`] and
+    /// the vendor-direct NVIDIA backend exist to remove. AMD, Intel and
+    /// Qualcomm publish no machine-readable driver feed, so for those GPUs the
+    /// default path is the Windows Update driver backend.
+    pub fn delivered_through_winget(&self) -> bool {
+        matches!(
+            self,
+            BackendKind::Winget
+                | BackendKind::MsStore
+                | BackendKind::AmdGpu
+                | BackendKind::IntelGpu
+                | BackendKind::QualcommGpu
+                | BackendKind::VirtualizationGuest
+        )
     }
 }
 
@@ -465,6 +501,29 @@ pub struct UpdateCandidate {
 
 /// A package a backend reports as currently installed, regardless of whether
 /// an update is available for it.
+/// Native-id prefix for a [`BackendKind::Direct`] package installed for every
+/// user, whose installer therefore needs administrator rights.
+pub const DIRECT_MACHINE_SCOPE: &str = "machine:";
+/// Native-id prefix for a [`BackendKind::Direct`] package installed for the
+/// current user only.
+pub const DIRECT_USER_SCOPE: &str = "user:";
+
+impl UpdateCandidate {
+    /// Whether applying this particular update needs administrator rights.
+    ///
+    /// For almost every backend this is a property of the backend. The
+    /// exception is [`BackendKind::Direct`], where the same app can be
+    /// installed per-user (no rights needed) or machine-wide (rights needed),
+    /// and the scope is carried in the native id so that it survives the trip
+    /// through the GUI and back unchanged.
+    pub fn requires_elevation(&self) -> bool {
+        match self.id.backend {
+            BackendKind::Direct => self.id.native.starts_with(DIRECT_MACHINE_SCOPE),
+            other => other.requires_elevation(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstalledPackage {
     pub id: PackageId,
@@ -617,7 +676,8 @@ mod tests {
             | BackendKind::WindowsOptionalFeature
             | BackendKind::DellFirmware
             | BackendKind::HpFirmware
-            | BackendKind::LenovoFirmware => {}
+            | BackendKind::LenovoFirmware
+            | BackendKind::Direct => {}
         }
         assert!(
             BackendKind::ALL.contains(&kind),

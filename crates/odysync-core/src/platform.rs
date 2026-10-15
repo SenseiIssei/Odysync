@@ -251,6 +251,27 @@ pub fn power_source() -> PowerSource {
     }
 }
 
+/// Whether the machine has a system battery — in practice, whether it is a
+/// laptop. NVIDIA, for one, ships separate notebook driver packages.
+#[cfg(windows)]
+pub fn has_system_battery() -> bool {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+
+    let mut status = SYSTEM_POWER_STATUS::default();
+    // SAFETY: `status` is a valid, correctly sized out-param.
+    if unsafe { GetSystemPowerStatus(&mut status) }.is_err() {
+        return false;
+    }
+    // 128 is "no system battery"; 255 is "unknown status", which a desktop
+    // without a battery also reports on some firmware.
+    !matches!(status.BatteryFlag, 128 | 255)
+}
+
+#[cfg(not(windows))]
+pub fn has_system_battery() -> bool {
+    false
+}
+
 /// Non-Windows platforms are not probed.
 ///
 /// Linux exposes this through `/sys/class/power_supply` and macOS through

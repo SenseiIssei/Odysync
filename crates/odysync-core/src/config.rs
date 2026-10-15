@@ -293,12 +293,13 @@ mod tests {
 
         let mut cfg = Config::default();
         cfg.policy.exclude.push("Mozilla.Firefox".into());
-        cfg.disabled_backends.push("msstore".into());
+        cfg.disabled_backends.push("pip".into());
+        cfg.enabled_backends.push("winget".into());
         cfg.save(&path).unwrap();
 
         let loaded = Config::load(&path).unwrap();
         assert_eq!(loaded.policy.exclude, vec!["Mozilla.Firefox".to_string()]);
-        assert!(!loaded.backend_enabled(BackendKind::MsStore));
+        assert!(!loaded.backend_enabled(BackendKind::Pip));
         assert!(loaded.backend_enabled(BackendKind::Winget));
 
         std::fs::remove_dir_all(&dir).ok();
@@ -316,6 +317,23 @@ mod tests {
         assert!(cfg.backend_enabled(BackendKind::WindowsFeatureUpdate));
     }
 
+    /// Software updates must work on a machine without winget, so nothing
+    /// that shells out to winget may be on unless the user asked for it.
+    #[test]
+    fn winget_and_everything_delivered_through_it_is_opt_in() {
+        let mut cfg = Config::default();
+        for kind in BackendKind::ALL {
+            if kind.delivered_through_winget() {
+                assert!(!cfg.backend_enabled(*kind), "{kind} is on by default");
+            }
+        }
+        assert!(cfg.backend_enabled(BackendKind::Direct));
+        assert!(cfg.backend_enabled(BackendKind::NvidiaGpu));
+
+        cfg.enabled_backends.push("winget".into());
+        assert!(cfg.backend_enabled(BackendKind::Winget));
+    }
+
     #[test]
     fn disabling_beats_opting_in() {
         let cfg = Config {
@@ -330,7 +348,7 @@ mod tests {
     fn ordinary_backends_need_no_opt_in() {
         let cfg = Config::default();
         for kind in [
-            BackendKind::Winget,
+            BackendKind::Direct,
             BackendKind::WindowsUpdate,
             BackendKind::WindowsDefenderUpdate,
             BackendKind::WindowsDrivers,
@@ -364,7 +382,10 @@ mod tests {
     fn a_pause_only_affects_the_backend_it_names() {
         let mut cfg = Config::default();
         cfg.pause_backend(BackendKind::WindowsUpdate, at("2026-08-03T00:00:00Z"), None);
-        assert!(cfg.backend_enabled_at(BackendKind::Winget, at("2026-07-27T12:00:00Z")));
+        assert!(cfg.backend_enabled_at(
+            BackendKind::WindowsDefenderUpdate,
+            at("2026-07-27T12:00:00Z")
+        ));
     }
 
     #[test]
