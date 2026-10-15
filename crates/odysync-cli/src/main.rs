@@ -52,6 +52,11 @@ enum Command {
         /// Also list packages that policy skipped, and why.
         #[arg(long)]
         show_skipped: bool,
+
+        /// Only ask these backends (repeatable), e.g. `--backend direct`.
+        /// Naming an opt-in backend such as `winget` includes it for this run.
+        #[arg(long = "backend")]
+        backend: Vec<String>,
     },
 
     /// Install the updates that pass every safety check.
@@ -67,6 +72,11 @@ enum Command {
         /// Limit to specific packages (repeatable). Matches id or backend:id.
         #[arg(long = "only")]
         only: Vec<String>,
+
+        /// Only ask these backends (repeatable), e.g. `--backend direct`.
+        /// Naming an opt-in backend such as `winget` includes it for this run.
+        #[arg(long = "backend")]
+        backend: Vec<String>,
 
         /// Limit to a named profile from the config.
         #[arg(long)]
@@ -415,8 +425,11 @@ async fn run(cli: Cli) -> Result<u8> {
             Ok(0)
         }
 
-        Command::Scan { show_skipped } => {
-            let backends = odysync_backends::detect_backends(&config).await;
+        Command::Scan {
+            show_skipped,
+            backend,
+        } => {
+            let backends = select_backends(&config, &backend).await?;
             let candidates = scan_all(&backends).await;
             let plan = config.policy.plan(candidates);
 
@@ -432,12 +445,13 @@ async fn run(cli: Cli) -> Result<u8> {
             yes,
             dry_run,
             only,
+            backend,
             profile,
             report: report_path,
             report_format,
             restore_point,
         } => {
-            let backends = odysync_backends::detect_backends(&config).await;
+            let backends = select_backends(&config, &backend).await?;
             let mut candidates = scan_all(&backends).await;
 
             // Narrow before planning, so the summary reflects what the user
@@ -1198,6 +1212,40 @@ async fn scan_all(backends: &[Box<dyn Backend>]) -> Vec<UpdateCandidate> {
     results.into_iter().flatten().collect()
 }
 
+/// The backends a scan or apply should use.
+///
+/// With no `--backend` flags this is everything enabled and present. Naming a
+/// backend narrows the run to it — and includes it even when it is opt-in,
+/// because typing its name is the opt-in. A backend the user disabled in the
+/// config stays disabled; a flag is not a reason to override that.
+async fn select_backends(config: &Config, named: &[String]) -> Result<Vec<Box<dyn Backend>>> {
+    if named.is_empty() {
+        return Ok(odysync_backends::detect_backends(config).await);
+    }
+    for id in named {
+        if odysync_core::model::BackendKind::from_id(id).is_none() {
+            anyhow::bail!("unknown backend '{id}'; `odysync backends` lists them");
+        }
+    }
+    let wanted = |kind: odysync_core::model::BackendKind| {
+        named
+            .iter()
+            .any(|n| n.trim().eq_ignore_ascii_case(kind.id()))
+    };
+    Ok(odysync_backends::probe_backends(config)
+        .await
+        .into_iter()
+        .filter(|p| p.available && wanted(p.backend.kind()))
+        .filter(|p| {
+            !config
+                .disabled_backends
+                .iter()
+                .any(|d| d.trim().eq_ignore_ascii_case(p.backend.kind().id()))
+        })
+        .map(|p| p.backend)
+        .collect())
+}
+
 /// Work out which packages the user restricted the run to, if any.
 fn resolve_filters(
     config: &Config,
@@ -1226,6 +1274,11 @@ fn matches_any(candidate: &UpdateCandidate, filters: &[String]) -> bool {
         let f = f.trim();
         f.eq_ignore_ascii_case(&candidate.id.native)
             || f.eq_ignore_ascii_case(&candidate.id.to_string())
+            || candidate
+                .id
+                .alias
+                .as_deref()
+                .is_some_and(|a| f.eq_ignore_ascii_case(a))
     })
 }
 

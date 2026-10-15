@@ -122,7 +122,7 @@ impl Policy {
         if candidate.id.backend.forbids_elevation() && self.elevated {
             return Some(SkipReason::RequiresUnelevated);
         }
-        if candidate.id.backend.requires_elevation() && !self.elevated {
+        if candidate.requires_elevation() && !self.elevated {
             return Some(SkipReason::RequiresElevation);
         }
 

@@ -39,6 +39,15 @@ pub enum Verification {
         /// its own package manifests"`.
         what: &'static str,
     },
+    /// Odysync downloads the installer itself and checks it before running it.
+    ///
+    /// Only for backends where Odysync really holds the file: the publisher's
+    /// code signature must validate *and* name the publisher the catalog
+    /// expects, and a published SHA-256 must match when the source offers one.
+    Odysync {
+        /// What is checked, in one clause.
+        what: &'static str,
+    },
     /// Nothing verifies the payload before it runs.
     ///
     /// Not a bug to be fixed by adding a check here — it means the ecosystem
@@ -55,6 +64,7 @@ impl Verification {
     pub fn label(&self) -> String {
         match self {
             Verification::Delegated { by, .. } => format!("verified by {by}"),
+            Verification::Odysync { .. } => "verified by Odysync".to_string(),
             Verification::Unverified { .. } => "not verified".to_string(),
         }
     }
@@ -66,13 +76,20 @@ impl Verification {
                 "{by} verifies {what}. Odysync cannot re-check this independently — \
                  the payload is never written to a path it controls."
             ),
+            Verification::Odysync { what } => format!(
+                "Odysync downloads this installer itself and checks {what} before it runs. \
+                 A mismatch stops the update."
+            ),
             Verification::Unverified { why } => format!("Nothing verifies this payload: {why}."),
         }
     }
 
     /// Whether *someone* checks the payload.
     pub fn is_verified_by_someone(&self) -> bool {
-        matches!(self, Verification::Delegated { .. })
+        matches!(
+            self,
+            Verification::Delegated { .. } | Verification::Odysync { .. }
+        )
     }
 }
 
@@ -88,9 +105,9 @@ pub fn verification_of(kind: BackendKind) -> Verification {
     match kind {
         // ── Windows ─────────────────────────────────────────────────────────
         Winget
-        // GPU driver updates and the virtualisation guest tools are delivered
-        // through winget, so they inherit its guarantee exactly.
-        | NvidiaGpu
+        // AMD, Intel and Qualcomm GPU drivers and the virtualisation guest
+        // tools are delivered through winget, so they inherit its guarantee
+        // exactly.
         | AmdGpu
         | IntelGpu
         | QualcommGpu
@@ -99,6 +116,14 @@ pub fn verification_of(kind: BackendKind) -> Verification {
             "installer digests against its own package manifests",
         ),
         MsStore => by("the Microsoft Store", "package signatures on every appx"),
+        Direct => Verification::Odysync {
+            what: "the publisher's code signature against the signer the catalog \
+                 pins for that app, plus the SHA-256 the source publishes when it has one",
+        },
+        NvidiaGpu => Verification::Odysync {
+            what: "that the driver package is WHQL-certified and signed by NVIDIA \
+                 Corporation",
+        },
         WindowsDrivers | WindowsUpdate | WindowsDefenderUpdate | WindowsFeatureUpdate => by(
             "the Windows Update Agent",
             "Microsoft's signatures on every update before installing it",
@@ -193,14 +218,20 @@ mod tests {
         assert!(v.is_verified_by_someone());
     }
 
-    /// The whole point of the module: never claim Odysync did the checking.
+    /// The whole point of the module: Odysync only claims a check it runs
+    /// itself, which is exactly the backends that download their own payload.
     #[test]
-    fn no_label_implies_odysync_verified_it() {
+    fn only_backends_that_download_their_own_payload_claim_odysync_verified_it() {
         for kind in BackendKind::ALL {
-            let text = verification_of(*kind).detail().to_ascii_lowercase();
-            assert!(
-                !text.contains("odysync verifies"),
-                "{kind} claims Odysync verifies it"
+            let v = verification_of(*kind);
+            let claims_odysync = v.label().to_ascii_lowercase().contains("odysync")
+                || v.detail()
+                    .to_ascii_lowercase()
+                    .contains("odysync downloads");
+            let downloads_itself = matches!(kind, BackendKind::Direct | BackendKind::NvidiaGpu);
+            assert_eq!(
+                claims_odysync, downloads_itself,
+                "{kind}: claims Odysync verified it = {claims_odysync}"
             );
         }
     }
@@ -213,13 +244,12 @@ mod tests {
         assert!(v.detail().contains("no standard signing"));
     }
 
-    /// GPU driver backends shell out to winget, so claiming a separate
-    /// guarantee for them would be inventing one.
+    /// These backends shell out to winget, so claiming a separate guarantee
+    /// for them would be inventing one.
     #[test]
     fn winget_delivered_backends_inherit_wingets_guarantee() {
         let winget = verification_of(BackendKind::Winget);
         for kind in [
-            BackendKind::NvidiaGpu,
             BackendKind::AmdGpu,
             BackendKind::IntelGpu,
             BackendKind::QualcommGpu,

@@ -31,6 +31,8 @@ directories.workspace = true
 anyhow.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# The direct backend reads the Uninstall keys — the list Settings → Apps shows.
+winreg = "0.56"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Com",
