@@ -1,4 +1,4 @@
-﻿//! Terminal rendering.
+//! Terminal rendering.
 //!
 //! Colour is opt-out via `NO_COLOR` and is suppressed automatically when stdout
 //! is not a terminal, so piping to a file or a log collector stays clean.
@@ -7,6 +7,86 @@ use std::io::IsTerminal;
 
 use odysync_core::model::{ApplyOutcome, PlannedUpdate};
 use odysync_core::report::RunReport;
+
+/// A byte count the way people read them: `1.4 GB`, `820 KB`, `12 B`.
+pub fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+/// `odysync components`.
+pub fn components(list: &[odysync_backends::components::ComponentStatus], style: &Style) -> String {
+    use odysync_backends::components::ComponentState;
+    let mut out = String::new();
+    if list.is_empty() {
+        out.push_str("No runtime components are tracked on this platform.\n");
+        return out;
+    }
+    out.push_str(&style.bold("Runtime components\n\n"));
+    for c in list {
+        let state = match c.state {
+            ComponentState::Missing => style.dim("missing"),
+            ComponentState::Installed => "installed".to_string(),
+            ComponentState::Outdated => style.bold("update available"),
+            ComponentState::OutOfSupport => style.bold("out of support"),
+        };
+        let versions = match (&c.installed, &c.latest, c.state) {
+            (Some(i), Some(l), ComponentState::Outdated) => format!("{i} -> {l}"),
+            (Some(i), _, _) => i.clone(),
+            (None, _, _) => String::new(),
+        };
+        out.push_str(&format!(
+            "  {:<28} {:<52} {:<22} {}\n",
+            c.id, c.name, versions, state
+        ));
+    }
+    out.push_str(&format!(
+        "\n{}\n",
+        style.dim(
+            "Install or repair one with `odysync components install <id>` in an elevated terminal."
+        )
+    ));
+    out
+}
+
+/// `odysync large-files`.
+pub fn large_files(report: &odysync_backends::cleanup::LargeFileReport, style: &Style) -> String {
+    let mut out = String::new();
+    out.push_str(&style.bold("Largest files in your home folder\n\n"));
+    if report.files.is_empty() {
+        out.push_str("  Nothing above the size threshold.\n");
+    }
+    for f in &report.files {
+        out.push_str(&format!(
+            "  {:>10}  {}\n",
+            human_bytes(f.bytes),
+            f.path.display()
+        ));
+    }
+    out.push_str(&format!(
+        "\n{}\n",
+        style.dim(&format!(
+            "{} files looked at{}. Nothing was deleted — decide for yourself what to remove.",
+            report.scanned,
+            if report.truncated {
+                "; stopped early at the time limit, so larger files may exist"
+            } else {
+                ""
+            }
+        ))
+    ));
+    out
+}
 
 pub struct Style {
     colour: bool,
@@ -169,6 +249,15 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn byte_counts_are_humanised() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(1023), "1023 B");
+        assert_eq!(human_bytes(1536), "1.5 KB");
+        assert_eq!(human_bytes(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(human_bytes(3 * 1024 * 1024 * 1024), "3.0 GB");
+    }
 
     #[test]
     fn short_strings_are_untouched() {

@@ -218,7 +218,6 @@ enum Command {
     /// Scanning is the default. Nothing is deleted without `--apply`, and even
     /// then only the categories that are safe by default unless `--only` names
     /// others.
-    #[cfg(windows)]
     Clean {
         /// Actually delete. Without this the command only measures.
         #[arg(long)]
@@ -237,6 +236,28 @@ enum Command {
         yes: bool,
     },
 
+    /// Game and app runtimes: Visual C++, DirectX, .NET (Windows).
+    ///
+    /// Without a subcommand, lists what is installed and what is out of date.
+    Components {
+        #[command(subcommand)]
+        action: Option<ComponentAction>,
+    },
+
+    /// Devices Windows reports as not working, with what each problem means.
+    Devices,
+
+    /// List the largest files in your home folder. Reports only; deletes nothing.
+    LargeFiles {
+        /// How many files to list.
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+
+        /// Ignore files smaller than this many megabytes.
+        #[arg(long, default_value_t = 100)]
+        min_mb: u64,
+    },
+
     /// Report how each volume should be optimised, and optionally do it.
     #[cfg(windows)]
     OptimizeDisk {
@@ -244,6 +265,13 @@ enum Command {
         #[arg(long)]
         apply: bool,
     },
+}
+
+#[derive(clap::Subcommand)]
+enum ComponentAction {
+    /// Install or repair one component from Microsoft, e.g. `vc-redist-x64`.
+    /// Needs an elevated terminal.
+    Install { id: String },
 }
 
 /// Driver-store backup operations.
@@ -767,8 +795,67 @@ async fn run(cli: Cli) -> Result<u8> {
         #[cfg(windows)]
         Command::Drivers { action } => run_driver_action(action, cli.json, &style).await,
 
-        #[cfg(windows)]
         Command::Clean { apply, only, yes } => run_clean(apply, only, yes, cli.json, &style).await,
+
+        Command::Components { action } => match action {
+            None => {
+                let list = odysync_backends::components::status().await;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&list)?);
+                } else {
+                    print!("{}", render::components(&list, &style));
+                }
+                Ok(0)
+            }
+            Some(ComponentAction::Install { id }) => {
+                match odysync_backends::components::install(&id).await {
+                    Ok(message) => {
+                        println!("{message}");
+                        Ok(0)
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        Ok(1)
+                    }
+                }
+            }
+        },
+
+        Command::Devices => {
+            let problems = odysync_backends::devices::problems().await;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&problems)?);
+            } else if problems.is_empty() {
+                println!("Every device is working.");
+            } else {
+                println!("{}", style.bold("Devices with problems\n"));
+                for d in &problems {
+                    println!(
+                        "  {}  {}",
+                        style.bold(&d.name),
+                        style.dim(&format!("({}, code {})", d.class, d.code))
+                    );
+                    println!("    {}", d.meaning);
+                    println!("    {}\n", style.dim(&d.suggestion));
+                }
+            }
+            Ok(0)
+        }
+
+        Command::LargeFiles { limit, min_mb } => {
+            let report = odysync_backends::cleanup::largest_files(
+                limit,
+                min_mb.saturating_mul(1024 * 1024),
+                std::time::Duration::from_secs(120),
+            )
+            .await;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", render::large_files(&report, &style));
+            }
+            Ok(0)
+        }
 
         #[cfg(windows)]
         Command::OptimizeDisk { apply } => run_optimize_disk(apply, cli.json, &style).await,
@@ -776,7 +863,6 @@ async fn run(cli: Cli) -> Result<u8> {
 }
 
 /// `odysync clean`.
-#[cfg(windows)]
 async fn run_clean(
     apply: bool,
     only: Vec<String>,
@@ -798,10 +884,10 @@ async fn run_clean(
     if !json {
         println!("{}", style.bold("Reclaimable disk space\n"));
         for f in &findings {
-            let size = match (&f.error, f.bytes) {
-                (Some(e), _) => format!("could not measure: {e}"),
-                (None, 0) => "nothing found".to_string(),
-                (None, b) => format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)),
+            let size = match (&f.error, f.bytes, f.file_count) {
+                (Some(e), _, _) => format!("could not measure: {e}"),
+                (None, 0, 0) => "nothing found".to_string(),
+                (None, b, n) => format!("{} in {n} files", render::human_bytes(b)),
             };
             let marker = if f.category.is_report_only() {
                 "report only"
@@ -822,9 +908,9 @@ async fn run_clean(
         }
 
         println!(
-            "\n{} {:.1} MB in the categories that are safe by default.",
+            "\n{} {} in the categories that are safe by default.",
             style.bold("Total:"),
-            default_reclaimable(&findings) as f64 / (1024.0 * 1024.0),
+            render::human_bytes(default_reclaimable(&findings)),
         );
     }
 
@@ -898,9 +984,9 @@ async fn run_clean(
     for (category, outcome) in &results {
         total += outcome.removed_bytes;
         println!(
-            "  {:<22} {:.1} MB, {} file(s)",
+            "  {:<22} {} in {} files",
             category.id(),
-            outcome.removed_bytes as f64 / (1024.0 * 1024.0),
+            render::human_bytes(outcome.removed_bytes),
             outcome.removed_files
         );
         // Locked files are the normal case on Windows, so these are listed
@@ -917,15 +1003,14 @@ async fn run_clean(
         }
     }
     println!(
-        "\n{} {:.1} MB",
+        "\n{} {}",
         style.bold("Reclaimed:"),
-        total as f64 / (1024.0 * 1024.0)
+        render::human_bytes(total)
     );
     Ok(0)
 }
 
 /// Ask before deleting. A closed stdin is never consent.
-#[cfg(windows)]
 fn confirm_clean(count: usize) -> Result<bool> {
     use std::io::{BufRead, Write};
 

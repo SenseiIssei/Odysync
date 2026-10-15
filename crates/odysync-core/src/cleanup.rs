@@ -73,6 +73,17 @@ pub enum CleanupCategory {
     PreviousWindows,
     /// Browser caches, per profile. Never cookies, never saved passwords.
     BrowserCache,
+    /// Per-user application caches: `~/.cache` on Linux, `~/Library/Caches`
+    /// on macOS. By definition regenerable, but opt-in, because "every app
+    /// on the machine is slow once" is not what anybody means by "clean".
+    AppCaches,
+    /// The list of recently opened documents — a privacy trace, not a space
+    /// saver. Only the shortcuts; never the documents they point at.
+    RecentItems,
+    /// Compiled GPU shaders: DirectX's own cache and the NVIDIA, AMD and
+    /// Intel driver caches. These grow without bound on a gaming machine —
+    /// tens of gigabytes is common — and rebuild themselves.
+    ShaderCache,
 }
 
 impl CleanupCategory {
@@ -80,15 +91,48 @@ impl CleanupCategory {
     pub const ALL: &'static [CleanupCategory] = &[
         CleanupCategory::TempFiles,
         CleanupCategory::ThumbnailCache,
+        CleanupCategory::RecentItems,
         CleanupCategory::RecycleBin,
         CleanupCategory::ErrorReports,
         CleanupCategory::CrashDumps,
         CleanupCategory::WindowsUpdateCache,
         CleanupCategory::DeliveryOptimization,
         CleanupCategory::BrowserCache,
+        CleanupCategory::ShaderCache,
+        CleanupCategory::AppCaches,
         CleanupCategory::ComponentStore,
         CleanupCategory::PreviousWindows,
     ];
+
+    /// Whether this category means anything on the platform Odysync runs on.
+    ///
+    /// The Windows component store has no Linux counterpart; listing it there
+    /// as "0 B" would read as "checked, nothing to do", which is untrue.
+    pub fn applies_to_this_platform(&self) -> bool {
+        match self {
+            CleanupCategory::TempFiles => cfg!(any(windows, target_os = "macos")),
+            CleanupCategory::RecycleBin | CleanupCategory::BrowserCache => true,
+            CleanupCategory::ThumbnailCache => cfg!(any(windows, target_os = "linux")),
+            CleanupCategory::ErrorReports => cfg!(any(windows, target_os = "macos")),
+            CleanupCategory::RecentItems => cfg!(any(windows, target_os = "linux")),
+            CleanupCategory::AppCaches => cfg!(unix),
+            CleanupCategory::WindowsUpdateCache
+            | CleanupCategory::DeliveryOptimization
+            | CleanupCategory::ComponentStore
+            | CleanupCategory::CrashDumps
+            | CleanupCategory::ShaderCache
+            | CleanupCategory::PreviousWindows => cfg!(windows),
+        }
+    }
+
+    /// The categories that apply here, in presentation order.
+    pub fn for_this_platform() -> Vec<CleanupCategory> {
+        CleanupCategory::ALL
+            .iter()
+            .copied()
+            .filter(CleanupCategory::applies_to_this_platform)
+            .collect()
+    }
 
     pub fn id(&self) -> &'static str {
         match self {
@@ -102,6 +146,9 @@ impl CleanupCategory {
             CleanupCategory::CrashDumps => "crash-dumps",
             CleanupCategory::PreviousWindows => "previous-windows",
             CleanupCategory::BrowserCache => "browser-cache",
+            CleanupCategory::AppCaches => "app-caches",
+            CleanupCategory::RecentItems => "recent-items",
+            CleanupCategory::ShaderCache => "shader-cache",
         }
     }
 
@@ -115,7 +162,13 @@ impl CleanupCategory {
     pub fn label(&self) -> &'static str {
         match self {
             CleanupCategory::TempFiles => "Temporary files",
-            CleanupCategory::RecycleBin => "Recycle Bin",
+            CleanupCategory::RecycleBin => {
+                if cfg!(windows) {
+                    "Recycle Bin"
+                } else {
+                    "Trash"
+                }
+            }
             CleanupCategory::WindowsUpdateCache => "Windows Update downloads",
             CleanupCategory::DeliveryOptimization => "Delivery Optimization cache",
             CleanupCategory::ComponentStore => "Superseded Windows components",
@@ -124,6 +177,9 @@ impl CleanupCategory {
             CleanupCategory::CrashDumps => "Crash dumps",
             CleanupCategory::PreviousWindows => "Previous Windows installation",
             CleanupCategory::BrowserCache => "Browser caches",
+            CleanupCategory::AppCaches => "Application caches",
+            CleanupCategory::RecentItems => "Recently opened files list",
+            CleanupCategory::ShaderCache => "GPU shader caches",
         }
     }
 
@@ -133,7 +189,9 @@ impl CleanupCategory {
             CleanupCategory::TempFiles => {
                 "Files applications left behind. A program still using one keeps it."
             }
-            CleanupCategory::RecycleBin => "Permanently deletes everything currently in the bin.",
+            CleanupCategory::RecycleBin => {
+                "Permanently deletes everything currently in the bin or trash."
+            }
             CleanupCategory::WindowsUpdateCache => {
                 "Already-installed update payloads. Windows re-downloads if it needs them again."
             }
@@ -159,6 +217,18 @@ impl CleanupCategory {
                 "Cached page assets only — never cookies, logins or saved passwords. \
                  Sites load slower once."
             }
+            CleanupCategory::AppCaches => {
+                "Caches every application keeps for itself. Apps rebuild them, \
+                 so each is slower the next time it starts."
+            }
+            CleanupCategory::RecentItems => {
+                "Clears the recently-opened list in Explorer and file dialogs. \
+                 The files themselves are not touched; pinned items stay."
+            }
+            CleanupCategory::ShaderCache => {
+                "Compiled shaders for games and apps. They are rebuilt on demand, \
+                 so games may stutter briefly the first time they run afterwards."
+            }
         }
     }
 
@@ -168,11 +238,13 @@ impl CleanupCategory {
             | CleanupCategory::ThumbnailCache
             | CleanupCategory::DeliveryOptimization
             | CleanupCategory::BrowserCache
+            | CleanupCategory::AppCaches
+            | CleanupCategory::ShaderCache
             | CleanupCategory::WindowsUpdateCache => Reversibility::Regenerated,
 
-            CleanupCategory::ErrorReports | CleanupCategory::CrashDumps => {
-                Reversibility::Discardable
-            }
+            CleanupCategory::ErrorReports
+            | CleanupCategory::CrashDumps
+            | CleanupCategory::RecentItems => Reversibility::Discardable,
 
             // The Recycle Bin is the user's own undo. Emptying it is exactly
             // the action they would otherwise take deliberately, and what it
@@ -205,7 +277,12 @@ impl CleanupCategory {
     pub fn selected_by_default(&self) -> bool {
         !self.is_report_only()
             && self.reversibility() == Reversibility::Regenerated
-            && !matches!(self, CleanupCategory::BrowserCache)
+            && !matches!(
+                self,
+                CleanupCategory::BrowserCache
+                    | CleanupCategory::AppCaches
+                    | CleanupCategory::ShaderCache
+            )
     }
 }
 
@@ -335,6 +412,85 @@ pub fn is_within(root: &Path, candidate: &Path) -> bool {
 ///   * the Windows, System32 or Program Files trees
 ///   * a user's profile root, Documents, Desktop, Pictures or Downloads
 pub fn is_safe_cleanup_root(root: &Path) -> bool {
+    if cfg!(windows) {
+        is_safe_windows_root(root)
+    } else {
+        is_safe_unix_root(root)
+    }
+}
+
+/// The Unix rules: never a system tree, never a home directory itself, never
+/// a user's own documents.
+///
+/// `~/.cache` and `~/Library/Caches` are three levels down, `/tmp` is one —
+/// and `/tmp` is shared between users and holds live sockets, so a cleaner
+/// has no business there even though it is called "temp".
+fn is_safe_unix_root(root: &Path) -> bool {
+    let normalized = normalize(root);
+    if !normalized.has_root() {
+        return false;
+    }
+    let parts: Vec<String> = normalized
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    if parts.len() < 3 {
+        // `/`, `/tmp`, `/home/jakob`, `/Users/jakob`, `/var/tmp`.
+        return false;
+    }
+
+    const SYSTEM_TREES: &[&str] = &[
+        "bin",
+        "boot",
+        "dev",
+        "etc",
+        "lib",
+        "lib32",
+        "lib64",
+        "opt",
+        "proc",
+        "root",
+        "run",
+        "sbin",
+        "srv",
+        "sys",
+        "usr",
+        "System",
+        "Library",
+        "Applications",
+        "Volumes",
+        "private",
+        "snap",
+        "nix",
+    ];
+    // `/var/folders/...` is where macOS puts each user's `$TMPDIR`; the rest
+    // of `/var` is system state.
+    if parts[0] == "var" {
+        return parts.get(1).map(String::as_str) == Some("folders");
+    }
+    if SYSTEM_TREES.contains(&parts[0].as_str()) {
+        return false;
+    }
+
+    const FORBIDDEN_LEAVES: &[&str] = &[
+        "documents",
+        "desktop",
+        "downloads",
+        "pictures",
+        "videos",
+        "movies",
+        "music",
+        "public",
+        "templates",
+    ];
+    let leaf = parts[parts.len() - 1].to_ascii_lowercase();
+    !FORBIDDEN_LEAVES.contains(&leaf.as_str())
+}
+
+fn is_safe_windows_root(root: &Path) -> bool {
     let normalized = normalize(root);
 
     // Depth: a real cache lives at least two levels down, e.g.
@@ -532,6 +688,7 @@ mod tests {
 
     // ── Path normalisation ──────────────────────────────────────────────────
 
+    #[cfg(windows)]
     #[test]
     fn normalize_resolves_dot_and_dotdot() {
         assert_eq!(normalize(&p(r"C:\a\b\..\c")), p(r"C:\a\c"));
@@ -539,6 +696,7 @@ mod tests {
         assert_eq!(normalize(&p(r"C:\a\b\..\..")), p(r"C:\"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn normalize_cannot_climb_above_the_root() {
         // `C:\..` is `C:\` to the OS, and must be here too, or the containment
@@ -548,12 +706,14 @@ mod tests {
 
     // ── Containment ─────────────────────────────────────────────────────────
 
+    #[cfg(windows)]
     #[test]
     fn a_path_inside_the_root_is_within_it() {
         assert!(is_within(&p(r"C:\cache"), &p(r"C:\cache\a\b.tmp")));
         assert!(is_within(&p(r"C:\cache"), &p(r"C:\cache")));
     }
 
+    #[cfg(windows)]
     #[test]
     fn traversal_out_of_the_root_is_refused() {
         assert!(!is_within(&p(r"C:\cache"), &p(r"C:\cache\..\..\Windows")));
@@ -561,6 +721,7 @@ mod tests {
     }
 
     /// The classic prefix bug: `C:\Foo` must not appear to contain `C:\Foobar`.
+    #[cfg(windows)]
     #[test]
     fn a_sibling_with_a_shared_prefix_is_not_inside() {
         assert!(!is_within(&p(r"C:\cache"), &p(r"C:\cache-old\a.tmp")));
@@ -578,6 +739,7 @@ mod tests {
 
     // ── Root safety ─────────────────────────────────────────────────────────
 
+    #[cfg(windows)]
     #[test]
     fn a_legitimate_cache_root_is_accepted() {
         assert!(is_safe_cleanup_root(&p(
@@ -591,6 +753,7 @@ mod tests {
 
     /// The failure this exists for: an unset environment variable collapsing a
     /// root into something catastrophic.
+    #[cfg(windows)]
     #[test]
     fn a_root_that_is_too_shallow_is_refused() {
         for root in [r"C:\", r"C:\Temp", r"\Temp", r"\", "C:"] {
@@ -601,6 +764,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn system_trees_are_never_cleanup_roots() {
         for root in [
@@ -616,6 +780,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_users_own_files_are_never_junk() {
         for root in [
@@ -629,6 +794,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn traversal_inside_a_root_is_resolved_before_it_is_judged() {
         // `...\Local\Temp\..\..\..\..\Windows\System32` must be seen for what
@@ -636,5 +802,80 @@ mod tests {
         assert!(!is_safe_cleanup_root(&p(
             r"C:\Users\jakob\AppData\Local\Temp\..\..\..\..\..\Windows\System32"
         )));
+    }
+
+    // ── Unix ────────────────────────────────────────────────────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_paths_normalise_and_contain_like_windows_ones() {
+        assert_eq!(normalize(&p("/home/a/.cache/../x")), p("/home/a/x"));
+        assert_eq!(normalize(&p("/../../etc")), p("/etc"));
+        assert!(is_within(&p("/home/a/.cache"), &p("/home/a/.cache/x/y")));
+        assert!(!is_within(&p("/home/a/.cache"), &p("/home/a/.cache-old/x")));
+        assert!(!is_within(
+            &p("/home/a/.cache"),
+            &p("/home/a/.cache/../.ssh/id")
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn per_user_caches_and_trash_are_legitimate_roots_on_unix() {
+        for root in [
+            "/home/jakob/.cache",
+            "/home/jakob/.cache/thumbnails",
+            "/home/jakob/.local/share/Trash/files",
+            "/Users/jakob/Library/Caches",
+            "/Users/jakob/.Trash",
+            "/var/folders/xy/abc123/T",
+        ] {
+            assert!(is_safe_cleanup_root(&p(root)), "refused {root}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn system_trees_homes_and_documents_are_refused_on_unix() {
+        for root in [
+            "/",
+            "/tmp",
+            "/var/tmp",
+            "/home/jakob",
+            "/Users/jakob",
+            "/usr/lib/x",
+            "/etc/apt/cache",
+            "/Library/Caches/com.apple",
+            "/System/Library/Caches",
+            "/var/log/journal",
+            "/home/jakob/Documents",
+            "/Users/jakob/Downloads",
+            "relative/path/cache",
+            "/home/jakob/.cache/../../../etc",
+        ] {
+            assert!(!is_safe_cleanup_root(&p(root)), "accepted {root}");
+        }
+    }
+
+    #[test]
+    fn every_platform_has_cleanup_categories_and_hides_the_rest() {
+        let here = CleanupCategory::for_this_platform();
+        assert!(here.contains(&CleanupCategory::RecycleBin));
+        assert!(here.contains(&CleanupCategory::BrowserCache));
+        if cfg!(windows) {
+            assert!(here.contains(&CleanupCategory::ComponentStore));
+            assert!(!here.contains(&CleanupCategory::AppCaches));
+        } else {
+            assert!(!here.contains(&CleanupCategory::ComponentStore));
+            assert!(here.contains(&CleanupCategory::AppCaches));
+        }
+    }
+
+    #[test]
+    fn privacy_and_app_caches_are_opt_in() {
+        assert!(!CleanupCategory::RecentItems.selected_by_default());
+        assert!(!CleanupCategory::AppCaches.selected_by_default());
+        // Regenerates, but costs stutter in games the user did not expect.
+        assert!(!CleanupCategory::ShaderCache.selected_by_default());
     }
 }

@@ -212,6 +212,11 @@ pub async fn exists(program: &str, probe_args: &[&str]) -> bool {
 /// prompt blocks forever behind an invisible console.
 #[cfg(windows)]
 pub async fn powershell(script: &str, timeout: Duration) -> Result<Output> {
+    // Windows PowerShell writes redirected output in the console's OEM code
+    // page, so a device called "Unbekanntes USB-Gerät" arrived as
+    // "Unbekanntes USB-Ger\u{fffd}t" once decoded as UTF-8. Asking for UTF-8
+    // first makes every value — names, paths, publishers — survive intact.
+    let script = format!("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n{script}");
     run(
         "powershell.exe",
         &[
@@ -223,7 +228,7 @@ pub async fn powershell(script: &str, timeout: Duration) -> Result<Output> {
             "-OutputFormat",
             "Text",
             "-Command",
-            script,
+            &script,
         ],
         timeout,
     )

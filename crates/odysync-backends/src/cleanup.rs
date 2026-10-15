@@ -26,7 +26,6 @@
 //! fails partway through is worse than sending the user to the tool that works.
 
 use std::path::{Path, PathBuf};
-#[cfg(windows)]
 use std::time::Duration;
 
 use odysync_core::cleanup::{
@@ -50,6 +49,18 @@ pub enum Strategy {
     /// with other Explorer state, so clearing the whole directory would take
     /// more than was asked for.
     Prefixed(&'static [&'static str]),
+    /// Only files whose name ends with one of these suffixes, matched without
+    /// regard to case. Directories never match, so the walk does not descend.
+    ///
+    /// Explorer's recent-items folder keeps the jump lists — which hold the
+    /// user's *pinned* items — in subdirectories next to the `.lnk` files;
+    /// only the latter are the recently-opened list.
+    Suffixed(&'static [&'static str]),
+    /// Everything except entries with these names (exact, case-insensitive).
+    ///
+    /// `~/.cache` holds the thumbnail and browser caches, which are their own
+    /// categories; counting them again here would double the total.
+    Except(&'static [&'static str]),
 }
 
 /// One directory a category draws from.
@@ -88,6 +99,131 @@ fn windows_dir() -> PathBuf {
 /// is correct and keeps the table declarative. A root that is *unsafe* is
 /// dropped and logged, because that indicates the environment lied to us.
 pub fn targets() -> Vec<Target> {
+    let mut out = if cfg!(windows) {
+        windows_targets()
+    } else {
+        unix_targets()
+    };
+    // Collapse duplicate roots — `%TEMP%` and `%TMP%` normally point at the
+    // same place, and measuring it twice would double the reported total.
+    out.sort_by(|a, b| a.root.cmp(&b.root));
+    out.dedup_by(|a, b| a.category == b.category && a.root == b.root);
+    out
+}
+
+/// Keep `root` only if the root-safety rule accepts it.
+fn push_target(
+    out: &mut Vec<Target>,
+    category: CleanupCategory,
+    root: PathBuf,
+    strategy: Strategy,
+) {
+    if is_safe_cleanup_root(&root) {
+        out.push(Target {
+            category,
+            root,
+            strategy,
+        });
+    } else {
+        tracing::warn!(
+            category = category.id(),
+            root = %root.display(),
+            "refusing an unsafe cleanup root; the environment may be incomplete"
+        );
+    }
+}
+
+/// The per-user directories macOS and Linux keep caches and trash in.
+///
+/// Everything here is inside the user's home (or, for `$TMPDIR` on macOS,
+/// the per-user folder under `/var/folders`). Nothing needs root, and
+/// nothing outside the user's own files is ever a target.
+fn unix_targets() -> Vec<Target> {
+    let mut out: Vec<Target> = Vec::new();
+    let Some(home) = env_path("HOME") else {
+        return out;
+    };
+
+    if cfg!(target_os = "macos") {
+        // `$TMPDIR` is per-user on macOS (`/var/folders/.../T`), unlike `/tmp`.
+        if let Some(tmp) = env_path("TMPDIR") {
+            push_target(
+                &mut out,
+                CleanupCategory::TempFiles,
+                tmp,
+                Strategy::Contents,
+            );
+        }
+        push_target(
+            &mut out,
+            CleanupCategory::RecycleBin,
+            home.join(".Trash"),
+            Strategy::Contents,
+        );
+        push_target(
+            &mut out,
+            CleanupCategory::ErrorReports,
+            home.join("Library").join("Logs").join("DiagnosticReports"),
+            Strategy::Contents,
+        );
+        push_target(
+            &mut out,
+            CleanupCategory::AppCaches,
+            home.join("Library").join("Caches"),
+            // Browser caches are their own category.
+            Strategy::Except(&[
+                "google",
+                "firefox",
+                "microsoft edge",
+                "com.microsoft.edgemac",
+            ]),
+        );
+    } else {
+        let data = env_path("XDG_DATA_HOME").unwrap_or_else(|| home.join(".local").join("share"));
+        let cache = env_path("XDG_CACHE_HOME").unwrap_or_else(|| home.join(".cache"));
+        // Both halves of the freedesktop.org trash: the files and the
+        // `.trashinfo` records that describe them.
+        push_target(
+            &mut out,
+            CleanupCategory::RecycleBin,
+            data.join("Trash").join("files"),
+            Strategy::Contents,
+        );
+        push_target(
+            &mut out,
+            CleanupCategory::RecycleBin,
+            data.join("Trash").join("info"),
+            Strategy::Contents,
+        );
+        push_target(
+            &mut out,
+            CleanupCategory::ThumbnailCache,
+            cache.join("thumbnails"),
+            Strategy::Contents,
+        );
+        push_target(
+            &mut out,
+            CleanupCategory::RecentItems,
+            data.clone(),
+            Strategy::Prefixed(&["recently-used.xbel"]),
+        );
+        push_target(
+            &mut out,
+            CleanupCategory::AppCaches,
+            cache,
+            Strategy::Except(&[
+                "thumbnails",
+                "google-chrome",
+                "chromium",
+                "microsoft-edge",
+                "mozilla",
+            ]),
+        );
+    }
+    out
+}
+
+fn windows_targets() -> Vec<Target> {
     let mut out: Vec<Target> = Vec::new();
     let mut push = |category, root: PathBuf, strategy| {
         if is_safe_cleanup_root(&root) {
@@ -136,6 +272,41 @@ pub fn targets() -> Vec<Target> {
             local.join("CrashDumps"),
             Strategy::Contents,
         );
+        // DirectX's own shader cache (the "DirectX Shader Cache" entry in
+        // Disk Cleanup), then each GPU vendor's.
+        for parts in [
+            &["D3DSCache"][..],
+            &["NVIDIA", "DXCache"],
+            &["NVIDIA", "GLCache"],
+            &["AMD", "DxCache"],
+            &["AMD", "DxcCache"],
+            &["AMD", "GLCache"],
+            &["AMD", "VkCache"],
+            &["Intel", "ShaderCache"],
+        ] {
+            let root = parts.iter().fold(local.clone(), |acc, p| acc.join(p));
+            push(CleanupCategory::ShaderCache, root, Strategy::Contents);
+        }
+    }
+    if let Some(profile) = env_path("USERPROFILE") {
+        push(
+            CleanupCategory::ShaderCache,
+            profile
+                .join("AppData")
+                .join("LocalLow")
+                .join("NVIDIA")
+                .join("PerDriverVersion")
+                .join("DXCache"),
+            Strategy::Contents,
+        );
+    }
+
+    if let Some(roaming) = env_path("APPDATA") {
+        push(
+            CleanupCategory::RecentItems,
+            roaming.join("Microsoft").join("Windows").join("Recent"),
+            Strategy::Suffixed(&[".lnk"]),
+        );
     }
 
     if let Some(program_data) = env_path("ProgramData") {
@@ -162,11 +333,6 @@ pub fn targets() -> Vec<Target> {
         Strategy::Contents,
     );
 
-    // Collapse duplicate roots — `%TEMP%` and `%TMP%` normally point at the
-    // same place, and measuring it twice would double the reported total.
-    out.dedup_by(|a, b| a.category == b.category && a.root == b.root);
-    out.sort_by(|a, b| a.root.cmp(&b.root));
-    out.dedup_by(|a, b| a.category == b.category && a.root == b.root);
     out
 }
 
@@ -182,6 +348,24 @@ fn matches_strategy(strategy: Strategy, path: &Path) -> bool {
                 return false;
             };
             prefixes.iter().any(|p| name.starts_with(p))
+        }
+        Strategy::Suffixed(suffixes) => {
+            let Some(name) = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_ascii_lowercase())
+            else {
+                return false;
+            };
+            !path.is_dir() && suffixes.iter().any(|s| name.ends_with(s))
+        }
+        Strategy::Except(names) => {
+            let Some(name) = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_ascii_lowercase())
+            else {
+                return false;
+            };
+            !names.iter().any(|n| n.eq_ignore_ascii_case(&name))
         }
     }
 }
@@ -304,10 +488,6 @@ fn remove_matching(root: &Path, dir: &Path, strategy: Strategy, outcome: &mut Cl
 
 /// Measure every category. Changes nothing.
 pub async fn scan() -> Vec<CleanupFinding> {
-    if !cfg!(windows) {
-        return Vec::new();
-    }
-
     tokio::task::spawn_blocking(scan_blocking)
         .await
         .unwrap_or_default()
@@ -316,9 +496,9 @@ pub async fn scan() -> Vec<CleanupFinding> {
 fn scan_blocking() -> Vec<CleanupFinding> {
     let mut findings: Vec<CleanupFinding> = Vec::new();
 
-    for category in CleanupCategory::ALL {
+    for category in &CleanupCategory::for_this_platform() {
         let finding = match category {
-            CleanupCategory::RecycleBin => measure_recycle_bin(),
+            CleanupCategory::RecycleBin if cfg!(windows) => measure_recycle_bin(),
             CleanupCategory::PreviousWindows => measure_previous_windows(),
             CleanupCategory::BrowserCache => measure_browser_caches(),
             // DISM does not report what it would reclaim without doing the
@@ -424,13 +604,12 @@ fn measure_previous_windows() -> CleanupFinding {
 /// enough when the operation is one this module has decided it cannot perform
 /// correctly.
 pub async fn clean(selected: Vec<CleanupCategory>) -> Vec<(CleanupCategory, CleanupOutcome)> {
-    if !cfg!(windows) {
-        return Vec::new();
-    }
-
     let mut results = Vec::new();
 
     for category in selected {
+        if !category.applies_to_this_platform() {
+            continue;
+        }
         if category.is_report_only() {
             results.push((
                 category,
@@ -446,7 +625,7 @@ pub async fn clean(selected: Vec<CleanupCategory>) -> Vec<(CleanupCategory, Clea
         }
 
         let outcome = match category {
-            CleanupCategory::RecycleBin => empty_recycle_bin().await,
+            CleanupCategory::RecycleBin if cfg!(windows) => empty_recycle_bin().await,
             CleanupCategory::ComponentStore => run_component_cleanup().await,
             CleanupCategory::BrowserCache => clean_browser_caches().await,
             other => tokio::task::spawn_blocking(move || {
@@ -566,14 +745,28 @@ struct Browser {
 }
 
 fn browsers() -> Vec<Browser> {
+    if cfg!(windows) {
+        windows_browsers()
+    } else if cfg!(target_os = "macos") {
+        mac_browsers()
+    } else {
+        linux_browsers()
+    }
+}
+
+fn windows_browsers() -> Vec<Browser> {
     let local = env_path("LOCALAPPDATA");
     let roaming = env_path("APPDATA");
+    let under = |base: &Option<PathBuf>, parts: &[&str]| {
+        base.as_ref()
+            .map(|b| parts.iter().fold(b.clone(), |acc, p| acc.join(p)))
+    };
 
     vec![
         Browser {
             name: "Google Chrome",
             process: "chrome.exe",
-            profiles_root: local.as_ref().map(|p| p.join(r"Google\Chrome\User Data")),
+            profiles_root: under(&local, &["Google", "Chrome", "User Data"]),
             // Never `Network`, `Cookies` or `Login Data` — those are the
             // things a user would be furious to lose.
             cache_dirs: &["Cache", "Code Cache", "GPUCache"],
@@ -582,7 +775,14 @@ fn browsers() -> Vec<Browser> {
         Browser {
             name: "Microsoft Edge",
             process: "msedge.exe",
-            profiles_root: local.as_ref().map(|p| p.join(r"Microsoft\Edge\User Data")),
+            profiles_root: under(&local, &["Microsoft", "Edge", "User Data"]),
+            cache_dirs: &["Cache", "Code Cache", "GPUCache"],
+            profiles_are_subdirs: true,
+        },
+        Browser {
+            name: "Brave",
+            process: "brave.exe",
+            profiles_root: under(&local, &["BraveSoftware", "Brave-Browser", "User Data"]),
             cache_dirs: &["Cache", "Code Cache", "GPUCache"],
             profiles_are_subdirs: true,
         },
@@ -591,14 +791,82 @@ fn browsers() -> Vec<Browser> {
             process: "firefox.exe",
             // Firefox keeps its cache under Local and its profiles under
             // Roaming; the cache tree mirrors the profile names.
-            profiles_root: local
-                .as_ref()
-                .map(|p| p.join(r"Mozilla\Firefox\Profiles"))
-                .or_else(|| {
-                    roaming
-                        .as_ref()
-                        .map(|p| p.join(r"Mozilla\Firefox\Profiles"))
-                }),
+            profiles_root: under(&local, &["Mozilla", "Firefox", "Profiles"])
+                .or_else(|| under(&roaming, &["Mozilla", "Firefox", "Profiles"])),
+            cache_dirs: &["cache2"],
+            profiles_are_subdirs: true,
+        },
+    ]
+}
+
+/// On macOS the caches live apart from the profiles, under
+/// `~/Library/Caches`, laid out per profile like the profiles themselves.
+fn mac_browsers() -> Vec<Browser> {
+    let caches = env_path("HOME").map(|h| h.join("Library").join("Caches"));
+    let under = |parts: &[&str]| {
+        caches
+            .as_ref()
+            .map(|b| parts.iter().fold(b.clone(), |acc, p| acc.join(p)))
+    };
+    vec![
+        Browser {
+            name: "Google Chrome",
+            process: "Google Chrome",
+            profiles_root: under(&["Google", "Chrome"]),
+            cache_dirs: &["Cache", "Code Cache"],
+            profiles_are_subdirs: true,
+        },
+        Browser {
+            name: "Microsoft Edge",
+            process: "Microsoft Edge",
+            profiles_root: under(&["Microsoft Edge"]),
+            cache_dirs: &["Cache", "Code Cache"],
+            profiles_are_subdirs: true,
+        },
+        Browser {
+            name: "Mozilla Firefox",
+            process: "firefox",
+            profiles_root: under(&["Firefox", "Profiles"]),
+            cache_dirs: &["cache2"],
+            profiles_are_subdirs: true,
+        },
+    ]
+}
+
+/// On Linux, under `~/.cache` per the XDG base-directory spec.
+fn linux_browsers() -> Vec<Browser> {
+    let cache = env_path("XDG_CACHE_HOME").or_else(|| env_path("HOME").map(|h| h.join(".cache")));
+    let under = |parts: &[&str]| {
+        cache
+            .as_ref()
+            .map(|b| parts.iter().fold(b.clone(), |acc, p| acc.join(p)))
+    };
+    vec![
+        Browser {
+            name: "Google Chrome",
+            process: "chrome",
+            profiles_root: under(&["google-chrome"]),
+            cache_dirs: &["Cache", "Code Cache"],
+            profiles_are_subdirs: true,
+        },
+        Browser {
+            name: "Chromium",
+            process: "chromium",
+            profiles_root: under(&["chromium"]),
+            cache_dirs: &["Cache", "Code Cache"],
+            profiles_are_subdirs: true,
+        },
+        Browser {
+            name: "Microsoft Edge",
+            process: "msedge",
+            profiles_root: under(&["microsoft-edge"]),
+            cache_dirs: &["Cache", "Code Cache"],
+            profiles_are_subdirs: true,
+        },
+        Browser {
+            name: "Mozilla Firefox",
+            process: "firefox",
+            profiles_root: under(&["mozilla", "firefox"]),
             cache_dirs: &["cache2"],
             profiles_are_subdirs: true,
         },
@@ -672,9 +940,19 @@ async fn is_process_running(image: &str) -> bool {
     }
 }
 
+/// `pgrep -x` exits 0 when a process with exactly this name runs, 1 when
+/// none does. Anything else — pgrep missing, an error — is treated as
+/// running, for the same reason as on Windows.
 #[cfg(not(windows))]
-async fn is_process_running(_image: &str) -> bool {
-    true
+async fn is_process_running(name: &str) -> bool {
+    match odysync_core::proc::run("pgrep", &["-x", name], std::time::Duration::from_secs(15)).await
+    {
+        Ok(out) => out.code != 1,
+        Err(e) => {
+            tracing::warn!(name, error = %e, "could not determine whether the browser is running");
+            true
+        }
+    }
 }
 
 fn measure_browser_caches() -> CleanupFinding {
@@ -741,6 +1019,97 @@ async fn clean_browser_caches() -> CleanupOutcome {
     // The same "still running" line once per profile directory is noise.
     outcome.skipped.dedup();
     outcome
+}
+
+// ── Large files ─────────────────────────────────────────────────────────────
+
+/// One large file found in the user's home directory.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LargeFile {
+    pub path: PathBuf,
+    pub bytes: u64,
+}
+
+/// What a large-file search found, and whether it finished.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct LargeFileReport {
+    /// Largest first.
+    pub files: Vec<LargeFile>,
+    /// Files looked at.
+    pub scanned: u64,
+    /// Set when the time budget ran out before the walk finished, so the list
+    /// is the largest files *seen*, not necessarily the largest that exist.
+    pub truncated: bool,
+}
+
+/// The `limit` largest files of at least `min_bytes` under the user's home.
+///
+/// **Report only.** Nothing here deletes, moves or even opens a file: what is
+/// "large and unneeded" is a judgement only the user can make, and a cleaner
+/// that guesses is how photo libraries get lost. The front-ends offer to show
+/// a file in its folder, nothing more.
+///
+/// Symlinks and junctions are not followed, so a link into a network share or
+/// back up the tree cannot make the walk wander or loop. The walk stops after
+/// `budget` and says so rather than taking as long as a full-disk hash would.
+pub async fn largest_files(limit: usize, min_bytes: u64, budget: Duration) -> LargeFileReport {
+    let Some(home) = env_path(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) else {
+        return LargeFileReport::default();
+    };
+    tokio::task::spawn_blocking(move || largest_files_under(&home, limit, min_bytes, budget))
+        .await
+        .unwrap_or_default()
+}
+
+pub fn largest_files_under(
+    root: &Path,
+    limit: usize,
+    min_bytes: u64,
+    budget: Duration,
+) -> LargeFileReport {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    let deadline = std::time::Instant::now() + budget;
+    let mut heap: BinaryHeap<Reverse<(u64, PathBuf)>> = BinaryHeap::new();
+    let mut stack = vec![root.to_path_buf()];
+    let mut report = LargeFileReport::default();
+
+    while let Some(dir) = stack.pop() {
+        if std::time::Instant::now() > deadline {
+            report.truncated = true;
+            break;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else if meta.is_file() {
+                report.scanned += 1;
+                let size = meta.len();
+                if size >= min_bytes && limit > 0 {
+                    heap.push(Reverse((size, entry.path())));
+                    if heap.len() > limit {
+                        heap.pop();
+                    }
+                }
+            }
+        }
+    }
+
+    let mut files: Vec<LargeFile> = heap
+        .into_iter()
+        .map(|Reverse((bytes, path))| LargeFile { path, bytes })
+        .collect();
+    files.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.path.cmp(&b.path)));
+    report.files = files;
+    report
 }
 
 // ── Disk optimisation ───────────────────────────────────────────────────────
@@ -874,6 +1243,88 @@ fn odysync_backends_parse_json<T: serde::de::DeserializeOwned>(stdout: &str) -> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_largest_files_are_reported_largest_first_and_nothing_is_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("a").join("b");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(dir.path().join("small.bin"), vec![0u8; 10]).unwrap();
+        std::fs::write(dir.path().join("mid.bin"), vec![0u8; 2_000]).unwrap();
+        std::fs::write(nested.join("big.bin"), vec![0u8; 5_000]).unwrap();
+        std::fs::write(nested.join("bigger.bin"), vec![0u8; 9_000]).unwrap();
+
+        let report = largest_files_under(dir.path(), 2, 1_000, Duration::from_secs(30));
+        assert!(!report.truncated);
+        assert_eq!(report.scanned, 4);
+        let names: Vec<_> = report
+            .files
+            .iter()
+            .map(|f| f.path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["bigger.bin", "big.bin"]);
+        assert_eq!(report.files[0].bytes, 9_000);
+
+        // Report-only: everything is still there.
+        assert!(dir.path().join("small.bin").exists());
+        assert!(nested.join("bigger.bin").exists());
+    }
+
+    #[test]
+    fn files_below_the_threshold_are_not_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("tiny.bin"), vec![0u8; 10]).unwrap();
+        let report = largest_files_under(dir.path(), 10, 1_000, Duration::from_secs(30));
+        assert!(report.files.is_empty());
+        assert_eq!(report.scanned, 1);
+    }
+
+    #[test]
+    fn an_exhausted_time_budget_is_reported_rather_than_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("x.bin"), vec![0u8; 10]).unwrap();
+        let report = largest_files_under(dir.path(), 10, 1, Duration::ZERO);
+        assert!(report.truncated);
+    }
+
+    #[test]
+    fn the_suffix_strategy_matches_files_but_never_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let lnk = dir.path().join("Report.LNK");
+        std::fs::write(&lnk, b"x").unwrap();
+        let jump_lists = dir.path().join("AutomaticDestinations.lnk");
+        std::fs::create_dir_all(&jump_lists).unwrap();
+        let strategy = Strategy::Suffixed(&[".lnk"]);
+        assert!(matches_strategy(strategy, &lnk));
+        assert!(!matches_strategy(strategy, &jump_lists));
+        assert!(!matches_strategy(strategy, &dir.path().join("notes.txt")));
+    }
+
+    #[test]
+    fn the_except_strategy_leaves_named_entries_alone() {
+        let strategy = Strategy::Except(&["thumbnails", "mozilla"]);
+        let dir = Path::new("cache");
+        assert!(!matches_strategy(strategy, &dir.join("thumbnails")));
+        assert!(!matches_strategy(strategy, &dir.join("Mozilla")));
+        assert!(matches_strategy(strategy, &dir.join("pip")));
+    }
+
+    #[test]
+    fn every_target_root_passes_the_root_safety_rule() {
+        for t in targets() {
+            assert!(
+                is_safe_cleanup_root(&t.root),
+                "{} root {} is unsafe",
+                t.category.id(),
+                t.root.display()
+            );
+            assert!(
+                t.category.applies_to_this_platform(),
+                "{} has a target on a platform it does not apply to",
+                t.category.id()
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
