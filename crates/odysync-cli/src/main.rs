@@ -247,6 +247,9 @@ enum Command {
     /// Devices Windows reports as not working, with what each problem means.
     Devices,
 
+    /// Processor, memory, graphics and disks of this machine.
+    Sysinfo,
+
     /// Programs that start when you sign in. Turning one off is reversible.
     Startup {
         #[command(subcommand)]
@@ -727,6 +730,7 @@ async fn run(cli: Cli) -> Result<u8> {
                 time,
                 task_name: task_name.clone(),
                 extra_args,
+                program: None,
             };
             odysync_backends::scheduler::create_schedule(&spec)
                 .await
@@ -871,6 +875,46 @@ async fn run(cli: Cli) -> Result<u8> {
                 Ok(0)
             }
         },
+
+        Command::Sysinfo => {
+            let r = odysync_backends::system_info::report().await;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            } else {
+                println!("{}", style.bold("This machine\n"));
+                println!("  {:<10} {}", "System", r.os);
+                if let Some(m) = &r.machine {
+                    println!("  {:<10} {m}", "Model");
+                }
+                println!(
+                    "  {:<10} {} ({} threads)",
+                    "Processor", r.cpu, r.cpu_threads
+                );
+                println!("  {:<10} {}", "Memory", render::human_bytes(r.memory_bytes));
+                for g in &r.gpus {
+                    println!(
+                        "  {:<10} {}{}",
+                        "Graphics",
+                        g.name,
+                        g.driver_version
+                            .as_deref()
+                            .map(|v| style.dim(&format!("  driver {v}")))
+                            .unwrap_or_default()
+                    );
+                }
+                for d in &r.disks {
+                    println!(
+                        "  {:<10} {}  {} free of {}  {}",
+                        "Disk",
+                        d.mount,
+                        render::human_bytes(d.free_bytes),
+                        render::human_bytes(d.size_bytes),
+                        style.dim(&d.filesystem)
+                    );
+                }
+            }
+            Ok(0)
+        }
 
         Command::Devices => {
             let problems = odysync_backends::devices::problems().await;

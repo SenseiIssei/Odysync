@@ -22,10 +22,8 @@ import {
   PageHeader,
   SuccessBar,
   WarningBar,
-  errorText,
-  formatDate,
-  formatSize,
 } from "../components/ui";
+import { errorText, formatDate, formatSize } from "../format";
 import { GROUP_LABELS, hardwareGroupOf, isHardwareBackend } from "../hardware-backends";
 import type { ApplyResultDto, ComponentStatus, UpdateDto } from "../types";
 import { OutcomeIcon } from "./Updates";

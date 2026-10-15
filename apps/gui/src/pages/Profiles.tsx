@@ -1,16 +1,16 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { Layers } from "lucide-react";
+import { ListChecks, Plus, Trash2, X } from "lucide-react";
 import * as api from "../api";
 import { useStore } from "../store";
 import {
+  Badge,
+  Button,
   Card,
   EmptyState,
   ErrorBar,
   PageHeader,
-  RefreshButton,
-  errorText,
 } from "../components/ui";
+import { errorText } from "../format";
 
 export default function Profiles() {
   const { profiles, config } = useStore();
@@ -64,23 +64,18 @@ export default function Profiles() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-4">
+    <>
       <PageHeader
-        title="Update Profiles"
-        subtitle="Named sets of packages, for updating a subset at a time"
+        title="Profiles"
+        subtitle="Named groups of packages, for updating only some things at a time — for example your work tools before a deadline. Use one with `odysync apply --profile <name>`."
         actions={
-          <>
-            <RefreshButton onClick={() => void profiles.refresh()} spinning={profiles.loading} />
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => setShowCreate((v) => !v)}
-              className="px-4 py-1.5 rounded-lg bg-accent/10 border border-accent/30 text-accent text-xs font-medium hover:bg-accent/20 transition-all"
-            >
-              {showCreate ? "Cancel" : "New Profile"}
-            </motion.button>
-          </>
+          <Button
+            variant={showCreate ? "ghost" : "primary"}
+            onClick={() => setShowCreate((v) => !v)}
+            icon={showCreate ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+          >
+            {showCreate ? "Cancel" : "New profile"}
+          </Button>
         }
       />
 
@@ -88,100 +83,87 @@ export default function Profiles() {
       {profiles.error && <ErrorBar message={profiles.error} />}
 
       {showCreate && (
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-          <Card>
-            <div className="space-y-3">
-              <div>
-                <label htmlFor="pname" className="block text-sm font-medium mb-1">
-                  Profile name
-                </label>
-                <input
-                  id="pname"
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm focus:border-accent"
-                  placeholder="e.g. Gaming, Development, Minimal"
-                />
-              </div>
-              <div>
-                <label htmlFor="ppkgs" className="block text-sm font-medium mb-1">
-                  Packages (one per line)
-                </label>
-                <textarea
-                  id="ppkgs"
-                  value={newPackages}
-                  onChange={(e) => setNewPackages(e.target.value)}
-                  rows={4}
-                  className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm font-mono focus:border-accent"
-                  placeholder={"Mozilla.Firefox\nGit.Git\nMicrosoft.VisualStudioCode"}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={create}
-                disabled={busy || !newName.trim()}
-                className="px-4 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50 transition-all"
-              >
-                {busy ? "Creating..." : "Create"}
-              </button>
+        <Card title="New profile">
+          <div className="grid gap-4 sm:grid-cols-[260px_1fr]">
+            <div>
+              <label htmlFor="pname" className="block text-sm font-medium mb-1.5">
+                Name
+              </label>
+              <input
+                id="pname"
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-sm placeholder:text-faint outline-none focus:border-accent"
+                placeholder="Work tools"
+              />
             </div>
-          </Card>
-        </motion.div>
+            <div>
+              <label htmlFor="ppkgs" className="block text-sm font-medium mb-1.5">
+                Packages, one per line
+              </label>
+              <textarea
+                id="ppkgs"
+                value={newPackages}
+                onChange={(e) => setNewPackages(e.target.value)}
+                rows={4}
+                className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm font-mono placeholder:text-faint outline-none focus:border-accent selectable"
+                placeholder={"vscode\ngit\nnodejs"}
+              />
+            </div>
+          </div>
+          <div className="mt-4">
+            <Button variant="primary" onClick={() => void create()} busy={busy} disabled={!newName.trim()}>
+              Create profile
+            </Button>
+          </div>
+        </Card>
       )}
 
-      {list.length === 0 && !showCreate && (
-        <EmptyState
-          icon={<Layers className="w-12 h-12" />}
-          title={
-            profiles.loading && profiles.loadedAt === null
-              ? "Loading profiles..."
-              : "No profiles configured."
-          }
-          hint="Create one to group packages for targeted updates."
-        />
-      )}
-
-      {list.length > 0 && (
-        <div className="space-y-2">
-          {list.map((p, i) => (
-            <motion.div
+      {list.length === 0 && !showCreate ? (
+        <Card>
+          <EmptyState
+            icon={<ListChecks />}
+            title={
+              profiles.loading && profiles.loadedAt === null ? "Loading profiles…" : "No profiles yet"
+            }
+            hint="Group packages to update them together, separately from everything else."
+          />
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {list.map((p) => (
+            <Card
               key={p.name}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: Math.min(i * 0.05, 0.4) }}
+              title={p.name}
+              description={`${p.packages.length} package${p.packages.length === 1 ? "" : "s"}`}
+              actions={
+                <Button
+                  size="sm"
+                  variant={confirmDelete === p.name ? "danger" : "ghost"}
+                  onClick={() => void remove(p.name)}
+                  disabled={busy}
+                  icon={<Trash2 className="w-3.5 h-3.5" />}
+                >
+                  {confirmDelete === p.name ? "Delete?" : "Delete"}
+                </Button>
+              }
             >
-              <Card>
-                <div className="flex items-center justify-between mb-2 gap-3">
-                  <h3 className="font-bold text-sm text-accent truncate">{p.name}</h3>
-                  <button
-                    type="button"
-                    onClick={() => void remove(p.name)}
-                    disabled={busy}
-                    className="text-xs text-danger hover:underline disabled:opacity-50 flex-shrink-0"
-                  >
-                    {confirmDelete === p.name ? "Confirm delete" : "Delete"}
-                  </button>
+              {p.packages.length === 0 ? (
+                <p className="text-sm text-muted">This profile is empty.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {p.packages.map((pkg) => (
+                    <Badge key={pkg}>
+                      <span className="font-mono">{pkg}</span>
+                    </Badge>
+                  ))}
                 </div>
-                {p.packages.length === 0 ? (
-                  <p className="text-xs text-faint">No packages in this profile.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {p.packages.map((pkg) => (
-                      <span
-                        key={pkg}
-                        className="text-[10px] px-2 py-0.5 rounded-full bg-canvas border border-line text-muted font-mono"
-                      >
-                        {pkg}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            </motion.div>
+              )}
+            </Card>
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }

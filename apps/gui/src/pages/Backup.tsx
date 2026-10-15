@@ -1,39 +1,59 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { AlertTriangle, DatabaseBackup } from "lucide-react";
+import { DatabaseBackup, Plus, RefreshCw, RotateCcw } from "lucide-react";
 import * as api from "../api";
 import { useStore } from "../store";
 import {
+  Button,
   Card,
   EmptyState,
   ErrorBar,
+  InfoBar,
   PageHeader,
-  RefreshButton,
   SuccessBar,
-  errorText,
-  formatDate,
+  WarningBar,
 } from "../components/ui";
+import { errorText, formatDate } from "../format";
 
 export default function Backup() {
   const { backup, sysInfo } = useStore();
   const [creating, setCreating] = useState(false);
-  const [backupName, setBackupName] = useState("");
+  const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<number | null>(null);
 
   const { backups, protectionEnabled } = backup.data;
   const elevated = sysInfo.data?.elevated ?? false;
+  const platform = sysInfo.data?.platform ?? "windows";
+
+  if (platform !== "windows") {
+    return (
+      <>
+        <PageHeader title="Restore points" />
+        <Card>
+          <EmptyState
+            icon={<DatabaseBackup />}
+            title="Restore points are a Windows feature"
+            hint={
+              platform === "macos"
+                ? "On macOS, Time Machine keeps the same kind of safety net."
+                : "On Linux, Timeshift or your file system's snapshots (Btrfs, ZFS) do this job."
+            }
+          />
+        </Card>
+      </>
+    );
+  }
 
   const create = async () => {
     setCreating(true);
     setError(null);
     setSuccess(null);
     try {
-      const name = backupName.trim() || `Odysync Backup ${new Date().toLocaleString()}`;
+      const name = description.trim() || `Odysync, ${new Date().toLocaleString()}`;
       await api.createBackup(name);
       setSuccess("Restore point created.");
-      setBackupName("");
+      setDescription("");
       await backup.refresh();
     } catch (e) {
       setError(errorText(e));
@@ -52,107 +72,99 @@ export default function Backup() {
     setSuccess(null);
     try {
       await api.restoreBackup(sequenceNumber);
-      setSuccess(`Restore to "${name}" started. Windows will restart.`);
+      setSuccess(`Returning to "${name}". Windows will restart.`);
     } catch (e) {
       setError(errorText(e));
     }
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
+    <>
       <PageHeader
-        title="Backups & Restore Points"
-        subtitle="Create a Windows system restore point before applying updates"
-        actions={<RefreshButton onClick={() => void backup.refresh()} spinning={backup.loading} />}
+        title="Restore points"
+        subtitle="Snapshots of Windows' system state. Odysync takes one before installing updates; you can take one yourself before any change you are unsure about."
+        actions={
+          <Button
+            onClick={() => void backup.refresh()}
+            busy={backup.loading}
+            icon={<RefreshCw className="w-4 h-4" />}
+          >
+            Refresh
+          </Button>
+        }
       />
 
       {!elevated && (
-        <div className="flex items-start gap-2 text-xs text-warning bg-warning/5 rounded-lg px-4 py-3 border border-warning/30">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-px" />
-          Creating and listing restore points requires administrator rights. Use "Run as
-          Admin" in the title bar to manage them.
-        </div>
+        <InfoBar message="Creating and listing restore points needs administrator rights. Use Run as admin in the title bar." />
       )}
-
       {elevated && !protectionEnabled && backup.loadedAt !== null && (
-        <div className="flex items-start gap-2 text-xs text-warning bg-warning/5 rounded-lg px-4 py-3 border border-warning/30">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-px" />
-          System Protection appears to be disabled. Enable it in Windows System Properties
-          before relying on restore points.
-        </div>
+        <WarningBar message="System Protection is turned off for the system drive, so Windows will not keep restore points. Turn it on under System Properties → System Protection." />
       )}
-
-      <Card title="Create New Restore Point">
-        <div className="flex gap-3 flex-wrap">
-          <input
-            type="text"
-            value={backupName}
-            onChange={(e) => setBackupName(e.target.value)}
-            className="flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-line bg-canvas text-sm focus:border-accent"
-            placeholder="Description (optional)"
-          />
-          <motion.button
-            type="button"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={create}
-            disabled={creating}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50 transition-all"
-          >
-            <DatabaseBackup className={`w-4 h-4 ${creating ? "animate-pulse" : ""}`} />
-            {creating ? "Creating..." : "Create"}
-          </motion.button>
-        </div>
-        <p className="text-xs text-faint mt-2">
-          Windows only creates one automatic restore point per 24 hours by default; a manual
-          one may be silently skipped if a recent one exists.
-        </p>
-      </Card>
-
       {success && <SuccessBar message={success} />}
       {error && <ErrorBar message={error} />}
       {backup.error && <ErrorBar message={backup.error} />}
 
-      {backups.length === 0 && (
-        <EmptyState
-          icon={<DatabaseBackup className="w-12 h-12" />}
-          title={
-            backup.loading && backup.loadedAt === null
-              ? "Reading restore points..."
-              : "No restore points found."
-          }
-        />
-      )}
-
-      {backups.length > 0 && (
-        <div className="space-y-1">
-          <h3 className="text-sm font-bold text-accent mb-2">Existing Restore Points</h3>
-          {backups.map((b, i) => (
-            <motion.div
-              key={`${b.sequence_number}-${i}`}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: Math.min(i * 0.03, 0.3) }}
-              className="flex items-center gap-3 p-3 rounded-lg bg-surface border border-line text-xs"
-            >
-              <DatabaseBackup className="w-4 h-4 text-accent flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-fg truncate">{b.name}</div>
-                <div className="text-faint mt-0.5">
-                  #{b.sequence_number} · {formatDate(b.created_at)} · {b.backup_type}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => void restore(b.sequence_number, b.name)}
-                className="px-3 py-1 rounded bg-warning/10 border border-warning/30 text-warning text-xs font-medium hover:bg-warning/20 transition-all flex-shrink-0"
-              >
-                {confirmRestore === b.sequence_number ? "Confirm — restarts PC" : "Restore"}
-              </button>
-            </motion.div>
-          ))}
+      <Card title="Create a restore point">
+        <div className="flex flex-wrap gap-3">
+          <input
+            type="text"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="flex-1 min-w-[240px] h-9 px-3 rounded-lg border border-line bg-canvas text-sm placeholder:text-faint outline-none focus:border-accent"
+            placeholder="Description, e.g. before installing a new GPU driver"
+          />
+          <Button
+            variant="primary"
+            onClick={() => void create()}
+            busy={creating}
+            disabled={!elevated}
+            icon={<Plus className="w-4 h-4" />}
+          >
+            Create
+          </Button>
         </div>
-      )}
-    </div>
+        <p className="text-sm text-muted mt-3">
+          Windows keeps at most one automatic restore point per day by default, and may quietly
+          skip a manual one if another was made recently.
+        </p>
+      </Card>
+
+      <Card title="Existing restore points" padded={false}>
+        {backups.length === 0 ? (
+          <div className="border-t border-line">
+            <EmptyState
+              icon={<DatabaseBackup />}
+              title={
+                backup.loading && backup.loadedAt === null
+                  ? "Reading restore points…"
+                  : "No restore points"
+              }
+            />
+          </div>
+        ) : (
+          <ul className="divide-y divide-line border-t border-line">
+            {backups.map((b, i) => (
+              <li key={`${b.sequence_number}-${i}`} className="flex items-center gap-4 px-5 py-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-fg truncate">{b.name}</div>
+                  <div className="text-sm text-muted">
+                    {formatDate(b.created_at)} · #{b.sequence_number}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant={confirmRestore === b.sequence_number ? "danger" : "ghost"}
+                  icon={<RotateCcw className="w-3.5 h-3.5" />}
+                  disabled={!elevated}
+                  onClick={() => void restore(b.sequence_number, b.name)}
+                >
+                  {confirmRestore === b.sequence_number ? "Restart and restore" : "Restore"}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </>
   );
 }

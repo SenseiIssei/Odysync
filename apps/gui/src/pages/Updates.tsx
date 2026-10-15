@@ -21,9 +21,8 @@ import {
   Meter,
   PageHeader,
   WarningBar,
-  errorText,
-  formatSize,
 } from "../components/ui";
+import { errorText, formatSize } from "../format";
 import WindowsUpdateCard from "../components/WindowsUpdateCard";
 import type { ApplyResultDto, ApplyStatus, UpdateDto } from "../types";
 

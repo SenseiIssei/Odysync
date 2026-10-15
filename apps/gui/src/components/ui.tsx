@@ -1,6 +1,6 @@
 /** Shared presentational building blocks used across every page. */
 
-import { AlertTriangle, CheckCircle2, Info, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, Loader2, RefreshCw, Search } from "lucide-react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import type { Resource } from "../store";
 
@@ -87,15 +87,6 @@ export function RefreshButton({
 }
 
 type Tone = "neutral" | "accent" | "success" | "warning" | "danger" | "info";
-
-const TONE_TEXT: Record<Tone, string> = {
-  neutral: "text-muted",
-  accent: "text-accent",
-  success: "text-success",
-  warning: "text-warning",
-  danger: "text-danger",
-  info: "text-info",
-};
 
 const TONE_BADGE: Record<Tone, string> = {
   neutral: "bg-raised text-muted border-line",
@@ -391,6 +382,30 @@ export function StatCard({
   );
 }
 
+export function SearchInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <label className="flex items-center gap-2 h-9 px-3 rounded-lg border border-line bg-canvas focus-within:border-accent min-w-[220px] flex-1">
+      <Search className="w-4 h-4 text-faint flex-shrink-0" />
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="flex-1 bg-transparent text-sm outline-none placeholder:text-faint"
+        placeholder={placeholder}
+        aria-label={placeholder}
+      />
+    </label>
+  );
+}
+
 /** A two-column definition list for facts like versions and paths. */
 export function Facts({ items }: { items: [string, ReactNode][] }) {
   return (
@@ -420,34 +435,4 @@ export function Meter({ value, tone = "accent" }: { value: number; tone?: Tone }
       <div className={`h-full rounded-full ${bar[tone]} transition-[width] duration-300`} style={{ width: `${pct}%` }} />
     </div>
   );
-}
-
-export function toneText(tone: Tone): string {
-  return TONE_TEXT[tone];
-}
-
-export function formatSize(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "-";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-/** Dates coming out of PowerShell/WMI are not always parseable — never throw. */
-export function formatDate(value: string): string {
-  if (!value) return "-";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString();
-}
-
-export function errorText(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === "string") return e;
-  try {
-    return JSON.stringify(e);
-  } catch {
-    return String(e);
-  }
 }

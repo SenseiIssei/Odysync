@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { CheckCircle2, Lock, Monitor, Moon, Sun } from "lucide-react";
 import * as api from "../api";
 import { useStore } from "../store";
@@ -13,8 +13,8 @@ import {
   Segmented,
   Switch,
   Toggle,
-  errorText,
 } from "../components/ui";
+import { errorText } from "../format";
 import type { BackendDto, Config } from "../types";
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -22,23 +22,26 @@ const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 export default function Settings() {
   const { config, backends, sysInfo } = useStore();
   const theme = useTheme();
-  const [draft, setDraft] = useState<Config | null>(null);
+  // Unsaved edits. `null` means "no edits": the form shows the saved config.
+  const [edits, setEdits] = useState<Config | null>(null);
+  const draft = edits ?? config.data;
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // Adopt the loaded config as the edit buffer, but never clobber unsaved edits.
-  useEffect(() => {
-    if (config.data && draft === null) setDraft(config.data);
-  }, [config.data, draft]);
-
   const patch = (p: Partial<Config>) => {
-    setDraft((d) => (d ? { ...d, ...p } : d));
+    setEdits((d) => {
+      const base = d ?? config.data;
+      return base ? { ...base, ...p } : base;
+    });
     setSaved(false);
   };
 
   const patchPolicy = (p: Partial<Config["policy"]>) => {
-    setDraft((d) => (d ? { ...d, policy: { ...d.policy, ...p } } : d));
+    setEdits((d) => {
+      const base = d ?? config.data;
+      return base ? { ...base, policy: { ...base.policy, ...p } } : base;
+    });
     setSaved(false);
   };
 
@@ -49,6 +52,7 @@ export default function Settings() {
     try {
       await api.saveConfig(draft);
       await Promise.all([config.refresh(), backends.refresh()]);
+      setEdits(null);
       setSaved(true);
     } catch (e) {
       setError(errorText(e));
@@ -59,15 +63,13 @@ export default function Settings() {
 
   const revert = async () => {
     await config.refresh();
-    setDraft(null);
+    setEdits(null);
     setSaved(false);
     setError(null);
   };
 
   const dirty =
-    draft !== null &&
-    config.data !== null &&
-    JSON.stringify(draft) !== JSON.stringify(config.data);
+    edits !== null && config.data !== null && JSON.stringify(edits) !== JSON.stringify(config.data);
 
   /** Whether a source is switched on in the draft. */
   const isOn = (b: BackendDto) => {

@@ -1,20 +1,17 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { CheckCircle, HardDrive, WifiOff, XCircle } from "lucide-react";
+import { CheckCircle2, HardDriveDownload, RefreshCw, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import * as api from "../api";
 import { useStore } from "../store";
 import {
+  Button,
+  Card,
   EmptyState,
   ErrorBar,
   PageHeader,
-  RefreshButton,
   ResourceView,
-  StatCard,
   SuccessBar,
-  formatDate,
-  formatSize,
-  errorText,
 } from "../components/ui";
+import { errorText, formatDate, formatSize } from "../format";
 
 export default function Offline() {
   const { offline } = useStore();
@@ -28,6 +25,19 @@ export default function Offline() {
 
   const { status, entries } = offline.data;
   const key = (backend: string, id: string) => `${backend}\u0000${id}`;
+
+  const run = async (work: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await work();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const verify = async () => {
     setVerifying(true);
@@ -46,30 +56,21 @@ export default function Offline() {
     }
   };
 
-  const clearAll = async () => {
+  const clearAll = () => {
     if (!confirmClear) {
       setConfirmClear(true);
       return;
     }
     setConfirmClear(false);
-    setBusy(true);
-    setError(null);
-    try {
+    void run(async () => {
       await api.clearOfflineManifest();
       setVerified({});
       await offline.refresh();
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
-  const prune = async () => {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
+  const prune = () =>
+    void run(async () => {
       const dropped = await api.pruneOfflineCache();
       setNotice(
         dropped === 0
@@ -77,159 +78,90 @@ export default function Offline() {
           : `Removed ${dropped} entr${dropped === 1 ? "y" : "ies"} whose file was missing.`,
       );
       await offline.refresh();
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const removeEntry = async (packageId: string, backend: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.removeOfflineEntry(packageId, backend);
-      await offline.refresh();
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
+    <>
       <PageHeader
-        title="Offline Mode"
-        subtitle="Cached installers for updating systems without internet access"
+        title="Offline cache"
+        subtitle={`Installers kept on disk, for updating a machine without internet. ${entries.length} cached · ${formatSize(status?.cache_size_bytes ?? 0)}.`}
         actions={
-          <RefreshButton onClick={() => void offline.refresh()} spinning={offline.loading} />
+          <Button
+            onClick={() => void offline.refresh()}
+            busy={offline.loading}
+            icon={<RefreshCw className="w-4 h-4" />}
+          >
+            Refresh
+          </Button>
         }
       />
 
       {error && <ErrorBar message={error} />}
       {notice && <SuccessBar message={notice} />}
 
-      <ResourceView resource={offline} loadingLabel="Checking cache...">
-        <div className="space-y-4">
-          {/* Be straight about why this is usually empty rather than implying
-              a download is happening that never was. */}
-          <div className="text-xs text-muted bg-surface rounded-lg px-4 py-3 border border-line">
-            The cache holds installers already downloaded to disk so they can be applied on a
-            machine with no internet. Odysync does not yet populate it automatically from a
-            scan — package managers do not expose a direct installer URL — so entries appear
-            here only for downloads that were explicitly cached.
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <StatCard
-              icon={<WifiOff className="w-5 h-5" />}
-              value={String(status?.entry_count ?? entries.length)}
-              label="Cached entries"
-              glow=""
-            />
-            <StatCard
-              icon={<HardDrive className="w-5 h-5" />}
-              value={formatSize(status?.cache_size_bytes ?? 0)}
-              label="Cache size on disk"
-              color="text-info"
-              glow=""
-            />
-          </div>
-
-          {entries.length > 0 ? (
-            <>
-              <div className="flex gap-3 flex-wrap">
-                <motion.button
-                  type="button"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={verify}
-                  disabled={verifying || busy}
-                  className="px-4 py-2 rounded-lg border border-accent/30 text-accent text-sm font-medium hover:bg-accent/10 transition-all disabled:opacity-50"
-                >
-                  {verifying ? "Verifying..." : "Verify Integrity"}
-                </motion.button>
-                <motion.button
-                  type="button"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={prune}
-                  disabled={busy || verifying}
-                  className="px-4 py-2 rounded-lg border border-line text-muted text-sm font-medium hover:text-accent hover:border-accent/30 transition-all disabled:opacity-50"
-                  title="Remove entries whose installer file is no longer on disk"
-                >
+      <ResourceView resource={offline} loadingLabel="Checking the cache…">
+        <Card
+          padded={false}
+          title="Cached installers"
+          description="Each file's code signature is checked when it is cached; a signature that does not validate is refused."
+          actions={
+            entries.length > 0 ? (
+              <>
+                <Button size="sm" onClick={() => void verify()} busy={verifying} disabled={busy} icon={<ShieldCheck className="w-3.5 h-3.5" />}>
+                  Verify
+                </Button>
+                <Button size="sm" variant="ghost" onClick={prune} disabled={busy || verifying}>
                   Prune missing
-                </motion.button>
-                <motion.button
-                  type="button"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={clearAll}
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg border border-danger/30 text-danger text-sm font-medium hover:bg-danger/10 transition-all disabled:opacity-50"
-                >
-                  {confirmClear ? "Confirm — delete all cached installers" : "Clear All"}
-                </motion.button>
-              </div>
-
-              <div className="space-y-1">
-                {entries.map((e, i) => {
-                  const v = verified[key(e.backend, e.package_id)];
-                  return (
-                    <motion.div
-                      key={key(e.backend, e.package_id)}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: Math.min(i * 0.02, 0.3) }}
-                      className="flex items-center gap-3 p-3 rounded-lg bg-surface border border-line text-xs"
-                    >
-                      {v !== undefined &&
-                        (v ? (
-                          <CheckCircle
-                            className="w-4 h-4 text-success flex-shrink-0"
-                            aria-label="Checksum verified"
-                          />
-                        ) : (
-                          <XCircle
-                            className="w-4 h-4 text-danger flex-shrink-0"
-                            aria-label="Checksum mismatch or file missing"
-                          />
-                        ))}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-fg truncate">
-                            {e.package_id}
-                          </span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-canvas text-muted font-mono flex-shrink-0">
-                            {e.backend}
-                          </span>
-                        </div>
-                        <div className="text-faint mt-0.5 truncate">
-                          v{e.version} · {formatSize(e.size_bytes)} · {formatDate(e.cached_at)}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void removeEntry(e.package_id, e.backend)}
-                        disabled={busy}
-                        className="text-danger hover:underline flex-shrink-0 disabled:opacity-50"
-                      >
-                        Remove
-                      </button>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            </>
+                </Button>
+                <Button size="sm" variant={confirmClear ? "danger" : "ghost"} onClick={clearAll} disabled={busy} icon={<Trash2 className="w-3.5 h-3.5" />}>
+                  {confirmClear ? "Delete all?" : "Clear"}
+                </Button>
+              </>
+            ) : undefined
+          }
+        >
+          {entries.length === 0 ? (
+            <div className="border-t border-line">
+              <EmptyState
+                icon={<HardDriveDownload />}
+                title="Nothing cached"
+                hint="Most update sources download and verify inside their own process, so there is usually no installer file to keep. Entries appear here only for downloads cached on purpose."
+              />
+            </div>
           ) : (
-            <EmptyState
-              icon={<WifiOff className="w-12 h-12" />}
-              title="No cached installers."
-              hint="Downloaded installers are stored here so they can be applied offline."
-            />
+            <ul className="divide-y divide-line border-t border-line">
+              {entries.map((e) => {
+                const v = verified[key(e.backend, e.package_id)];
+                return (
+                  <li key={key(e.backend, e.package_id)} className="flex items-center gap-3 px-5 py-3">
+                    {v === true && <CheckCircle2 className="w-4 h-4 text-success" aria-label="Checksum verified" />}
+                    {v === false && <XCircle className="w-4 h-4 text-danger" aria-label="Checksum mismatch or file missing" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-fg truncate">{e.package_id}</div>
+                      <div className="text-sm text-muted">
+                        {e.backend} · v{e.version} · {formatSize(e.size_bytes)} · {formatDate(e.cached_at)}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          await api.removeOfflineEntry(e.package_id, e.backend);
+                          await offline.refresh();
+                        })
+                      }
+                    >
+                      Remove
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
           )}
-        </div>
+        </Card>
       </ResourceView>
-    </div>
+    </>
   );
 }

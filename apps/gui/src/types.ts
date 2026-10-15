@@ -146,22 +146,27 @@ export interface HistoryEntryDto {
 
 export interface GpuInfoDto {
   name: string;
-  driver_version: string;
   vendor: string;
+  driver_version: string | null;
 }
 
 export interface DiskInfoDto {
-  name: string;
-  size_gb: number;
+  /** Drive letter or mount point. */
+  mount: string;
+  label: string | null;
   filesystem: string;
+  size_bytes: number;
+  free_bytes: number;
 }
 
+/** Mirrors `SystemReport` in `odysync_backends::system_info`. */
 export interface HardwareInfoDto {
-  cpu: string;
-  cpu_cores: number;
-  total_memory_gb: number;
   os: string;
-  gpu: GpuInfoDto[];
+  machine: string | null;
+  cpu: string;
+  cpu_threads: number;
+  memory_bytes: number;
+  gpus: GpuInfoDto[];
   disks: DiskInfoDto[];
 }
 

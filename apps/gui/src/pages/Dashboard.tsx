@@ -9,7 +9,13 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useStore } from "../store";
-import { Badge, Button, Card, PageHeader, formatSize } from "../components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  PageHeader,
+} from "../components/ui";
+import { formatSize } from "../format";
 import type { Tab } from "../nav";
 
 export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
