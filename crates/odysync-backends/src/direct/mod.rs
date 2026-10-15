@@ -364,6 +364,14 @@ pub mod windows_apply {
 
     use super::*;
 
+    /// A digest the publisher published for a download.
+    #[derive(Debug, Clone, Copy)]
+    pub enum ExpectedDigest<'a> {
+        Sha256(&'a str),
+        /// Microsoft publishes SHA-512 for .NET downloads.
+        Sha512(&'a str),
+    }
+
     /// `FILE_SHARE_READ`: others may read the file while it is held open, but
     /// not write to it, rename it or delete it.
     const FILE_SHARE_READ: u32 = 0x0000_0001;
@@ -378,7 +386,7 @@ pub mod windows_apply {
     /// Shared by everything that runs an installer Odysync downloaded itself.
     pub async fn lock_and_verify(
         file: &Path,
-        expected_sha256: Option<&str>,
+        expected_digest: Option<ExpectedDigest<'_>>,
         expected_signer: &str,
         name: &str,
     ) -> Result<std::fs::File> {
@@ -387,34 +395,40 @@ pub mod windows_apply {
             .share_mode(FILE_SHARE_READ)
             .open(file)?;
         let reader = lock.try_clone()?;
-        let digest = tokio::task::spawn_blocking(move || -> std::io::Result<String> {
-            use std::io::Read;
-            let mut reader = std::io::BufReader::with_capacity(1 << 20, reader);
-            let mut hasher = Sha256::new();
-            let mut buf = vec![0u8; 1 << 20];
-            loop {
-                let n = reader.read(&mut buf)?;
-                if n == 0 {
-                    break;
+        let (sha256, sha512) =
+            tokio::task::spawn_blocking(move || -> std::io::Result<(String, String)> {
+                use std::io::Read;
+                let mut reader = std::io::BufReader::with_capacity(1 << 20, reader);
+                let mut h256 = Sha256::new();
+                let mut h512 = sha2::Sha512::new();
+                let mut buf = vec![0u8; 1 << 20];
+                loop {
+                    let n = reader.read(&mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    h256.update(&buf[..n]);
+                    h512.update(&buf[..n]);
                 }
-                hasher.update(&buf[..n]);
-            }
-            Ok(hex::encode(hasher.finalize()))
-        })
-        .await
-        .map_err(|e| Error::Io(std::io::Error::other(e)))??;
+                Ok((hex::encode(h256.finalize()), hex::encode(h512.finalize())))
+            })
+            .await
+            .map_err(|e| Error::Io(std::io::Error::other(e)))??;
 
         let refuse = |detail: String| Error::Verification {
             package: name.to_string(),
             detail,
         };
 
-        if let Some(expected) = expected_sha256 {
-            if !digest.eq_ignore_ascii_case(expected.trim()) {
-                return Err(refuse(format!(
-                    "SHA-256 mismatch: expected {expected}, got {digest}"
-                )));
-            }
+        let (algorithm, expected, actual) = match expected_digest {
+            None => ("", "", ""),
+            Some(ExpectedDigest::Sha256(e)) => ("SHA-256", e, sha256.as_str()),
+            Some(ExpectedDigest::Sha512(e)) => ("SHA-512", e, sha512.as_str()),
+        };
+        if !algorithm.is_empty() && !actual.eq_ignore_ascii_case(expected.trim()) {
+            return Err(refuse(format!(
+                "{algorithm} mismatch: expected {expected}, got {actual}"
+            )));
         }
 
         match odysync_verify::verify_signature(file).await {
@@ -542,8 +556,13 @@ pub mod windows_apply {
         http::download(client, &release.url, file, |_, _| {}).await?;
 
         // 3–5. Lock, re-hash, check the hash and the publisher's signature.
-        let lock =
-            lock_and_verify(file, release.sha256.as_deref(), &entry.signer, &entry.name).await?;
+        let lock = lock_and_verify(
+            file,
+            release.sha256.as_deref().map(ExpectedDigest::Sha256),
+            &entry.signer,
+            &entry.name,
+        )
+        .await?;
 
         let file_arg = file.to_string_lossy().to_string();
         let (program, args): (String, Vec<String>) = match entry.installer {
@@ -582,7 +601,7 @@ pub mod windows_apply {
 
 #[cfg(all(test, windows))]
 mod verify_tests {
-    use super::windows_apply::lock_and_verify;
+    use super::windows_apply::{lock_and_verify, ExpectedDigest};
     use std::path::PathBuf;
 
     /// A Microsoft-signed file every Windows machine has, copied somewhere
@@ -615,7 +634,7 @@ mod verify_tests {
         let lock = rt()
             .block_on(lock_and_verify(
                 &file,
-                Some(&sha),
+                Some(ExpectedDigest::Sha256(&sha)),
                 "Microsoft Windows",
                 "test",
             ))
@@ -642,12 +661,22 @@ mod verify_tests {
         let err = rt()
             .block_on(lock_and_verify(
                 &file,
-                Some(&"0".repeat(64)),
+                Some(ExpectedDigest::Sha256(&"0".repeat(64))),
                 "Microsoft Windows",
                 "test",
             ))
             .expect_err("wrong hash");
         assert!(err.to_string().contains("SHA-256 mismatch"), "{err}");
+
+        let err = rt()
+            .block_on(lock_and_verify(
+                &file,
+                Some(ExpectedDigest::Sha512(&"0".repeat(128))),
+                "Microsoft Windows",
+                "test",
+            ))
+            .expect_err("wrong SHA-512");
+        assert!(err.to_string().contains("SHA-512 mismatch"), "{err}");
     }
 
     #[test]

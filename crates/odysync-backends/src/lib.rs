@@ -11,6 +11,8 @@ pub mod apt;
 pub mod autostart;
 pub mod chocolatey;
 pub mod cleanup;
+pub mod components;
+pub mod devices;
 pub mod diagnostics;
 pub mod direct;
 pub mod dnf;
