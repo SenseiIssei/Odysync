@@ -112,7 +112,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Keyed by runner image: objects compiled against Ubuntu 24.04's glibc
+      # do not link on 22.04, and the default key does not tell them apart.
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
 
       - uses: actions/setup-node@v4
         with:
