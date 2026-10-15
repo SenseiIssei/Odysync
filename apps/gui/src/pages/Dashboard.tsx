@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Brush,
   CheckCircle2,
+  Loader2,
   MemoryStick,
   Package,
   RefreshCw,
@@ -32,7 +33,9 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
     .filter((c) => c.selected_by_default && !c.error)
     .reduce((sum, c) => sum + c.bytes, 0);
   const outdatedRuntimes = components.data.filter((c) => c.state === "outdated").length;
-  const findings = security.data?.findings ?? [];
+  // "info" entries are an inventory (autostarts, listeners, extensions), not
+  // problems; the Security page lists them separately and so does this tile.
+  const findings = (security.data?.findings ?? []).filter((f) => f.severity !== "info");
   const serious = findings.filter((f) => f.severity === "critical" || f.severity === "high");
   const sources = backends.data.filter((b) => b.available && b.enabled);
 
@@ -64,10 +67,16 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
         <div className="flex items-center gap-4 min-w-0">
           <div
             className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
-              ready.length > 0 ? "bg-accent/12 text-accent" : "bg-success/12 text-success"
+              !scanned
+                ? "bg-raised text-muted"
+                : ready.length > 0
+                  ? "bg-accent/12 text-accent"
+                  : "bg-success/12 text-success"
             }`}
           >
-            {ready.length > 0 ? (
+            {!scanned ? (
+              <Loader2 className="w-6 h-6 animate-spin" />
+            ) : ready.length > 0 ? (
               <Package className="w-6 h-6" />
             ) : (
               <CheckCircle2 className="w-6 h-6" />
