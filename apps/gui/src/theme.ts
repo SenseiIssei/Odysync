@@ -13,6 +13,12 @@ export type ResolvedTheme = "light" | "dark";
 const KEY = "odysync.theme";
 
 function readChoice(): ThemeChoice {
+  // `?theme=light` pins a theme for the browser demo and the README
+  // screenshots; the app itself never has a query string.
+  if (typeof window !== "undefined") {
+    const forced = new URLSearchParams(window.location.search).get("theme");
+    if (forced === "light" || forced === "dark") return forced;
+  }
   try {
     const v = localStorage.getItem(KEY);
     return v === "light" || v === "dark" ? v : "system";

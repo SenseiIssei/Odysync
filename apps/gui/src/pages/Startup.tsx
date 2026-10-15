@@ -10,8 +10,8 @@ import {
   ErrorBar,
   PageHeader,
   Switch,
-  errorText,
 } from "../components/ui";
+import { errorText } from "../format";
 
 export default function Startup() {
   const { startup, sysInfo } = useStore();

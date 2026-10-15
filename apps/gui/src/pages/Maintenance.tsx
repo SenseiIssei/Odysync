@@ -18,9 +18,8 @@ import {
   PageHeader,
   SuccessBar,
   WarningBar,
-  errorText,
-  formatSize,
 } from "../components/ui";
+import { errorText, formatSize } from "../format";
 import type {
   CleanupItemDto,
   CleanupResultDto,

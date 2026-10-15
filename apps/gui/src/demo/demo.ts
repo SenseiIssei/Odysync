@@ -164,17 +164,18 @@ const history: HistoryEntryDto[] = [
 ];
 
 const hardware: HardwareInfoDto = {
-  cpu: "AMD Ryzen 9 9950X3D 16-Core Processor",
-  cpu_cores: 32,
-  total_memory_gb: 64,
   os: "Windows 11 Pro 25H2 (build 26200)",
-  gpu: [
-    { name: "NVIDIA GeForce RTX 4080", driver_version: "32.0.16.1692", vendor: "NVIDIA" },
-    { name: "AMD Radeon(TM) Graphics", driver_version: "32.0.21042.62", vendor: "AMD" },
+  machine: "Micro-Star International Co., Ltd. MS-7E12",
+  cpu: "AMD Ryzen 9 9950X3D 16-Core Processor",
+  cpu_threads: 32,
+  memory_bytes: 64 * GB,
+  gpus: [
+    { name: "NVIDIA GeForce RTX 4080", vendor: "NVIDIA", driver_version: "32.0.16.1692" },
+    { name: "AMD Radeon(TM) Graphics", vendor: "Advanced Micro Devices, Inc.", driver_version: "32.0.21042.62" },
   ],
   disks: [
-    { name: "Samsung SSD 990 PRO 2TB", size_gb: 1863, filesystem: "NTFS" },
-    { name: "WD Black SN850X 4TB", size_gb: 3726, filesystem: "NTFS" },
+    { mount: "C:", label: "System", filesystem: "NTFS", size_bytes: Math.round(1863 * GB), free_bytes: Math.round(612 * GB) },
+    { mount: "D:", label: "Games", filesystem: "NTFS", size_bytes: Math.round(3726 * GB), free_bytes: Math.round(1410 * GB) },
   ],
 };
 

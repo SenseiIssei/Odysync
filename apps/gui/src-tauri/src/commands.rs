@@ -618,8 +618,32 @@ pub async fn list_maintenance() -> Result<Vec<String>, String> {
     ])
 }
 
+/// The `odysync` command-line binary that ships with the app.
+///
+/// Release builds bundle it as a resource (see `release-*.conf.json`); a
+/// development build finds it next to the GUI in `target/`.
+fn bundled_cli(app: &AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    let name = if cfg!(windows) {
+        "odysync.exe"
+    } else {
+        "odysync"
+    };
+    let mut candidates = Vec::new();
+    if let Ok(dir) = app.path().resource_dir() {
+        candidates.push(dir.join(name));
+    }
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+    {
+        candidates.push(dir.join(name));
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
 #[tauri::command]
-pub async fn create_schedule(request: ScheduleRequest) -> Result<String, String> {
+pub async fn create_schedule(app: AppHandle, request: ScheduleRequest) -> Result<String, String> {
     use odysync_backends::scheduler::{create_schedule, ScheduleFrequency, ScheduleSpec};
 
     let freq = match request.frequency.as_str() {
@@ -634,11 +658,18 @@ pub async fn create_schedule(request: ScheduleRequest) -> Result<String, String>
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| odysync_backends::scheduler::DEFAULT_TASK_NAME.to_string());
 
+    let cli = bundled_cli(&app).ok_or_else(|| {
+        "the odysync command-line tool is not installed next to the app, so a schedule \
+         would have nothing to run"
+            .to_string()
+    })?;
+
     let spec = ScheduleSpec {
         frequency: freq,
         time: request.time,
         task_name: task_name.clone(),
         extra_args: Vec::new(),
+        program: Some(cli.to_string_lossy().to_string()),
     };
 
     create_schedule(&spec).await.map_err(|e| e.to_string())?;
@@ -751,29 +782,7 @@ pub async fn clear_update_history() -> Result<(), String> {
 
 // ── Hardware Info ────────────────────────────────────────────────────────────
 
-#[derive(Serialize)]
-pub struct HardwareInfoDto {
-    pub cpu: String,
-    pub cpu_cores: u32,
-    pub total_memory_gb: f64,
-    pub os: String,
-    pub gpu: Vec<GpuInfoDto>,
-    pub disks: Vec<DiskInfoDto>,
-}
-
-#[derive(Serialize)]
-pub struct GpuInfoDto {
-    pub name: String,
-    pub driver_version: String,
-    pub vendor: String,
-}
-
-#[derive(Serialize)]
-pub struct DiskInfoDto {
-    pub name: String,
-    pub size_gb: f64,
-    pub filesystem: String,
-}
+pub use odysync_backends::system_info::SystemReport as HardwareInfoDto;
 
 /// Parse a `ConvertTo-Json` payload that may be a single object or an array.
 ///
@@ -797,155 +806,7 @@ fn parse_ps_json<T: serde::de::DeserializeOwned>(stdout: &str) -> Vec<T> {
 #[tauri::command]
 pub async fn get_hardware_info() -> Result<HardwareInfoDto, String> {
     tracing::info!("fetching hardware info");
-    let os = odysync_core::platform::os_label().to_string();
-
-    let cpu_cores = std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(1);
-
-    // No `return`: on non-Windows the block below is compiled out, so this is
-    // the tail expression and an explicit return is a clippy error under
-    // `-D warnings`.
-    #[cfg(not(windows))]
-    {
-        Ok(HardwareInfoDto {
-            cpu: "Unknown".to_string(),
-            cpu_cores,
-            total_memory_gb: 0.0,
-            os,
-            gpu: Vec::new(),
-            disks: Vec::new(),
-        })
-    }
-
-    #[cfg(windows)]
-    {
-        let timeout = std::time::Duration::from_secs(20);
-
-        // One PowerShell process for everything: four separate spawns took
-        // several seconds and made the Hardware page the slowest in the app.
-        let script = r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$cpu  = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
-$mem  = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
-$gpu  = @(Get-CimInstance Win32_VideoController |
-          Select-Object Name, DriverVersion, AdapterCompatibility)
-$disk = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' |
-          Select-Object DeviceID, VolumeName, Size, FileSystem)
-[PSCustomObject]@{
-    Cpu     = $cpu
-    MemoryBytes = [string]$mem
-    Gpu     = $gpu
-    Disks   = $disk
-} | ConvertTo-Json -Depth 4 -Compress
-"#;
-
-        #[derive(serde::Deserialize)]
-        #[serde(rename_all = "PascalCase")]
-        struct HardwareJson {
-            cpu: Option<String>,
-            /// Serialized as a string: TotalPhysicalMemory exceeds the range
-            /// PowerShell's JSON writer represents exactly as a number.
-            memory_bytes: Option<String>,
-            #[serde(default)]
-            gpu: Vec<Win32Gpu>,
-            #[serde(default)]
-            disks: Vec<Win32Disk>,
-        }
-
-        let raw = match proc::powershell(script, timeout).await {
-            Ok(o) => o.stdout,
-            Err(e) => {
-                tracing::warn!(error = %e, "hardware query failed");
-                return Ok(HardwareInfoDto {
-                    cpu: "Unknown".to_string(),
-                    cpu_cores,
-                    total_memory_gb: 0.0,
-                    os,
-                    gpu: Vec::new(),
-                    disks: Vec::new(),
-                });
-            }
-        };
-
-        let parsed: HardwareJson = serde_json::from_str(raw.trim()).unwrap_or(HardwareJson {
-            cpu: None,
-            memory_bytes: None,
-            gpu: Vec::new(),
-            disks: Vec::new(),
-        });
-
-        let total_memory_gb = parsed
-            .memory_bytes
-            .as_deref()
-            .and_then(|s| s.trim().parse::<f64>().ok())
-            .map(|b| (b / 1_073_741_824.0 * 100.0).round() / 100.0)
-            .unwrap_or(0.0);
-
-        let gpu = parsed
-            .gpu
-            .into_iter()
-            .map(|g| GpuInfoDto {
-                name: g.name.unwrap_or_default(),
-                driver_version: g.driver_version.unwrap_or_default(),
-                vendor: g.adapter_compatibility.unwrap_or_default(),
-            })
-            .filter(|g| !g.name.is_empty())
-            .collect();
-
-        let disks = parsed
-            .disks
-            .into_iter()
-            .map(|d| DiskInfoDto {
-                name: format!(
-                    "{} {}",
-                    d.device_id.unwrap_or_default(),
-                    d.volume_name.unwrap_or_default().trim()
-                )
-                .trim()
-                .to_string(),
-                size_gb: d
-                    .size
-                    .and_then(|s| s.as_f64())
-                    .map(|s| (s / 1_073_741_824.0 * 100.0).round() / 100.0)
-                    .unwrap_or(0.0),
-                filesystem: d.filesystem.unwrap_or_default(),
-            })
-            .collect();
-
-        Ok(HardwareInfoDto {
-            cpu: parsed
-                .cpu
-                .map(|c| c.trim().to_string())
-                .filter(|c| !c.is_empty())
-                .unwrap_or_else(|| "Unknown".to_string()),
-            cpu_cores,
-            total_memory_gb,
-            os,
-            gpu,
-            disks,
-        })
-    }
-}
-
-#[cfg(windows)]
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct Win32Gpu {
-    name: Option<String>,
-    driver_version: Option<String>,
-    adapter_compatibility: Option<String>,
-}
-
-#[cfg(windows)]
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct Win32Disk {
-    device_id: Option<String>,
-    volume_name: Option<String>,
-    /// Number or string depending on magnitude, so kept as a raw JSON value.
-    size: Option<serde_json::Value>,
-    filesystem: Option<String>,
+    Ok(odysync_backends::system_info::report().await)
 }
 
 // ── Installed Packages ───────────────────────────────────────────────────────
