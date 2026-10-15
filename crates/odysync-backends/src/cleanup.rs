@@ -26,6 +26,7 @@
 //! fails partway through is worse than sending the user to the tool that works.
 
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::time::Duration;
 
 use odysync_core::cleanup::{
@@ -866,6 +867,7 @@ pub async fn run_disk_optimization(_plan: &[VolumeOptimization]) -> Vec<String> 
 
 /// Reuse the security module's tolerant PowerShell JSON parsing, which handles
 /// a single object being emitted where an array was expected.
+#[cfg(windows)]
 fn odysync_backends_parse_json<T: serde::de::DeserializeOwned>(stdout: &str) -> Vec<T> {
     crate::security::parse_ps_json(stdout)
 }
@@ -914,21 +916,15 @@ mod tests {
     #[test]
     fn the_prefix_strategy_matches_only_the_named_files() {
         let strategy = Strategy::Prefixed(&["thumbcache_", "iconcache_"]);
-        assert!(matches_strategy(
-            strategy,
-            Path::new(r"C:\x\thumbcache_256.db")
-        ));
-        assert!(matches_strategy(
-            strategy,
-            Path::new(r"C:\x\iconcache_32.db")
-        ));
+        // Built with `join` so the file name is the last component on every
+        // platform; a `C:\x\...` literal is a single file name on Unix.
+        let dir = Path::new("x");
+        assert!(matches_strategy(strategy, &dir.join("thumbcache_256.db")));
+        assert!(matches_strategy(strategy, &dir.join("iconcache_32.db")));
         // The Explorer directory holds more than caches, and clearing all of
         // it would take state the user did not offer up.
-        assert!(!matches_strategy(strategy, Path::new(r"C:\x\Settings.dat")));
-        assert!(!matches_strategy(
-            strategy,
-            Path::new(r"C:\x\NotAThumbcache.db")
-        ));
+        assert!(!matches_strategy(strategy, &dir.join("Settings.dat")));
+        assert!(!matches_strategy(strategy, &dir.join("NotAThumbcache.db")));
     }
 
     #[test]

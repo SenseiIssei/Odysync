@@ -4,7 +4,6 @@ members = [
     "crates/odysync-core",
     "crates/odysync-verify",
     "crates/odysync-backends",
-    "crates/odysync-version-source",
     "crates/odysync-cli",
     "apps/gui/src-tauri",
 ]
@@ -12,16 +11,24 @@ members = [
 [workspace.package]
 version = "2.2.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.90"
 license = "MIT"
 repository = "https://github.com/SenseiIssei/Odysync"
 authors = ["Jakob (SenseiIssei)"]
+
+# The MSVC linker reports that it wrote an import library for every binary,
+# and rustc 1.9x surfaces that as a `linker_messages` warning. Under CI's
+# `-D warnings` that informational line would fail the Windows build, so it
+# is silenced once here rather than per crate. `unknown_lints` keeps older
+# compilers, which do not know the lint, from warning about its name.
+[workspace.lints.rust]
+unknown_lints = "allow"
+linker_messages = "allow"
 
 [workspace.dependencies]
 odysync-core = { path = "crates/odysync-core" }
 odysync-verify = { path = "crates/odysync-verify" }
 odysync-backends = { path = "crates/odysync-backends" }
-odysync-version-source = { path = "crates/odysync-version-source" }
 
 anyhow = "1"
 thiserror = "2"
@@ -32,13 +39,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
-directories = "5"
+directories = "6"
 async-trait = "0.1"
-zip = { version = "2", default-features = false, features = ["deflate"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-scraper = "0.20"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 [profile.release]
 opt-level = "z"

@@ -1124,9 +1124,8 @@ pub struct OfflineManifestEntryDto {
 
 /// Status of the offline *installer* cache.
 ///
-/// This used to read `version-cache/version_cache.json`, which belongs to
-/// `odysync-version-source` and holds version metadata, not installers — so the
-/// count never matched the list rendered directly underneath it.
+/// Counts what is actually in the installer manifest, so the number always
+/// matches the list rendered directly underneath it.
 #[tauri::command]
 pub async fn get_offline_cache_status() -> Result<OfflineCacheStatusDto, String> {
     let manifest = odysync_backends::offline::CacheManifest::load_async().await;
