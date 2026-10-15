@@ -92,7 +92,7 @@ export default function Schedule() {
               id="freq"
               value={frequency}
               onChange={(e) => setFrequency(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+              className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm focus:border-accent"
             >
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
@@ -108,7 +108,7 @@ export default function Schedule() {
               type="time"
               value={time}
               onChange={(e) => setTime(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+              className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm focus:border-accent"
             />
           </div>
 
@@ -121,7 +121,7 @@ export default function Schedule() {
               type="text"
               value={taskName}
               onChange={(e) => setTaskName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+              className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm focus:border-accent"
             />
           </div>
 
@@ -129,8 +129,8 @@ export default function Schedule() {
             <span
               className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                 scheduled
-                  ? "bg-success/20 text-success glow-green"
-                  : "bg-cyber-bg text-cyber-text-faint"
+                  ? "bg-success/20 text-success"
+                  : "bg-canvas text-faint"
               }`}
             >
               {statusLabel}
@@ -144,7 +144,7 @@ export default function Schedule() {
               whileTap={{ scale: 0.98 }}
               onClick={create}
               disabled={busy || !taskName.trim()}
-              className="px-5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50 transition-all glow-cyan"
+              className="px-5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50 transition-all"
             >
               {busy ? "Working..." : "Create Schedule"}
             </motion.button>
@@ -154,7 +154,7 @@ export default function Schedule() {
               whileTap={{ scale: 0.98 }}
               onClick={remove}
               disabled={busy || !taskName.trim()}
-              className="px-5 py-2 rounded-lg border border-cyber-border text-sm font-medium hover:bg-cyber-surface-2 disabled:opacity-50 transition-all"
+              className="px-5 py-2 rounded-lg border border-line text-sm font-medium hover:bg-raised disabled:opacity-50 transition-all"
             >
               Remove
             </motion.button>

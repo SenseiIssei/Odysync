@@ -45,12 +45,12 @@ export default function Packages() {
           placeholder="Search packages..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-cyber-border bg-cyber-surface text-sm focus:border-accent"
+          className="flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-line bg-surface text-sm focus:border-accent"
         />
         <select
           value={backendFilter}
           onChange={(e) => setBackendFilter(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-cyber-border bg-cyber-surface text-sm focus:border-accent"
+          className="px-3 py-2 rounded-lg border border-line bg-surface text-sm focus:border-accent"
         >
           <option value="">All backends</option>
           {backendNames.map((b) => (
@@ -77,7 +77,7 @@ export default function Packages() {
 
       {all.length > 0 && (
         <>
-          <div className="text-xs text-cyber-text-dim">
+          <div className="text-xs text-muted">
             Showing {filtered.length} of {all.length} packages
             {packages.loading && " (refreshing...)"}
           </div>
@@ -88,19 +88,19 @@ export default function Packages() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: Math.min(i * 0.005, 0.3) }}
-                className="flex items-center gap-3 p-3 rounded-lg bg-cyber-surface border border-cyber-border text-xs hover:border-cyber-border-bright transition-all"
+                className="flex items-center gap-3 p-3 rounded-lg bg-surface border border-line text-xs hover:border-line-strong transition-all"
               >
                 <PackageIcon className="w-4 h-4 text-accent flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-cyber-text truncate">{p.name}</div>
+                  <div className="font-medium text-fg truncate">{p.name}</div>
                   {p.id !== p.name && (
-                    <div className="text-cyber-text-faint font-mono truncate">{p.id}</div>
+                    <div className="text-faint font-mono truncate">{p.id}</div>
                   )}
                 </div>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyber-bg text-cyber-text-dim font-mono flex-shrink-0">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-canvas text-muted font-mono flex-shrink-0">
                   {p.backend}
                 </span>
-                <span className="text-cyber-text-dim font-mono flex-shrink-0">
+                <span className="text-muted font-mono flex-shrink-0">
                   {p.version}
                 </span>
               </motion.div>

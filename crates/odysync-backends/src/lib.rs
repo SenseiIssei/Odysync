@@ -43,6 +43,7 @@ pub mod scoop;
 pub mod security;
 pub mod self_update;
 pub mod snap;
+pub mod startup_items;
 // Same as `gpu`: installs the guest additions through winget, so it cannot
 // compile without `crate::winget`. Its only use site is already cfg(windows).
 #[cfg(windows)]

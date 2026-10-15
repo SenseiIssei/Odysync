@@ -19,19 +19,19 @@ export default function About() {
   return (
     <div className="max-w-2xl mx-auto space-y-4">
       <div className="text-center py-8">
-        <Shield className="w-16 h-16 mx-auto mb-4 text-accent text-glow-cyan" />
-        <h2 className="text-2xl font-bold text-glow-cyan">Odysync</h2>
-        <p className="text-sm text-cyber-text-dim mt-1">
+        <Shield className="w-16 h-16 mx-auto mb-4 text-accent" />
+        <h2 className="text-2xl font-bold">Odysync</h2>
+        <p className="text-sm text-muted mt-1">
           v{sysInfo.data?.version ?? "…"}
         </p>
-        <p className="text-xs text-cyber-text-faint mt-2">
+        <p className="text-xs text-faint mt-2">
           Safe, verified software and driver updates
         </p>
       </div>
 
-      <div className="gradient-border p-4 space-y-2">
+      <div className="border border-line p-4 space-y-2">
         <h3 className="text-sm font-bold text-accent">What&apos;s new</h3>
-        <div className="text-xs text-cyber-text-dim space-y-1 font-mono">
+        <div className="text-xs text-muted space-y-1 font-mono">
           {CHANGELOG.map((line) => (
             <div key={line}>
               <span className="text-success">+</span> {line}
@@ -41,7 +41,7 @@ export default function About() {
       </div>
 
       {sysInfo.data && (
-        <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4 text-xs space-y-1.5">
+        <div className="rounded-lg border border-line bg-surface p-4 text-xs space-y-1.5">
           <Row label="Operating system" value={sysInfo.data.os} />
           <Row label="Version" value={sysInfo.data.version} />
           <Row
@@ -51,7 +51,7 @@ export default function About() {
         </div>
       )}
 
-      <div className="text-center text-xs text-cyber-text-faint">
+      <div className="text-center text-xs text-faint">
         <p>Built with Tauri, React and Rust.</p>
         <p className="mt-1 select-text">github.com/SenseiIssei/Odysync</p>
       </div>
@@ -62,8 +62,8 @@ export default function About() {
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-cyber-text-dim">{label}</span>
-      <span className="text-cyber-text font-mono truncate">{value}</span>
+      <span className="text-muted">{label}</span>
+      <span className="text-fg font-mono truncate">{value}</span>
     </div>
   );
 }

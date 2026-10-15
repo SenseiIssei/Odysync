@@ -247,6 +247,12 @@ enum Command {
     /// Devices Windows reports as not working, with what each problem means.
     Devices,
 
+    /// Programs that start when you sign in. Turning one off is reversible.
+    Startup {
+        #[command(subcommand)]
+        action: Option<StartupAction>,
+    },
+
     /// List the largest files in your home folder. Reports only; deletes nothing.
     LargeFiles {
         /// How many files to list.
@@ -265,6 +271,14 @@ enum Command {
         #[arg(long)]
         apply: bool,
     },
+}
+
+#[derive(clap::Subcommand)]
+enum StartupAction {
+    /// Let an entry start again. NAME and LOCATION as `odysync startup` lists them.
+    Enable { name: String, location: String },
+    /// Stop an entry from starting, without removing it.
+    Disable { name: String, location: String },
 }
 
 #[derive(clap::Subcommand)]
@@ -818,6 +832,43 @@ async fn run(cli: Cli) -> Result<u8> {
                         Ok(1)
                     }
                 }
+            }
+        },
+
+        Command::Startup { action } => match action {
+            None => {
+                let items = odysync_backends::startup_items::list().await?;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&items)?);
+                } else if items.is_empty() {
+                    println!("Nothing starts automatically.");
+                } else {
+                    println!("{}", style.bold("Starts when you sign in\n"));
+                    for i in &items {
+                        let state = if i.enabled { "on " } else { "off" };
+                        println!(
+                            "  {}  {:<32} {}",
+                            if i.enabled {
+                                style.bold(state)
+                            } else {
+                                style.dim(state)
+                            },
+                            i.label.as_deref().unwrap_or(&i.name),
+                            style.dim(&format!("{}  [{}]", i.name, i.location))
+                        );
+                    }
+                }
+                Ok(0)
+            }
+            Some(StartupAction::Enable { name, location }) => {
+                odysync_backends::startup_items::set_enabled(&name, &location, true).await?;
+                println!("{name} will start when you sign in.");
+                Ok(0)
+            }
+            Some(StartupAction::Disable { name, location }) => {
+                odysync_backends::startup_items::set_enabled(&name, &location, false).await?;
+                println!("{name} no longer starts when you sign in. `odysync startup enable` undoes this.");
+                Ok(0)
             }
         },
 

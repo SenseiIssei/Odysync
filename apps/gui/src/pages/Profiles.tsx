@@ -76,7 +76,7 @@ export default function Profiles() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={() => setShowCreate((v) => !v)}
-              className="px-4 py-1.5 rounded-lg bg-accent/10 border border-accent/30 text-accent text-xs font-medium hover:bg-accent/20 transition-all glow-cyan"
+              className="px-4 py-1.5 rounded-lg bg-accent/10 border border-accent/30 text-accent text-xs font-medium hover:bg-accent/20 transition-all"
             >
               {showCreate ? "Cancel" : "New Profile"}
             </motion.button>
@@ -100,7 +100,7 @@ export default function Profiles() {
                   type="text"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm focus:border-accent"
                   placeholder="e.g. Gaming, Development, Minimal"
                 />
               </div>
@@ -113,7 +113,7 @@ export default function Profiles() {
                   value={newPackages}
                   onChange={(e) => setNewPackages(e.target.value)}
                   rows={4}
-                  className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm font-mono focus:border-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm font-mono focus:border-accent"
                   placeholder={"Mozilla.Firefox\nGit.Git\nMicrosoft.VisualStudioCode"}
                 />
               </div>
@@ -164,13 +164,13 @@ export default function Profiles() {
                   </button>
                 </div>
                 {p.packages.length === 0 ? (
-                  <p className="text-xs text-cyber-text-faint">No packages in this profile.</p>
+                  <p className="text-xs text-faint">No packages in this profile.</p>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
                     {p.packages.map((pkg) => (
                       <span
                         key={pkg}
-                        className="text-[10px] px-2 py-0.5 rounded-full bg-cyber-bg border border-cyber-border text-cyber-text-dim font-mono"
+                        className="text-[10px] px-2 py-0.5 rounded-full bg-canvas border border-line text-muted font-mono"
                       >
                         {pkg}
                       </span>

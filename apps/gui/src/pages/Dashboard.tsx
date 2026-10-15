@@ -1,224 +1,229 @@
-import { useState } from "react";
-import { motion } from "framer-motion";
+import type { ReactNode } from "react";
 import {
-  Cpu,
-  Download,
+  ArrowRight,
+  Brush,
+  CheckCircle2,
+  MemoryStick,
   Package,
-  PlayCircle,
   RefreshCw,
-  Rocket,
-  Shield,
-  Zap,
+  ShieldCheck,
 } from "lucide-react";
-import * as api from "../api";
 import { useStore } from "../store";
-import { Card, PageHeader, StatCard, errorText } from "../components/ui";
+import { Badge, Button, Card, PageHeader, formatSize } from "../components/ui";
 import type { Tab } from "../nav";
 
 export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
-  const { sysInfo, backends, scan, history, packages, backup } = useStore();
-  const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const { sysInfo, backends, scan, cleanup, devices, components, security, defender } =
+    useStore();
 
-  const scanResult = scan.data;
-  const updateCount = scanResult?.actionable.length ?? 0;
-  const availableCount = backends.data.filter((b) => b.available).length;
-  const busy = busyLabel !== null || scan.loading;
+  const result = scan.data;
+  const ready = result?.actionable ?? [];
+  const needsAdmin = (result?.skipped ?? []).filter((s) =>
+    s.reason.toLowerCase().includes("administrator"),
+  );
+  const scanned = scan.loadedAt !== null;
+  const reclaimable = cleanup.data
+    .filter((c) => c.selected_by_default && !c.error)
+    .reduce((sum, c) => sum + c.bytes, 0);
+  const outdatedRuntimes = components.data.filter((c) => c.state === "outdated").length;
+  const findings = security.data?.findings ?? [];
+  const serious = findings.filter((f) => f.severity === "critical" || f.severity === "high");
+  const sources = backends.data.filter((b) => b.available && b.enabled);
 
-  const quickScan = async () => {
-    setStatus("Scanning all backends...");
-    await scan.refresh();
-    // `scan.data` is stale in this closure; read the fresh error/count instead.
-    setStatus(null);
-  };
-
-  const applyAll = async (updates: NonNullable<typeof scanResult>["actionable"]) => {
-    setStatus(`Creating a restore point before installing ${updates.length} updates...`);
-    try {
-      await api.createBackup(`Odysync - before bulk update`).catch(() => {
-        setStatus("Restore point could not be created; continuing without one.");
-      });
-      setStatus(`Installing ${updates.length} updates...`);
-      const result = await api.apply({
-        updates,
-        dry_run: false,
-        restore_point: false,
-      });
-      setStatus(
-        `Done: ${result.updated} updated, ${result.failed} failed, ${result.skipped} skipped.` +
-          (result.reboot_required ? " A reboot is required." : ""),
-      );
-      await Promise.allSettled([
-        scan.refresh(),
-        history.refresh(),
-        packages.refresh(),
-        backup.refresh(),
-      ]);
-    } catch (e) {
-      setStatus(`Install failed: ${errorText(e)}`);
-    }
-  };
-
-  const installAll = async () => {
-    if (!scanResult || scanResult.actionable.length === 0) return;
-    setBusyLabel("install");
-    await applyAll(scanResult.actionable);
-    setBusyLabel(null);
-  };
-
-  const autoScanInstall = async () => {
-    setBusyLabel("auto");
-    setStatus("Auto mode: scanning...");
-    try {
-      const fresh = await api.scan();
-      scan.set(fresh);
-      if (fresh.actionable.length === 0) {
-        setStatus("Auto mode: nothing to do, everything is up to date.");
-      } else {
-        await applyAll(fresh.actionable);
-      }
-    } catch (e) {
-      setStatus(`Auto mode failed: ${errorText(e)}`);
-    }
-    setBusyLabel(null);
-  };
-
-  const stats = [
-    {
-      label: "Updates Available",
-      value: scan.loading && scan.loadedAt === null ? "..." : String(updateCount),
-      icon: <Package className="w-5 h-5" />,
-      color: "text-accent",
-      glow: "glow-cyan",
-    },
-    {
-      label: "Backends Active",
-      value: backends.loadedAt === null ? "..." : `${availableCount}/${backends.data.length}`,
-      icon: <Zap className="w-5 h-5" />,
-      color: "text-purple-neon",
-      glow: "glow-purple",
-    },
-    {
-      label: "System",
-      value: sysInfo.data?.os ?? "Detecting...",
-      icon: <Cpu className="w-5 h-5" />,
-      color: "text-success",
-      glow: "glow-green",
-    },
-    {
-      label: "Elevation",
-      value: sysInfo.data ? (sysInfo.data.elevated ? "Elevated" : "User") : "...",
-      icon: <Shield className="w-5 h-5" />,
-      color: sysInfo.data?.elevated ? "text-warning" : "text-cyber-text-dim",
-      glow: "",
-    },
-  ];
+  const lastScan = scan.loadedAt ? new Date(scan.loadedAt).toLocaleTimeString() : null;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <PageHeader title="Dashboard" subtitle="System overview at a glance" />
+    <>
+      <PageHeader
+        title="Overview"
+        subtitle={
+          sysInfo.data
+            ? `${sysInfo.data.os} · ${sysInfo.data.elevated ? "running as administrator" : "running as a standard user"}`
+            : "Looking at this machine…"
+        }
+        actions={
+          <Button
+            variant="secondary"
+            onClick={() => void scan.refresh()}
+            busy={scan.loading}
+            icon={<RefreshCw className="w-4 h-4" />}
+          >
+            {scan.loading ? "Scanning…" : "Scan now"}
+          </Button>
+        }
+      />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {stats.map((stat, i) => (
-          <StatCard key={stat.label} {...stat} delay={i * 0.05} />
-        ))}
-      </div>
-
-      <div className="flex flex-wrap gap-3">
-        <motion.button
-          type="button"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={quickScan}
-          disabled={busy}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-accent/10 border border-accent/30 text-accent font-medium text-sm hover:bg-accent/20 disabled:opacity-50 transition-all glow-cyan"
-        >
-          <RefreshCw className={`w-4 h-4 ${scan.loading ? "animate-spin" : ""}`} />
-          {scan.loading ? "Scanning..." : "Quick Scan"}
-        </motion.button>
-
-        <motion.button
-          type="button"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={installAll}
-          disabled={busy || updateCount === 0}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-success/10 border border-success/30 text-success font-medium text-sm hover:bg-success/20 disabled:opacity-50 transition-all"
-        >
-          <Download
-            className={`w-4 h-4 ${busyLabel === "install" ? "animate-bounce" : ""}`}
-          />
-          {busyLabel === "install" ? "Installing..." : `Install All (${updateCount})`}
-        </motion.button>
-
-        <motion.button
-          type="button"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={autoScanInstall}
-          disabled={busy}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-purple-neon/10 border border-purple-neon/30 text-purple-neon font-medium text-sm hover:bg-purple-neon/20 disabled:opacity-50 transition-all"
-        >
-          <Rocket className={`w-4 h-4 ${busyLabel === "auto" ? "animate-pulse" : ""}`} />
-          {busyLabel === "auto" ? "Auto Mode..." : "Auto Scan + Install"}
-        </motion.button>
-
-        <motion.button
-          type="button"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => onNavigate("updates")}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-cyber-surface border border-cyber-border text-cyber-text font-medium text-sm hover:border-accent/30 transition-all"
-        >
-          <Package className="w-4 h-4" />
-          View Updates
-        </motion.button>
-      </div>
-
-      {(status || scan.error) && (
-        <motion.div
-          initial={{ opacity: 0, y: -5 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex items-start gap-2 text-sm text-cyber-text-dim bg-cyber-surface border border-cyber-border rounded-lg px-4 py-3"
-        >
-          <PlayCircle className="w-4 h-4 text-accent flex-shrink-0 mt-0.5" />
-          <span className="break-words">{status ?? `Scan error: ${scan.error}`}</span>
-        </motion.div>
-      )}
-
-      <Card>
-        <h3 className="text-sm font-bold mb-3 flex items-center gap-2">
-          <Zap className="w-4 h-4 text-accent" />
-          Backend Status
-          {backends.loading && (
-            <RefreshCw className="w-3 h-3 animate-spin text-cyber-text-faint" />
-          )}
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-          {backends.data.length === 0 && (
-            <div className="text-xs text-cyber-text-faint col-span-full py-4 text-center">
-              {backends.loading ? "Detecting backends..." : "No backends detected."}
+      {/* The one thing that matters most, stated plainly. */}
+      <section className="rounded-xl border border-line bg-surface p-6 flex flex-wrap items-center justify-between gap-6">
+        <div className="flex items-center gap-4 min-w-0">
+          <div
+            className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+              ready.length > 0 ? "bg-accent/12 text-accent" : "bg-success/12 text-success"
+            }`}
+          >
+            {ready.length > 0 ? (
+              <Package className="w-6 h-6" />
+            ) : (
+              <CheckCircle2 className="w-6 h-6" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="text-lg font-semibold tracking-tight">
+              {!scanned
+                ? "Checking for updates…"
+                : ready.length === 0
+                  ? "Everything is up to date"
+                  : `${ready.length} update${ready.length === 1 ? "" : "s"} ready to install`}
             </div>
-          )}
-          {backends.data.map((b, i) => (
-            <motion.div
-              key={b.kind}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: Math.min(i * 0.02, 0.4) }}
-              className="flex items-center justify-between gap-2 text-xs px-3 py-2 rounded-lg bg-cyber-bg/50 border border-cyber-border"
-              title={b.available ? "Available" : "Not installed on this system"}
-            >
-              <span className="truncate text-cyber-text-dim">{b.name}</span>
-              <span
-                className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  b.available ? "bg-success glow-green" : "bg-cyber-text-faint"
-                }`}
-              />
-            </motion.div>
-          ))}
+            <div className="text-sm text-muted mt-0.5">
+              {scanned && needsAdmin.length > 0
+                ? `${needsAdmin.length} more need administrator rights. `
+                : ""}
+              {lastScan ? `Last checked at ${lastScan}.` : "This takes a few seconds."}
+            </div>
+          </div>
         </div>
+        {ready.length > 0 && (
+          <Button
+            variant="primary"
+            onClick={() => onNavigate("updates")}
+            icon={<ArrowRight className="w-4 h-4" />}
+          >
+            Review updates
+          </Button>
+        )}
+      </section>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Tile
+          icon={<MemoryStick className="w-4 h-4" />}
+          title="Drivers & runtimes"
+          onClick={() => onNavigate("drivers")}
+          value={
+            devices.data.length > 0
+              ? devices.data.length === 1 ? "1 device needs attention" : `${devices.data.length} devices need attention`
+              : "All devices working"
+          }
+          detail={
+            outdatedRuntimes > 0
+              ? `${outdatedRuntimes} runtime update${outdatedRuntimes === 1 ? "" : "s"} available`
+              : "Runtimes are current"
+          }
+          tone={devices.data.length > 0 ? "warning" : "success"}
+        />
+        <Tile
+          icon={<Brush className="w-4 h-4" />}
+          title="Cleanup"
+          onClick={() => onNavigate("maintenance")}
+          value={
+            cleanup.loadedAt === null
+              ? "Measuring…"
+              : `${formatSize(reclaimable)} safe to reclaim`
+          }
+          detail="Caches and leftovers only — nothing is deleted without asking"
+          tone="neutral"
+        />
+        <Tile
+          icon={<ShieldCheck className="w-4 h-4" />}
+          title="Security"
+          onClick={() => onNavigate("security")}
+          value={
+            security.loadedAt === null
+              ? defender.data?.real_time_protection
+                ? "Real-time protection on"
+                : "Audit pending"
+              : serious.length > 0
+                ? `${serious.length} serious finding${serious.length === 1 ? "" : "s"}`
+                : findings.length > 0
+                  ? `${findings.length} minor finding${findings.length === 1 ? "" : "s"}`
+                  : "No findings"
+          }
+          detail={
+            defender.data
+              ? `Defender definitions ${defender.data.signature_age_days === 0 ? "are current" : `are ${defender.data.signature_age_days} days old`}`
+              : "Posture, persistence and network checks"
+          }
+          tone={serious.length > 0 ? "danger" : findings.length > 0 ? "warning" : "success"}
+        />
+      </div>
+
+      <Card
+        title="Where updates come from"
+        description="Every source checks what it installs. Odysync names who did the checking instead of showing a generic tick."
+      >
+        {sources.length === 0 ? (
+          <p className="text-sm text-muted">
+            {backends.loading ? "Detecting update sources…" : "No update source is available."}
+          </p>
+        ) : (
+          <ul className="divide-y divide-line -my-1">
+            {sources.map((b) => (
+              <li key={b.kind} className="flex items-center justify-between gap-4 py-2.5">
+                <span className="text-sm text-fg truncate">{b.name}</span>
+                <Badge tone={b.verification.includes("Odysync") ? "accent" : "neutral"}>
+                  {b.verification}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+        {backends.data.some((b) => b.opt_in && !b.enabled && b.available) && (
+          <p className="text-sm text-muted mt-4">
+            winget and the Microsoft Store are optional. Turn them on in{" "}
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={() => onNavigate("settings")}
+            >
+              Settings
+            </button>{" "}
+            if you want them as additional sources.
+          </p>
+        )}
       </Card>
-    </div>
+    </>
+  );
+}
+
+function Tile({
+  icon,
+  title,
+  value,
+  detail,
+  tone,
+  onClick,
+}: {
+  icon: ReactNode;
+  title: string;
+  value: string;
+  detail: string;
+  tone: "neutral" | "success" | "warning" | "danger";
+  onClick: () => void;
+}) {
+  const dot = {
+    neutral: "bg-faint",
+    success: "bg-success",
+    warning: "bg-warning",
+    danger: "bg-danger",
+  }[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group text-left rounded-xl border border-line bg-surface p-5 hover:border-line-strong hover:bg-raised/40 transition-colors"
+    >
+      <div className="flex items-center justify-between text-sm text-muted">
+        <span className="flex items-center gap-2">
+          <span className="text-faint">{icon}</span>
+          {title}
+        </span>
+        <ArrowRight className="w-4 h-4 text-faint opacity-0 group-hover:opacity-100 transition-opacity" />
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
+        <span className="text-[15px] font-semibold text-fg">{value}</span>
+      </div>
+      <div className="text-sm text-muted mt-1">{detail}</div>
+    </button>
   );
 }

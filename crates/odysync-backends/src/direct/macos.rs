@@ -277,10 +277,13 @@ pub mod imp {
 
     pub async fn scan(client: &reqwest::Client) -> Vec<UpdateCandidate> {
         let os = os_version().await;
+        // Borrowed once here so each lookup's future copies a reference
+        // rather than trying to take the string.
+        let os = os.as_str();
         let apps = sparkle_apps().await;
         let lookups = apps
             .iter()
-            .map(|app| async { (app, latest_for(client, app, &os).await) });
+            .map(|app| async move { (app, latest_for(client, app, os).await) });
         let mut out = Vec::new();
         for (app, result) in futures::future::join_all(lookups).await {
             match result {
