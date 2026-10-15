@@ -1,26 +1,46 @@
-﻿# Contributing
+# Contributing
 
 Thank you for helping improve Odysync.
 
 ## Setup
-- Python 3.11+
-- Windows 10/11
-- Install editable: `python -m pip install -e .`
 
-## Run
-- Interactive: `python -m odysync_updater`
-- Build EXE: `scripts/build_exe.ps1`
+- Rust 1.90 or newer (`rustup update stable`)
+- Node.js 22 or newer, for the app
+- On Linux, the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+  (WebKitGTK 4.1 and friends)
 
-## Style
-- No inline comments in code
-- Keep functions small and focused
-- Use UTF-8 for all files
+```sh
+cargo build -p odysync-cli                 # the CLI
+cd apps/gui && npm ci && npx tauri dev     # the app
+cd apps/gui && npm run dev                 # the UI alone, in a browser, on demo data
+```
 
-## Tests
-- Manual smoke tests on Windows
-- Report issues with diagnostics zip
+## Before you open a pull request
 
-## Issues and PRs
-- Use templates and clear titles
-- Reference related issues
-- One logical change per PR
+CI runs exactly this on Windows, macOS and Linux:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --lib
+cd apps/gui && npx tsc -b && npx oxlint && npm test
+```
+
+## Ground rules
+
+- **Safety rules live in `odysync-core`**, not in a backend or a front-end.
+  If a change needs a new rule, it goes there with a test.
+- **Read values, not labels.** Console tools translate their output; a parser
+  that matches on `Instance ID:` breaks on a German Windows. Prefer JSON, CIM,
+  exit codes and identifiers.
+- **Test parsers against captured real output**, including Windows line
+  endings, and assert counts, not just shapes.
+- **Adding an app to the direct-update catalog** (`crates/odysync-backends/src/direct/catalog.json`)
+  needs the signer read from the real installer (`Get-AuthenticodeSignature`).
+  Publishers who do not sign their installers are not added.
+- Comments explain *why*. The code already says what.
+
+## Reporting a problem
+
+`odysync diagnostics --out bundle.zip` collects what is needed; attach it to
+an issue, after checking it for anything you would rather not share.
