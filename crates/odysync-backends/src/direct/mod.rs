@@ -32,7 +32,9 @@
 pub mod catalog;
 pub mod http;
 pub mod inventory;
+pub mod macos;
 pub mod signer;
+pub mod sparkle;
 
 use std::time::Duration;
 
@@ -266,19 +268,26 @@ impl Backend for DirectBackend {
     }
 
     async fn is_available(&self) -> bool {
-        // Needs nothing installed — only the OS's own program list, which
-        // exists on every supported Windows.
-        cfg!(windows)
+        // Needs nothing installed: the OS's own program list on Windows, the
+        // apps' own Sparkle feeds on macOS. Linux distributions already
+        // update everything through their package managers.
+        cfg!(any(windows, target_os = "macos"))
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
+        let client = self.client(Duration::from_secs(60))?;
+
+        #[cfg(target_os = "macos")]
+        let mac = macos::imp::scan(&client).await;
+        #[cfg(not(target_os = "macos"))]
+        let mac: Vec<UpdateCandidate> = Vec::new();
+
         let catalog = Catalog::embedded();
         let found = recognised(&catalog, installed_apps().await);
         if found.is_empty() {
-            return Ok(Vec::new());
+            return Ok(mac);
         }
 
-        let client = self.client(Duration::from_secs(60))?;
         let lookups = found.iter().map(|(app, entry)| {
             let client = &client;
             async move { (app, entry, resolve(client, entry, app).await) }
@@ -295,6 +304,7 @@ impl Backend for DirectBackend {
                 }
             }
         }
+        out.extend(mac);
         Ok(out)
     }
 
@@ -316,7 +326,13 @@ impl Backend for DirectBackend {
         {
             windows_apply::apply(self, candidate).await
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        {
+            candidate.id.validate()?;
+            let client = self.client(Duration::from_secs(60 * 60))?;
+            macos::imp::apply(candidate, &client).await
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         {
             Err(Error::unavailable(
                 "direct",
@@ -326,6 +342,10 @@ impl Backend for DirectBackend {
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
+        #[cfg(target_os = "macos")]
+        if candidate.id.native.starts_with(macos::imp::NATIVE_PREFIX) {
+            return Ok(macos::imp::installed_version(candidate).await);
+        }
         let Some((scope, id)) = parse_native_id(&candidate.id.native) else {
             return Ok(None);
         };

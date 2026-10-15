@@ -29,6 +29,12 @@ sha2.workspace = true
 hex.workspace = true
 directories.workspace = true
 anyhow.workspace = true
+# Sparkle appcasts (macOS app updates): the feed is XML, the app's settings a
+# property list, and updates are signed with Ed25519.
+roxmltree = "0.21"
+plist = "1"
+ed25519-dalek = "3"
+base64 = "0.23"
 
 [target.'cfg(windows)'.dependencies]
 # The direct backend reads the Uninstall keys — the list Settings → Apps shows.
