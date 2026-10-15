@@ -57,6 +57,24 @@ jobs:
       - name: Build release (CLI only)
         run: cargo build --release -p odysync-cli
 
+      # The CLI against the real runner: every read-only command must run to
+      # completion on every platform. Nothing here changes the machine.
+      - name: CLI smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=target/release/odysync
+          [ "$RUNNER_OS" = "Windows" ] && bin=target/release/odysync.exe
+          "$bin" --version
+          "$bin" backends
+          "$bin" sysinfo
+          "$bin" startup
+          "$bin" clean
+          "$bin" components
+          "$bin" devices
+          "$bin" --json scan > scan.json
+          head -c 400 scan.json; echo
+
       # This job exists to verify the code, not to distribute it — release.yml
       # is what actually publishes binaries, and its uploads stay fatal.
       # GitHub's artifact service times out often enough that letting it fail
@@ -139,6 +157,42 @@ jobs:
       - name: Build and package the app
         working-directory: apps/gui
         run: npx tauri build --config ${{ matrix.config }}
+
+      # Building is not running. Start the real app and require it to still be
+      # alive after 20 seconds — long enough for the webview to load and the
+      # startup scan to begin. A crash, a missing library or a panic fails.
+      - name: Install a virtual display (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y xvfb dbus-x11
+
+      - name: App smoke test
+        shell: bash
+        run: |
+          set -uo pipefail
+          case "$RUNNER_OS" in
+            Windows) app=target/release/odysync-gui.exe ;;
+            macOS)   app=target/release/odysync-gui ;;
+            Linux)   app=target/release/odysync-gui ;;
+          esac
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a dbus-launch --exit-with-session "$app" > app.log 2>&1 &
+          else
+            "$app" > app.log 2>&1 &
+          fi
+          pid=$!
+          sleep 20
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "the app is running after 20 s"
+            kill "$pid" 2>/dev/null || true
+            # On Linux the xvfb-run wrapper is the tracked process.
+            pkill -f odysync-gui 2>/dev/null || true
+          else
+            wait "$pid"; code=$?
+            echo "the app exited early with code $code"
+            cat app.log
+            exit 1
+          fi
+          tail -n 20 app.log || true
 
       # This job exists to verify the code, not to distribute it — release.yml
       # is what publishes packages. GitHub's artifact service times out often
