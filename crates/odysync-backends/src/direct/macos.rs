@@ -537,14 +537,12 @@ pub mod imp {
                     format!("code signature invalid: {}", verify.stderr.trim()),
                 ));
             }
-            match team_id(&new_app).await {
-                Some(t) if t == installed_team => {}
-                other => return Err(refuse(
-                    &app.name,
-                    format!(
-                        "signed by Team ID {other:?}, but the installed app is {installed_team}"
-                    ),
-                )),
+            let new_team = team_id(&new_app).await;
+            if new_team.as_deref() != Some(installed_team.as_str()) {
+                let detail = format!(
+                    "signed by Team ID {new_team:?}, but the installed app is {installed_team}"
+                );
+                return Err(refuse(&app.name, detail));
             }
             let gatekeeper = proc::run(
                 "spctl",
