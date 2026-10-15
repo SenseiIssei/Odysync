@@ -20,7 +20,7 @@
 //!
 //! ## What is not here
 //!
-//! No registry writes, no memory optimiser, no TCP tuning — see `PLAN.md` §4.
+//! No registry writes, no memory optimiser, no TCP tuning — see "What Odysync deliberately does not do" in README.md.
 //! `Windows.old` is measured and reported but never deleted: it is owned by
 //! TrustedInstaller, and a half-working reimplementation of Disk Cleanup that
 //! fails partway through is worse than sending the user to the tool that works.

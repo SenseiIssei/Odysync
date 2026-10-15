@@ -291,7 +291,7 @@ export default function Settings() {
 
             {error && <ErrorBar message={error} />}
 
-            <div className="sticky bottom-0 -mx-8 px-8 py-3 bg-canvas/90 backdrop-blur-sm border-t border-line flex items-center gap-3">
+            <div className="sticky bottom-0 -mx-8 px-8 py-3 bg-canvas border-t border-line flex items-center gap-3">
               <Button variant="primary" onClick={() => void save()} busy={saving} disabled={!dirty}>
                 Save changes
               </Button>

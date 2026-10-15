@@ -17,7 +17,7 @@
 //!    not a note in the UI, so a front-end cannot forget to show it.
 //!
 //! What is deliberately absent: anything that edits the registry to "clean" it,
-//! any memory optimiser, and any TCP tuning. See `PLAN.md` §4.
+//! any memory optimiser, and any TCP tuning. See "What Odysync deliberately does not do" in README.md.
 
 use std::path::{Component, Path, PathBuf};
 
