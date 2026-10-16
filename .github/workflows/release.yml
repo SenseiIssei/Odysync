@@ -88,7 +88,10 @@ jobs:
       - name: Archive (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: 7z a ${{ matrix.archive }} target/${{ matrix.target }}/release/${{ matrix.artifact }}
+        # From inside the output directory, so the archive holds odysync.exe
+        # itself rather than target/<triple>/release/odysync.exe.
+        working-directory: target/${{ matrix.target }}/release
+        run: 7z a "$env:GITHUB_WORKSPACE/${{ matrix.archive }}" ${{ matrix.artifact }}
 
       - name: Archive (Unix)
         if: runner.os != 'Windows'
@@ -315,3 +318,7 @@ jobs:
           name: Odysync ${{ env.RELEASE_TAG }}
           bodyFile: release-notes.md
           artifacts: "artifacts/*"
+          # A re-run for an existing tag replaces the assets of that release
+          # instead of failing because the release already exists.
+          allowUpdates: true
+          replacesArtifacts: true
