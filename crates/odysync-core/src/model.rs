@@ -328,6 +328,62 @@ impl BackendKind {
         !matches!(self, BackendKind::WindowsFeatureUpdate) && !self.delivered_through_winget()
     }
 
+    /// Drivers, firmware and operating-system upgrades: the updates that can
+    /// change how the hardware behaves, flicker the display, drop the network
+    /// for a moment or need a restart.
+    ///
+    /// Odysync's unattended care — `odysync care`, a schedule, the one-click
+    /// fix in the app — leaves these for a person to start, with a backup and
+    /// the machine in front of them. `odysync apply` and the Drivers page
+    /// install them as before.
+    pub fn needs_attended_install(&self) -> bool {
+        matches!(
+            self,
+            BackendKind::WindowsDrivers
+                | BackendKind::WindowsFeatureUpdate
+                | BackendKind::NvidiaGpu
+                | BackendKind::NvidiaGeForceExperience
+                | BackendKind::AmdGpu
+                | BackendKind::IntelGpu
+                | BackendKind::IntelDsa
+                | BackendKind::QualcommGpu
+                | BackendKind::DellCommandUpdate
+                | BackendKind::DellFirmware
+                | BackendKind::HpImageAssistant
+                | BackendKind::HpFirmware
+                | BackendKind::LenovoSystemUpdate
+                | BackendKind::LenovoFirmware
+                | BackendKind::MsiCenter
+                | BackendKind::Fwupd
+                | BackendKind::MacFirmware
+        )
+    }
+
+    /// Global packages of programming languages — pip, npm, cargo, go, .NET
+    /// tools, PowerShell modules.
+    ///
+    /// Other code depends on their exact versions: a background upgrade of a
+    /// global Python or Node package can break a project that has nothing to
+    /// do with Odysync. Unattended care leaves them for the developer, who
+    /// updates them from the Updates page or with `odysync apply`.
+    pub fn is_developer_package(&self) -> bool {
+        matches!(
+            self,
+            BackendKind::Pip
+                | BackendKind::Npm
+                | BackendKind::Cargo
+                | BackendKind::Go
+                | BackendKind::DotnetTool
+                | BackendKind::PowerShellModule
+        )
+    }
+
+    /// Whether unattended care (`odysync care`, a schedule, the one-click fix)
+    /// may install updates from this backend.
+    pub fn in_unattended_care(&self) -> bool {
+        !self.needs_attended_install() && !self.is_developer_package()
+    }
+
     /// Whether this backend shells out to winget to do its work.
     ///
     /// These are opt-in together with winget itself: enabling them without
@@ -621,6 +677,45 @@ impl PlannedUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn developer_packages_are_never_updated_in_the_background() {
+        for kind in [BackendKind::Pip, BackendKind::Npm, BackendKind::Cargo] {
+            assert!(kind.is_developer_package(), "{kind:?}");
+            assert!(!kind.in_unattended_care(), "{kind:?}");
+        }
+        for kind in [
+            BackendKind::Direct,
+            BackendKind::Homebrew,
+            BackendKind::WindowsUpdate,
+        ] {
+            assert!(kind.in_unattended_care(), "{kind:?}");
+        }
+        assert!(!BackendKind::NvidiaGpu.in_unattended_care());
+    }
+
+    #[test]
+    fn drivers_firmware_and_os_upgrades_wait_for_a_person() {
+        for kind in [
+            BackendKind::WindowsDrivers,
+            BackendKind::NvidiaGpu,
+            BackendKind::Fwupd,
+            BackendKind::MacFirmware,
+            BackendKind::WindowsFeatureUpdate,
+        ] {
+            assert!(kind.needs_attended_install(), "{kind:?}");
+        }
+        for kind in [
+            BackendKind::Direct,
+            BackendKind::WindowsUpdate,
+            BackendKind::WindowsDefenderUpdate,
+            BackendKind::Homebrew,
+            BackendKind::Apt,
+            BackendKind::Pip,
+        ] {
+            assert!(!kind.needs_attended_install(), "{kind:?}");
+        }
+    }
 
     /// Fails to compile when a variant is added to [`BackendKind`].
     ///

@@ -329,11 +329,7 @@ async fn read_installed_guest_version(hv: Hypervisor) -> Option<String> {
                     .await
                     .ok()?;
                 let v = out.stdout.trim().to_string();
-                if v.is_empty() {
-                    None
-                } else {
-                    Some(v)
-                }
+                if v.is_empty() { None } else { Some(v) }
             }
             #[cfg(not(windows))]
             {
@@ -341,11 +337,7 @@ async fn read_installed_guest_version(hv: Hypervisor) -> Option<String> {
                     .await
                     .ok()?;
                 let v = out.stdout.trim().to_string();
-                if v.is_empty() {
-                    None
-                } else {
-                    Some(v)
-                }
+                if v.is_empty() { None } else { Some(v) }
             }
         }
         Hypervisor::Vmware => {
@@ -369,11 +361,7 @@ async fn read_installed_guest_version(hv: Hypervisor) -> Option<String> {
         Hypervisor::Qemu => {
             if let Ok(out) = proc::run("qemu-ga", &["--version"], QUERY_TIMEOUT).await {
                 let v = out.stdout.trim().to_string();
-                if v.is_empty() {
-                    None
-                } else {
-                    Some(v)
-                }
+                if v.is_empty() { None } else { Some(v) }
             } else {
                 None
             }

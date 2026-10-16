@@ -480,7 +480,8 @@ mod tests {
     #[tokio::test]
     async fn linux_registration_round_trips() {
         let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+        // SAFETY: see above — no other test touches XDG_CONFIG_HOME.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", dir.path()) };
 
         assert_eq!(status().await.unwrap(), AutostartConfig::default());
         enable(true).await.unwrap();
@@ -491,16 +492,18 @@ mod tests {
                 minimized: true
             }
         );
-        assert!(dir
-            .path()
-            .join("autostart")
-            .join("odysync.desktop")
-            .exists());
+        assert!(
+            dir.path()
+                .join("autostart")
+                .join("odysync.desktop")
+                .exists()
+        );
         disable().await.unwrap();
         assert_eq!(status().await.unwrap(), AutostartConfig::default());
         // Disabling twice is not an error.
         disable().await.unwrap();
 
-        std::env::remove_var("XDG_CONFIG_HOME");
+        // SAFETY: as above.
+        unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
     }
 }

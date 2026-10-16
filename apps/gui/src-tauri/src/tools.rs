@@ -117,8 +117,8 @@ pub async fn reveal_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn components_status(
-) -> Result<Vec<odysync_backends::components::ComponentStatus>, String> {
+pub async fn components_status()
+-> Result<Vec<odysync_backends::components::ComponentStatus>, String> {
     Ok(odysync_backends::components::status().await)
 }
 
@@ -127,6 +127,11 @@ pub async fn component_install(id: String) -> Result<String, String> {
     odysync_backends::components::install(&id)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn device_health() -> Result<odysync_backends::device_health::HealthReport, String> {
+    Ok(odysync_backends::device_health::report().await)
 }
 
 #[tauri::command]
@@ -247,8 +252,8 @@ pub async fn driver_backup_prune(keep: usize) -> Result<usize, String> {
 }
 
 #[tauri::command]
-pub async fn disk_optimization_plan(
-) -> Result<Vec<odysync_backends::cleanup::VolumeOptimization>, String> {
+pub async fn disk_optimization_plan()
+-> Result<Vec<odysync_backends::cleanup::VolumeOptimization>, String> {
     odysync_backends::cleanup::plan_disk_optimization()
         .await
         .map_err(|e| e.to_string())

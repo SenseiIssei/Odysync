@@ -1,0 +1,67 @@
+name: Dependabot auto-merge
+
+# Keeps dependencies current without a human clicking "merge" every week, but
+# only for updates that are unlikely to need reading: patch and minor bumps,
+# after the full CI has passed on exactly the commit being merged. Major bumps
+# stay open for review — they are the ones that change behaviour.
+#
+# Runs on workflow_run rather than on the pull request itself: a workflow
+# triggered by a Dependabot pull request gets a read-only token, and waiting
+# for CI here means nothing is merged on a red build.
+
+on:
+  workflow_run:
+    workflows: ["Rust CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge if this is a safe update
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          pr=$(gh pr list -R "$REPO" --head "$BRANCH" --base main --state open \
+                 --json number,headRefOid --jq ".[] | select(.headRefOid == \"$SHA\") | .number")
+          if [ -z "$pr" ]; then
+            echo "No open pull request at $SHA — it moved on or was closed."
+            exit 0
+          fi
+
+          # Only Dependabot's own commits: if anyone pushed onto the branch,
+          # a person should look at it.
+          others=$(gh pr view "$pr" -R "$REPO" --json commits \
+                     --jq '[.commits[].authors[].login | select(. != "dependabot[bot]")] | length')
+          if [ "$others" != "0" ]; then
+            echo "#$pr has commits from someone other than Dependabot; leaving it for review."
+            exit 0
+          fi
+
+          # Dependabot records every update in the commit message, one
+          # `update-type:` line per dependency (several for a grouped update).
+          message=$(gh api "repos/$REPO/commits/$SHA" --jq .commit.message)
+          if ! grep -q "update-type: version-update:semver-" <<<"$message"; then
+            echo "#$pr does not say what kind of update it is; leaving it for review."
+            exit 0
+          fi
+          if grep -q "update-type: version-update:semver-major" <<<"$message"; then
+            echo "#$pr contains a major update; leaving it for review."
+            exit 0
+          fi
+
+          gh pr merge "$pr" -R "$REPO" --squash --match-head-commit "$SHA" --delete-branch
+          echo "Merged #$pr."

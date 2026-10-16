@@ -2,6 +2,7 @@
 
 import { AlertTriangle, CheckCircle2, Info, Loader2, RefreshCw, Search } from "lucide-react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useCountUp } from "../useCountUp";
 import type { Resource } from "../store";
 
 export function PageHeader({
@@ -16,9 +17,7 @@ export function PageHeader({
   return (
     <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-1">
       <div className="min-w-0">
-        <h1 className="text-[22px] leading-tight font-semibold tracking-[-0.01em] text-fg">
-          {title}
-        </h1>
+        <h1 className="text-[26px] leading-tight font-bold text-fg">{title}</h1>
         {subtitle && <p className="text-sm text-muted mt-1 max-w-[70ch]">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2 flex-shrink-0">{actions}</div>}
@@ -29,9 +28,9 @@ export function PageHeader({
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
 const BUTTON_STYLES: Record<ButtonVariant, string> = {
-  primary:
-    "bg-accent text-accent-fg hover:bg-accent/90 border border-transparent shadow-sm",
-  secondary: "bg-surface text-fg border border-line hover:bg-raised hover:border-line-strong",
+  primary: "bg-gradient-accent text-white border border-transparent btn-glow",
+  secondary:
+    "bg-surface/70 text-fg border border-line hover:bg-raised hover:border-line-strong backdrop-blur",
   ghost: "text-muted hover:text-fg hover:bg-raised border border-transparent",
   danger:
     "bg-danger/10 text-danger border border-danger/25 hover:bg-danger/15 hover:border-danger/40",
@@ -47,17 +46,22 @@ export function Button({
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
   icon?: ReactNode;
   busy?: boolean;
 }) {
-  const sizing = size === "sm" ? "h-7 px-2.5 text-xs gap-1.5" : "h-9 px-3.5 text-sm gap-2";
+  const sizing =
+    size === "sm"
+      ? "h-7 px-2.5 text-xs gap-1.5 rounded-lg"
+      : size === "lg"
+        ? "h-12 px-6 text-[15px] gap-2.5 rounded-xl font-semibold"
+        : "h-9 px-3.5 text-sm gap-2 rounded-lg";
   return (
     <button
       type="button"
       {...rest}
       disabled={rest.disabled || busy}
-      className={`inline-flex items-center justify-center rounded-lg font-medium whitespace-nowrap transition-colors disabled:opacity-50 disabled:pointer-events-none ${sizing} ${BUTTON_STYLES[variant]} ${className}`}
+      className={`inline-flex items-center justify-center font-medium whitespace-nowrap transition-colors disabled:opacity-50 disabled:pointer-events-none ${sizing} ${BUTTON_STYLES[variant]} ${className}`}
     >
       {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : icon}
       {children}
@@ -154,7 +158,7 @@ export function EmptyState({
 }) {
   return (
     <div className="text-center py-12 px-6">
-      <div className="mx-auto mb-3 w-11 h-11 rounded-xl bg-raised flex items-center justify-center text-faint [&>svg]:w-5 [&>svg]:h-5">
+      <div className="mx-auto mb-3 w-12 h-12 rounded-2xl bg-accent/10 border border-accent/15 flex items-center justify-center text-accent [&>svg]:w-5 [&>svg]:h-5">
         {icon}
       </div>
       <p className="text-sm font-medium text-fg">{title}</p>
@@ -243,7 +247,7 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-[22px] w-[38px] flex-shrink-0 items-center rounded-full border transition-colors disabled:opacity-50 ${
-        checked ? "bg-accent border-accent" : "bg-raised border-line-strong"
+        checked ? "bg-gradient-accent border-transparent" : "bg-raised border-line-strong"
       }`}
     >
       <span
@@ -333,14 +337,14 @@ export function Card({
 }) {
   return (
     <section
-      className={`rounded-xl border border-line bg-surface ${padded ? "p-5" : ""} ${className}`}
+      className={`rounded-2xl border border-line glass ${padded ? "p-5" : ""} ${className}`}
     >
       {(title || actions) && (
         <div
           className={`flex flex-wrap items-start justify-between gap-x-6 gap-y-3 ${padded ? "mb-4" : "px-5 pt-4 pb-3"}`}
         >
           <div className="min-w-[240px] flex-1">
-            {title && <h2 className="text-[15px] font-semibold text-fg">{title}</h2>}
+            {title && <h2 className="text-[16px] font-semibold text-fg">{title}</h2>}
             {description && <p className="text-sm text-muted mt-0.5">{description}</p>}
           </div>
           {actions && <div className="flex items-center gap-2 flex-shrink-0">{actions}</div>}
@@ -369,7 +373,7 @@ export function StatCard({
   hint?: string;
 }) {
   return (
-    <div className="rounded-xl bg-surface border border-line p-4 animate-fade-in">
+    <div className="rounded-2xl glass border border-line p-4 animate-rise">
       <div className="flex items-center gap-2 text-sm text-muted">
         <span className={`${color} [&>svg]:w-4 [&>svg]:h-4`}>{icon}</span>
         {label}
@@ -392,7 +396,7 @@ export function SearchInput({
   placeholder: string;
 }) {
   return (
-    <label className="flex items-center gap-2 h-9 px-3 rounded-lg border border-line bg-canvas focus-within:border-accent min-w-[220px] flex-1">
+    <label className="flex items-center gap-2 h-9 px-3 rounded-lg border border-line bg-canvas/60 focus-within:border-accent min-w-[220px] flex-1">
       <Search className="w-4 h-4 text-faint flex-shrink-0" />
       <input
         type="search"
@@ -424,7 +428,7 @@ export function Meter({ value, tone = "accent" }: { value: number; tone?: Tone }
   const pct = Math.max(0, Math.min(100, value * 100));
   const bar: Record<Tone, string> = {
     neutral: "bg-faint",
-    accent: "bg-accent",
+    accent: "bg-gradient-accent",
     success: "bg-success",
     warning: "bg-warning",
     danger: "bg-danger",
@@ -432,7 +436,17 @@ export function Meter({ value, tone = "accent" }: { value: number; tone?: Tone }
   };
   return (
     <div className="h-1.5 w-full rounded-full bg-raised overflow-hidden">
-      <div className={`h-full rounded-full ${bar[tone]} transition-[width] duration-300`} style={{ width: `${pct}%` }} />
+      <div className={`h-full rounded-full ${bar[tone]} transition-[width] duration-500 ease-out`} style={{ width: `${pct}%` }} />
     </div>
   );
+}
+
+export function CountUp({ value, format }: { value: number; format?: (n: number) => string }) {
+  const n = useCountUp(value);
+  return <>{format ? format(n) : n}</>;
+}
+
+/** A shimmering bar standing in for text that is still loading. */
+export function Skeleton({ className = "h-4 w-32" }: { className?: string }) {
+  return <span aria-hidden className={`skeleton inline-block ${className}`} />;
 }

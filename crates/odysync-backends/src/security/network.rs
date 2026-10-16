@@ -181,12 +181,11 @@ pub fn is_private_address(addr: &str) -> bool {
         return true;
     }
     // 172.16.0.0/12
-    if let Some(rest) = a.strip_prefix("172.") {
-        if let Some(second) = rest.split('.').next() {
-            if let Ok(n) = second.parse::<u32>() {
-                return (16..=31).contains(&n);
-            }
-        }
+    if let Some(rest) = a.strip_prefix("172.")
+        && let Some(second) = rest.split('.').next()
+        && let Ok(n) = second.parse::<u32>()
+    {
+        return (16..=31).contains(&n);
     }
     false
 }
@@ -208,10 +207,10 @@ fn process_concerns(conn: &Connection, trust: &TrustMap) -> Vec<String> {
         // scan is not elevated, so it is not evidence of anything.
         return reasons;
     };
-    if let Some(t) = super::trust_of(trust, path) {
-        if t.unsigned() {
-            reasons.push("the program that owns it is not digitally signed".to_string());
-        }
+    if let Some(t) = super::trust_of(trust, path)
+        && t.unsigned()
+    {
+        reasons.push("the program that owns it is not digitally signed".to_string());
     }
     if super::is_user_writable_dir(path) {
         reasons.push(
@@ -428,7 +427,7 @@ pub fn analyze(conns: &[Connection], trust: &TrustMap) -> Vec<Finding> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::{trust_map, FileTrust};
+    use crate::security::{FileTrust, trust_map};
 
     fn listener(port: u32, addr: &str, name: &str, path: &str) -> Connection {
         Connection {

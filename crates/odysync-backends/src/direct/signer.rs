@@ -154,6 +154,14 @@ mod tests {
                 "CN=OpenJS Foundation, O=OpenJS Foundation, L=San Francisco, S=California, C=US",
                 "OpenJS Foundation",
             ),
+            (
+                "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+                "Microsoft Corporation",
+            ),
+            (
+                r#"CN="Meltytech, LLC", O="Meltytech, LLC", L=Oceanside, S=California, C=US"#,
+                "Meltytech, LLC",
+            ),
         ];
         for (subject, pin) in cases {
             assert!(signer_matches(subject, pin), "{pin} vs {subject}");

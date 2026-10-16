@@ -12,6 +12,7 @@ pub mod autostart;
 pub mod chocolatey;
 pub mod cleanup;
 pub mod components;
+pub mod device_health;
 pub mod devices;
 pub mod diagnostics;
 pub mod direct;

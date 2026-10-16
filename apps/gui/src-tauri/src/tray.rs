@@ -1,13 +1,13 @@
-﻿//! System tray icon with menu for background operation.
+//! System tray icon with menu for background operation.
 //!
 //! The tray lets the user open the window, scan for updates, or quit.
 //! When the window is closed, the app continues running in the tray
 //! so scheduled background scans can still notify the user.
 
 use tauri::{
+    AppHandle, Emitter, Manager,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager,
 };
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {

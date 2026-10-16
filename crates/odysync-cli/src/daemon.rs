@@ -8,11 +8,11 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use odysync_core::Backend;
 use odysync_core::config::Config;
 use odysync_core::platform;
 use odysync_core::report::RunReport;
 use odysync_core::runner::Runner;
-use odysync_core::Backend;
 
 /// Daemon options from the CLI.
 pub struct DaemonOpts {

@@ -112,7 +112,7 @@ impl Policy {
                 _ => {
                     return Some(SkipReason::Held {
                         note: hold.note.clone(),
-                    })
+                    });
                 }
             }
         }

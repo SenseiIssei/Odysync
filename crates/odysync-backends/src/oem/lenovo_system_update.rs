@@ -139,20 +139,20 @@ impl Backend for LenovoSystemUpdateBackend {
         }
 
         // Try SUHelper first if available (lighter weight).
-        if let Some(suhelper) = &self.suhelper_path {
-            if oem::tool_exists(suhelper.to_str().unwrap_or("")) {
-                let out = proc::run(
-                    suhelper.to_str().unwrap_or("SUHelper.exe"),
-                    &["-autoupdate", "-include", &candidate.id.native, "-noreboot"],
-                    INSTALL_TIMEOUT,
-                )
-                .await?;
+        if let Some(suhelper) = &self.suhelper_path
+            && oem::tool_exists(suhelper.to_str().unwrap_or(""))
+        {
+            let out = proc::run(
+                suhelper.to_str().unwrap_or("SUHelper.exe"),
+                &["-autoupdate", "-include", &candidate.id.native, "-noreboot"],
+                INSTALL_TIMEOUT,
+            )
+            .await?;
 
-                if out.success() {
-                    return Ok(());
-                }
-                // Fall through to tvsu on failure.
+            if out.success() {
+                return Ok(());
             }
+            // Fall through to tvsu on failure.
         }
 
         let out = proc::run(

@@ -1,4 +1,4 @@
-﻿//! The winget backend.
+//! The winget backend.
 //!
 //! winget stays as the transport — nothing else covers as much Windows software
 //! — but every call is wrapped so the failure modes that corrupted installs
@@ -51,11 +51,7 @@ impl WingetBackend {
     }
 
     fn source(&self) -> &'static str {
-        if self.store {
-            "msstore"
-        } else {
-            "winget"
-        }
+        if self.store { "msstore" } else { "winget" }
     }
 
     /// Flags every winget invocation carries.

@@ -189,10 +189,10 @@ impl<'a> Runner<'a> {
             emit(emitter, &candidate.name, current, "installing");
         }
 
-        if let Some(history) = &self.history {
-            if let Err(e) = history.save() {
-                tracing::warn!(error = %e, "failed to save update history");
-            }
+        if let Some(history) = &self.history
+            && let Err(e) = history.save()
+        {
+            tracing::warn!(error = %e, "failed to save update history");
         }
 
         // Ask the OS whether it now wants a restart, rather than trusting a
@@ -270,13 +270,13 @@ impl<'a> Runner<'a> {
                 return ApplyOutcome::DidNotConverge {
                     expected: expected.raw().to_string(),
                     actual: "unreadable".to_string(),
-                }
+                };
             }
             Err(e) => {
                 return ApplyOutcome::DidNotConverge {
                     expected: expected.raw().to_string(),
                     actual: format!("could not read back: {e}"),
-                }
+                };
             }
         };
 

@@ -251,7 +251,7 @@ mod imp {
 mod imp {
     use std::path::PathBuf;
 
-    use super::{parse_desktop_entry, with_autostart, StartupItem};
+    use super::{StartupItem, parse_desktop_entry, with_autostart};
 
     fn user_dir() -> Option<PathBuf> {
         std::env::var_os("XDG_CONFIG_HOME")
@@ -354,7 +354,7 @@ mod imp {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use super::{parse_launch_agent, parse_print_disabled, StartupItem};
+    use super::{StartupItem, parse_launch_agent, parse_print_disabled};
 
     async fn uid() -> anyhow::Result<String> {
         let out = odysync_core::proc::run("id", &["-u"], Duration::from_secs(10)).await?;

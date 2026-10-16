@@ -119,16 +119,16 @@ impl Backend for FwupdBackend {
 
         let result = self.apply(candidate).await;
 
-        if let Some(tx) = &tx {
-            if result.is_ok() {
-                let _ = tx
-                    .send(ApplyProgress {
-                        percent: Some(100),
-                        message: format!("Firmware update complete for {}", candidate.name),
-                        phase: ApplyPhase::Rebooting,
-                    })
-                    .await;
-            }
+        if let Some(tx) = &tx
+            && result.is_ok()
+        {
+            let _ = tx
+                .send(ApplyProgress {
+                    percent: Some(100),
+                    message: format!("Firmware update complete for {}", candidate.name),
+                    phase: ApplyPhase::Rebooting,
+                })
+                .await;
         }
 
         result

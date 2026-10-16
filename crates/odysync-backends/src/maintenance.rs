@@ -183,21 +183,20 @@ try {
                 let files = trash.join("files");
                 let info = trash.join("info");
                 let mut count = 0;
-                if files.exists() {
-                    if let Ok(entries) = std::fs::read_dir(&files) {
-                        for entry in entries.flatten() {
-                            let p = entry.path();
-                            let _ =
-                                std::fs::remove_file(&p).or_else(|_| std::fs::remove_dir_all(&p));
-                            count += 1;
-                        }
+                if files.exists()
+                    && let Ok(entries) = std::fs::read_dir(&files)
+                {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        let _ = std::fs::remove_file(&p).or_else(|_| std::fs::remove_dir_all(&p));
+                        count += 1;
                     }
                 }
-                if info.exists() {
-                    if let Ok(entries) = std::fs::read_dir(&info) {
-                        for entry in entries.flatten() {
-                            let _ = std::fs::remove_file(entry.path());
-                        }
+                if info.exists()
+                    && let Ok(entries) = std::fs::read_dir(&info)
+                {
+                    for entry in entries.flatten() {
+                        let _ = std::fs::remove_file(entry.path());
                     }
                 }
                 Ok(MaintenanceResult {

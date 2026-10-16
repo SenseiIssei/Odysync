@@ -1,4 +1,4 @@
-﻿//! Integrity and authenticity checks applied before an installer is executed.
+//! Integrity and authenticity checks applied before an installer is executed.
 //!
 //! Two independent questions, deliberately kept separate:
 //!
@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 
 mod signature;
 
-pub use signature::{verify_signature, SignatureStatus};
+pub use signature::{SignatureStatus, verify_signature};
 
 /// The combined result of verifying one installer file.
 #[derive(Debug, Clone, PartialEq, Eq)]

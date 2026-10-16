@@ -16,7 +16,7 @@ use odysync_core::error::{Error, Result};
 use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::version::Version;
 
-use crate::windows_update::session::{self, WuaUpdate, CRITERIA_DRIVER};
+use crate::windows_update::session::{self, CRITERIA_DRIVER, WuaUpdate};
 
 pub struct WindowsDriverBackend;
 

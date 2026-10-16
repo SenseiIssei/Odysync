@@ -5,6 +5,32 @@ All notable changes to Odysync will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-10-16
+
+### Added
+- **Smart Care.** The app opens on one care score with every point taken off
+  listed next to its reason, and a single *Fix everything* button that
+  installs the safe updates and clears the junk files. Drivers, firmware,
+  operating-system upgrades and developer packages (pip, npm, cargo …) are
+  never part of it; they are listed for you to start.
+- **Automatic care.** One switch schedules `odysync care` daily or weekly: the
+  updates that pass every safety rule, then the cleanup categories that are
+  safe by default. Also from the command line: `odysync care`,
+  `odysync schedule --care`.
+- **Disk and battery health** on Windows, macOS and Linux (`odysync health`,
+  *System & health* in the app): SMART/NVMe status, wear, temperature, power-on
+  hours and battery capacity against its design value, read from the hardware.
+- PowerShell 7 and Shotcut in the direct-from-publisher catalog (15 apps).
+- Dependabot patch and minor updates are merged automatically once the full CI
+  has passed on that exact commit; CI also runs weekly.
+
+### Changed
+- A new look: near-black canvas with slow light, glass cards, an animated care
+  ring, page transitions, and Plus Jakarta Sans for headings — light and dark.
+- Simpler navigation: Home plus Updates, Drivers, Cleanup and Security; the
+  rest sits under a collapsible *More tools*.
+- Rust edition 2024.
+
 ## [3.0.0] - 2026-10-16
 
 ### Added

@@ -40,7 +40,7 @@ impl RestorePointGuard {
 #[cfg(windows)]
 async fn create_restore_point(description: &str) -> bool {
     use windows::Win32::System::Restore::{
-        SRSetRestorePointA, BEGIN_SYSTEM_CHANGE, MODIFY_SETTINGS, RESTOREPOINTINFOA, STATEMGRSTATUS,
+        BEGIN_SYSTEM_CHANGE, MODIFY_SETTINGS, RESTOREPOINTINFOA, SRSetRestorePointA, STATEMGRSTATUS,
     };
 
     // System Restore requires elevation. If we are not elevated, skip silently.

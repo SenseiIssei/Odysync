@@ -47,6 +47,10 @@ export interface BackendDto {
   /** e.g. "verified by Odysync", "verified by winget". */
   verification: string;
   verification_detail: string;
+  /** Drivers, firmware, OS upgrades: never part of one-click or automatic care. */
+  attended: boolean;
+  /** pip, npm, cargo and other developer packages: updated on request only. */
+  developer: boolean;
 }
 
 export interface SystemInfoDto {
@@ -96,6 +100,39 @@ export interface ScheduleRequest {
   frequency: string;
   time: string;
   task_name: string | null;
+  /** Run automatic care (updates plus the safe cleanup) instead of updates alone. */
+  care?: boolean;
+}
+
+// ── Hardware health ─────────────────────────────────────────────────────────
+
+export type HealthState = "good" | "warning" | "bad" | "unknown";
+
+export interface DiskHealthDto {
+  name: string;
+  kind: string;
+  size_bytes: number;
+  state: HealthState;
+  summary: string;
+  temperature_c: number | null;
+  wear_percent: number | null;
+  power_on_hours: number | null;
+}
+
+export interface BatteryHealthDto {
+  state: HealthState;
+  summary: string;
+  capacity_percent: number | null;
+  design_capacity: number | null;
+  full_capacity: number | null;
+  capacity_unit: string;
+  cycle_count: number | null;
+}
+
+export interface HealthReportDto {
+  disks: DiskHealthDto[];
+  battery: BatteryHealthDto | null;
+  notes: string[];
 }
 
 export interface Hold {

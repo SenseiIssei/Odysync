@@ -133,6 +133,11 @@ pub struct BackendDto {
     pub verification: String,
     /// The full sentence behind `verification`.
     pub verification_detail: String,
+    /// Drivers, firmware, OS upgrades: never part of one-click or automatic
+    /// care.
+    pub attended: bool,
+    /// pip, npm, cargo and other developer packages: updated on request only.
+    pub developer: bool,
 }
 
 #[derive(Serialize)]
@@ -183,6 +188,10 @@ pub struct ScheduleRequest {
     pub frequency: String,
     pub time: String,
     pub task_name: Option<String>,
+    /// Run automatic care (updates plus the safe cleanup) instead of updates
+    /// alone.
+    #[serde(default)]
+    pub care: bool,
 }
 
 // ── Config DTO ───────────────────────────────────────────────────────────────
@@ -527,6 +536,8 @@ pub async fn list_backends(state: State<'_, AppState>) -> Result<Vec<BackendDto>
                 opt_in: !kind.enabled_by_default(),
                 verification: verification.label(),
                 verification_detail: verification.detail(),
+                attended: kind.needs_attended_install(),
+                developer: kind.is_developer_package(),
             }
         })
         .collect())
@@ -644,7 +655,9 @@ fn bundled_cli(app: &AppHandle) -> Option<std::path::PathBuf> {
 
 #[tauri::command]
 pub async fn create_schedule(app: AppHandle, request: ScheduleRequest) -> Result<String, String> {
-    use odysync_backends::scheduler::{create_schedule, ScheduleFrequency, ScheduleSpec};
+    use odysync_backends::scheduler::{
+        ScheduleFrequency, ScheduleSpec, ScheduledCommand, create_schedule,
+    };
 
     let freq = match request.frequency.as_str() {
         "daily" => ScheduleFrequency::Daily,
@@ -670,6 +683,11 @@ pub async fn create_schedule(app: AppHandle, request: ScheduleRequest) -> Result
         task_name: task_name.clone(),
         extra_args: Vec::new(),
         program: Some(cli.to_string_lossy().to_string()),
+        command: if request.care {
+            ScheduledCommand::Care
+        } else {
+            ScheduledCommand::Apply
+        },
     };
 
     create_schedule(&spec).await.map_err(|e| e.to_string())?;
@@ -1149,7 +1167,7 @@ pub async fn restart_as_admin(app: AppHandle) -> Result<(), String> {
         // GUI's dependency surface small; shell32 is linked explicitly so the
         // symbol resolves at link time on MSVC.
         #[link(name = "shell32")]
-        extern "system" {
+        unsafe extern "system" {
             fn ShellExecuteW(
                 hwnd: *mut std::ffi::c_void,
                 operation: *const u16,

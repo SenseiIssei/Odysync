@@ -266,10 +266,10 @@ pub fn asset_pattern<'a>(
     scope: Scope,
     arch: &str,
 ) -> Option<&'a String> {
-    if scope == Scope::User {
-        if let Some(p) = user_assets.get(arch) {
-            return Some(p);
-        }
+    if scope == Scope::User
+        && let Some(p) = user_assets.get(arch)
+    {
+        return Some(p);
     }
     assets.get(arch)
 }

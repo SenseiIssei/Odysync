@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use odysync_core::cleanup::{
-    is_safe_cleanup_root, is_within, CleanupCategory, CleanupFinding, CleanupOutcome,
+    CleanupCategory, CleanupFinding, CleanupOutcome, is_safe_cleanup_root, is_within,
 };
 use odysync_core::error::Result;
 
@@ -542,7 +542,7 @@ fn scan_blocking() -> Vec<CleanupFinding> {
 /// kind of path the root-safety rule refuses.
 #[cfg(windows)]
 fn measure_recycle_bin() -> CleanupFinding {
-    use windows::Win32::UI::Shell::{SHQueryRecycleBinW, SHQUERYRBINFO};
+    use windows::Win32::UI::Shell::{SHQUERYRBINFO, SHQueryRecycleBinW};
 
     let mut info = SHQUERYRBINFO {
         cbSize: std::mem::size_of::<SHQUERYRBINFO>() as u32,
@@ -654,7 +654,7 @@ pub async fn clean(selected: Vec<CleanupCategory>) -> Vec<(CleanupCategory, Clea
 
 #[cfg(windows)]
 async fn empty_recycle_bin() -> CleanupOutcome {
-    use windows::Win32::UI::Shell::{SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI};
+    use windows::Win32::UI::Shell::{SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHEmptyRecycleBinW};
 
     // Measured first, because once it is empty there is nothing left to count.
     let before = measure_recycle_bin();

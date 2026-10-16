@@ -23,10 +23,12 @@ Free and open source, built around one rule: *never break a working machine.*
 <br>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tour-dark.gif">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/tour-light.gif">
-  <img src="docs/assets/tour-dark.gif" alt="A tour through Odysync: overview, updates, drivers, cleanup, startup, security and system info" width="900">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/care-dark.gif">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/care-light.gif">
+  <img src="docs/assets/care-dark.gif" alt="Smart Care: Odysync checks the machine, then installs the safe updates and clears junk files in one click" width="900">
 </picture>
+
+<sub>Smart Care in the browser demo: check everything, then <b>Fix everything</b> — safe updates and junk files in one click.</sub>
 
 </div>
 
@@ -37,6 +39,14 @@ Free and open source, built around one rule: *never break a working machine.*
 Most "PC optimizer" suites mix a few genuinely useful tools with features that only look busy — registry cleaners, RAM boosters, "internet speed-ups" — and update drivers from their own repackaged databases. Odysync does the useful part, does it carefully, and leaves the rest out on purpose.
 
 <table>
+<tr>
+<td colspan="2" valign="top">
+
+### ✨ One click — or none at all
+**Smart Care** sums the machine up in one score and lists every point it takes off, with the reason. *Fix everything* installs the safe updates and clears the junk files in one go; **automatic care** does the same on a schedule. Drivers, firmware, system upgrades and developer packages (pip, npm, cargo …) are never part of it — they wait for you.
+
+</td>
+</tr>
 <tr>
 <td width="50%" valign="top">
 
@@ -71,6 +81,9 @@ Each source names who verified what it installs — *verified by Odysync*, *by t
 
 | | Windows | macOS | Linux |
 |---|:---:|:---:|:---:|
+| **Smart Care** — one care score, *Fix everything* for safe updates and junk files | ✅ | ✅ | ✅ |
+| **Automatic care** — the same, daily or weekly, on its own (`odysync care`) | ✅ | ✅ | ✅ |
+| **Disk and battery health** — SMART/NVMe status, wear, temperature, battery capacity | ✅ | ✅ | ✅ (smartctl) |
 | **Programs, direct from the publisher** — signature-pinned installers from GitHub releases and vendor feeds | ✅ | ✅ Sparkle apps | — |
 | **System package managers** — Homebrew, apt, dnf, pacman, zypper, Flatpak, Snap, Nix, Chocolatey, Scoop | ✅ | ✅ | ✅ |
 | **Language ecosystems** — pip, npm, cargo, go, .NET tools, VS Code and JetBrains extensions | ✅ | ✅ | ✅ |
@@ -88,6 +101,18 @@ Each source names who verified what it installs — *verified by Odysync*, *by t
 
 Everything in the app is also in the CLI.
 
+<details>
+<summary><b>Take the tour</b> — every page in a few seconds</summary>
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tour-dark.gif">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/tour-light.gif">
+  <img src="docs/assets/tour-dark.gif" alt="A tour through Odysync: home, updates, drivers, cleanup, security and system health" width="900">
+</picture>
+
+</details>
+
 <table>
 <tr>
 <td width="50%"><img src="docs/screenshots/updates-light.png" alt="Updates, light theme"><p align="center"><sub><b>Updates</b> — what is ready, what is held back and why</sub></p></td>
@@ -95,7 +120,7 @@ Everything in the app is also in the CLI.
 </tr>
 <tr>
 <td width="50%"><img src="docs/screenshots/maintenance-dark.png" alt="Cleanup grouped by risk"><p align="center"><sub><b>Cleanup</b> — grouped by risk, measured before anything is deleted</sub></p></td>
-<td width="50%"><img src="docs/screenshots/settings-light.png" alt="Settings with optional sources"><p align="center"><sub><b>Settings</b> — optional sources, safety rules, theme</sub></p></td>
+<td width="50%"><img src="docs/screenshots/hardware-light.png" alt="System and hardware health"><p align="center"><sub><b>System &amp; health</b> — disk wear, temperature, battery capacity</sub></p></td>
 </tr>
 </table>
 
@@ -103,9 +128,9 @@ Everything in the app is also in the CLI.
 
 <img src="docs/assets/theme-switch.gif" alt="The overview switching between the light and the dark theme" width="560" align="right">
 
-A calm interface with readable type and one accent colour. It follows your system theme, or you pick one in the title bar.
+A calm, animated interface: a care ring that spins while Odysync works, glass cards over a slowly moving light, readable type. It follows your system theme, or you pick one in the title bar, and it honours *reduce motion*.
 
-Navigation is grouped by what you want to do — *keep current*, *care*, *system*, *automation* — so the page you need is never more than one click away, and every page says in a sentence what it is for.
+Home and four everyday pages — Updates, Drivers, Cleanup, Security — are all most people need. Everything else waits under *More tools*, and every page says in a sentence what it is for.
 
 <br clear="right">
 
@@ -157,6 +182,10 @@ The app installs the CLI next to itself; scheduled runs use it.
 ## Command line
 
 ```sh
+odysync care --dry-run               # what one-click care would do: safe updates + junk files
+odysync care                         # do it (drivers, firmware and pip/npm are left for you)
+odysync health                       # disk and battery health
+
 odysync scan                         # what can be updated, and what is held back and why
 odysync apply                        # install everything that passes the safety rules
 odysync apply --only vscode --yes    # one package, no prompt
@@ -173,7 +202,7 @@ odysync startup                      # programs that start at sign-in
 odysync sysinfo                      # processor, memory, graphics, disks
 
 odysync hold vscode                  # never update this one
-odysync schedule --frequency daily --time 09:00
+odysync schedule --frequency daily --care   # automatic care
 odysync backends                     # every source, and who verifies what it installs
 ```
 

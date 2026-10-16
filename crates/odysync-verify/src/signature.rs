@@ -1,4 +1,4 @@
-﻿//! Per-platform code-signature verification.
+//! Per-platform code-signature verification.
 //!
 //! We shell out to the platform's own verifier rather than reimplementing PKI:
 //! Authenticode on Windows and `codesign` on macOS both consult the live system
@@ -63,7 +63,7 @@ try {{
         Err(e) => {
             return SignatureStatus::Invalid {
                 detail: format!("could not run Authenticode check: {e}"),
-            }
+            };
         }
     };
 
@@ -129,7 +129,7 @@ pub async fn verify_signature(path: &Path) -> SignatureStatus {
         Err(e) => {
             return SignatureStatus::Invalid {
                 detail: format!("could not run codesign: {e}"),
-            }
+            };
         }
     };
 

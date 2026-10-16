@@ -25,7 +25,7 @@ pub use backend::{ApplyPhase, ApplyProgress, Backend};
 pub use cleanup::{CleanupCategory, CleanupFinding, CleanupOutcome, Reversibility};
 pub use config::Config;
 pub use error::{Error, Result};
-pub use health::{all_passed, failure_reasons, run_health_checks, HealthCheckResult};
+pub use health::{HealthCheckResult, all_passed, failure_reasons, run_health_checks};
 pub use history::{HistoryEntry, HistoryOutcome, UpdateHistory};
 pub use maintenance::{Maintenance, MaintenanceKind, MaintenanceResult};
 pub use model::{
@@ -37,6 +37,6 @@ pub use report::RunReport;
 pub use restore::RestorePointGuard;
 pub use runner::{ProgressEmitter, ProgressEvent, Runner};
 pub use scan_cache::ScanCache;
-pub use verification::{verification_of, Verification};
+pub use verification::{Verification, verification_of};
 pub use version::Version;
 pub use windows_update::UpdateClass;

@@ -4,8 +4,8 @@ import {
   Cpu,
   HardDriveDownload,
   History,
+  House,
   Info,
-  LayoutDashboard,
   Layers,
   ListChecks,
   MemoryStick,
@@ -51,28 +51,34 @@ export interface NavItem {
   id: Tab;
   label: string;
   icon: ReactNode;
-  /** Empty for the items pinned to the bottom of the sidebar. */
+  /**
+   * "" for Home, "Care" for the everyday pages, `MORE_TOOLS` for the ones most
+   * people never need (collapsed by default), "footer" for the bottom.
+   */
   group: string;
 }
+
+/** The collapsible group of less-used pages. */
+export const MORE_TOOLS = "More tools";
 
 const icon = (C: typeof Cpu) => <C className="w-[17px] h-[17px]" strokeWidth={1.75} />;
 
 export const NAV_ITEMS: NavItem[] = [
-  { id: "dashboard", label: "Overview", icon: icon(LayoutDashboard), group: "" },
-  { id: "updates", label: "Updates", icon: icon(Package), group: "Keep current" },
-  { id: "drivers", label: "Drivers", icon: icon(MemoryStick), group: "Keep current" },
+  { id: "dashboard", label: "Home", icon: icon(House), group: "" },
+  { id: "updates", label: "Updates", icon: icon(Package), group: "Care" },
+  { id: "drivers", label: "Drivers", icon: icon(MemoryStick), group: "Care" },
   { id: "maintenance", label: "Cleanup", icon: icon(Brush), group: "Care" },
-  { id: "startup", label: "Startup", icon: icon(Power), group: "Care" },
   { id: "security", label: "Security", icon: icon(ShieldCheck), group: "Care" },
-  { id: "backup", label: "Restore points", icon: icon(RotateCcw), group: "Care" },
-  { id: "hardware", label: "System info", icon: icon(Cpu), group: "System" },
-  { id: "packages", label: "Installed", icon: icon(Layers), group: "System" },
-  { id: "history", label: "History", icon: icon(History), group: "System" },
-  { id: "schedule", label: "Schedule", icon: icon(CalendarClock), group: "Automation" },
-  { id: "profiles", label: "Profiles", icon: icon(ListChecks), group: "Automation" },
-  { id: "offline", label: "Offline cache", icon: icon(HardDriveDownload), group: "Automation" },
+  { id: "hardware", label: "System & health", icon: icon(Cpu), group: MORE_TOOLS },
+  { id: "startup", label: "Startup", icon: icon(Power), group: MORE_TOOLS },
+  { id: "backup", label: "Restore points", icon: icon(RotateCcw), group: MORE_TOOLS },
+  { id: "packages", label: "Installed", icon: icon(Layers), group: MORE_TOOLS },
+  { id: "history", label: "History", icon: icon(History), group: MORE_TOOLS },
+  { id: "schedule", label: "Schedule", icon: icon(CalendarClock), group: MORE_TOOLS },
+  { id: "profiles", label: "Profiles", icon: icon(ListChecks), group: MORE_TOOLS },
+  { id: "offline", label: "Offline cache", icon: icon(HardDriveDownload), group: MORE_TOOLS },
+  { id: "logs", label: "Logs", icon: icon(ScrollText), group: MORE_TOOLS },
   { id: "settings", label: "Settings", icon: icon(Settings), group: "footer" },
-  { id: "logs", label: "Logs", icon: icon(ScrollText), group: "footer" },
   { id: "about", label: "About", icon: icon(Info), group: "footer" },
 ];
 
