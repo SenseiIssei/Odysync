@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-label="Odysync — safe software and driver updates for Windows, macOS and Linux">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f1216"/>
+      <stop offset="1" stop-color="#171b22"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.18" cy="0.5" r="0.45">
+      <stop offset="0" stop-color="#5a6ad8" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#5a6ad8" stop-opacity="0"/>
+    </radialGradient>
+    <style>
+      text { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; }
+      .fade { opacity: 0; animation: fade 0.9s ease-out forwards; }
+      .row { opacity: 0; animation: slide 0.7s cubic-bezier(.2,.7,.2,1) forwards; }
+      .tick { opacity: 0; transform-box: fill-box; transform-origin: center; animation: pop 0.45s ease-out forwards; }
+      .orbit { transform-origin: 170px 180px; animation: spin 9s linear infinite; }
+      .check { stroke-dasharray: 60; stroke-dashoffset: 60; animation: draw 1s 0.4s ease-out forwards; }
+      .pulse { transform-origin: 170px 180px; animation: pulse 3.2s ease-in-out infinite; }
+      @keyframes fade { to { opacity: 1; } }
+      @keyframes slide { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+      @keyframes pop { 0% { opacity: 0; transform: scale(.4); } 70% { opacity: 1; transform: scale(1.12); } 100% { opacity: 1; transform: scale(1); } }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes draw { to { stroke-dashoffset: 0; } }
+      @keyframes pulse { 0%,100% { opacity: .35; transform: scale(1); } 50% { opacity: .08; transform: scale(1.18); } }
+      @media (prefers-reduced-motion: reduce) {
+        .orbit, .pulse { animation: none; }
+        .fade, .row, .tick { animation-duration: .01s; }
+      }
+    </style>
+  </defs>
+
+  <rect width="1200" height="360" rx="24" fill="url(#bg)"/>
+  <rect width="1200" height="360" rx="24" fill="url(#glow)"/>
+  <rect x="0.5" y="0.5" width="1199" height="359" rx="23.5" fill="none" stroke="#2a313b"/>
+
+  <!-- The mark: orbit, satellite, check. -->
+  <circle class="pulse" cx="170" cy="180" r="92" fill="none" stroke="#5a6ad8" stroke-width="2"/>
+  <rect x="98" y="108" width="144" height="144" rx="36" fill="#5a6ad8"/>
+  <g class="orbit">
+    <path d="M208.6 171.2 A40 40 0 1 1 194.9 147.7" fill="none" stroke="#fff" stroke-width="10.5" stroke-linecap="round"/>
+    <circle cx="204.2" cy="158" r="7.5" fill="#fff"/>
+  </g>
+  <path class="check" d="M152 181 L165 194 L189 167" fill="none" stroke="#fff" stroke-width="10.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g class="fade" style="animation-delay:.15s">
+    <text x="292" y="168" font-size="64" font-weight="700" letter-spacing="-1.5" fill="#e6e8eb">Odysync</text>
+  </g>
+  <g class="fade" style="animation-delay:.35s">
+    <text x="295" y="210" font-size="22" fill="#a0a7b1">Safe software &amp; driver updates.</text>
+    <text x="295" y="242" font-size="17" fill="#6f7782">Windows · macOS · Linux  —  desktop app and CLI</text>
+  </g>
+
+  <g transform="translate(730 0)">
+    <g class="row" style="animation-delay:0.6s">
+      <rect x="0" y="92" width="430" height="58" rx="12" fill="#1b2028" stroke="#2a313b"/>
+      <text x="20" y="117" font-size="15" font-weight="600" fill="#e6e8eb">Visual Studio Code</text>
+      <text x="20" y="137" font-size="12" fill="#6f7782">signed · Microsoft Corporation</text>
+      <text x="300" y="117" font-size="13" font-family="'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace" fill="#a0a7b1" text-anchor="end">1.140.0</text>
+      <text x="306" y="117" font-size="13" fill="#6f7782">→</text>
+      <text x="324" y="117" font-size="13" font-family="'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace" font-weight="600" fill="#e6e8eb">1.142.0</text>
+      <g class="tick" style="animation-delay:1.5s">
+        <circle cx="404" cy="121" r="11" fill="#52c58e" fill-opacity="0.15"/>
+        <path d="M398.5 121 l3.6 3.6 l7-7.4" fill="none" stroke="#52c58e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+    </g>
+    <g class="row" style="animation-delay:1.15s">
+      <rect x="0" y="166" width="430" height="58" rx="12" fill="#1b2028" stroke="#2a313b"/>
+      <text x="20" y="191" font-size="15" font-weight="600" fill="#e6e8eb">NVIDIA GeForce driver</text>
+      <text x="20" y="211" font-size="12" fill="#6f7782">WHQL · signed · NVIDIA</text>
+      <text x="300" y="191" font-size="13" font-family="'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace" fill="#a0a7b1" text-anchor="end">616.92</text>
+      <text x="306" y="191" font-size="13" fill="#6f7782">→</text>
+      <text x="324" y="191" font-size="13" font-family="'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace" font-weight="600" fill="#e6e8eb">617.42</text>
+      <g class="tick" style="animation-delay:2.05s">
+        <circle cx="404" cy="195" r="11" fill="#52c58e" fill-opacity="0.15"/>
+        <path d="M398.5 195 l3.6 3.6 l7-7.4" fill="none" stroke="#52c58e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+    </g>
+    <g class="row" style="animation-delay:1.7000000000000002s">
+      <rect x="0" y="240" width="430" height="58" rx="12" fill="#1b2028" stroke="#2a313b"/>
+      <text x="20" y="265" font-size="15" font-weight="600" fill="#e6e8eb">Git for Windows</text>
+      <text x="20" y="285" font-size="12" fill="#6f7782">signed · Johannes Schindelin</text>
+      <text x="300" y="265" font-size="13" font-family="'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace" fill="#a0a7b1" text-anchor="end">2.56.0</text>
+      <text x="306" y="265" font-size="13" fill="#6f7782">→</text>
+      <text x="324" y="265" font-size="13" font-family="'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace" font-weight="600" fill="#e6e8eb">2.56.0.2</text>
+      <g class="tick" style="animation-delay:2.6s">
+        <circle cx="404" cy="269" r="11" fill="#52c58e" fill-opacity="0.15"/>
+        <path d="M398.5 269 l3.6 3.6 l7-7.4" fill="none" stroke="#52c58e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+    </g>
+  </g>
+</svg>
