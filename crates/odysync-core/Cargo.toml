@@ -34,8 +34,18 @@ windows = { version = "0.62", features = [
     "Win32_Security",
     "Win32_System_Threading",
     "Win32_System_Restore",
+    # `platform::reboot_pending` reads the three registry locations Windows
+    # itself uses to record "a restart is needed to finish servicing".
+    "Win32_System_Registry",
+    # `platform::power_source`, so the daemon does not scan on battery.
+    "Win32_System_Power",
+    # `platform::resident_memory_bytes`, for the idle-RSS target.
+    "Win32_System_ProcessStatus",
 ] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "time", "fs", "io-util"] }
 tempfile = "3"
+
+[lints]
+workspace = true

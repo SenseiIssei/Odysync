@@ -1,4 +1,9 @@
-//! Start-with-Windows registration.
+//! Start-at-sign-in registration for Odysync itself.
+//!
+//! On Linux this is an XDG autostart entry in `~/.config/autostart`, and on
+//! macOS a LaunchAgent in `~/Library/LaunchAgents` — both per user, both
+//! without root, both removed by deleting one file. Windows is described
+//! below.
 //!
 //! Registration uses the *per-user* Run key
 //! `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. That deliberately
@@ -231,25 +236,150 @@ if (Test-Path $key) {{
     }
 }
 
-// ── Non-Windows stubs ───────────────────────────────────────────────────────
+// ── Linux and macOS ─────────────────────────────────────────────────────────
+
+/// The XDG autostart entry for `exe`.
+pub fn desktop_entry(exe: &str, minimized: bool) -> String {
+    // Exec quoting per the Desktop Entry spec: double quotes, with `"`, `` ` ``,
+    // `$` and `\` escaped inside them.
+    let quoted: String = exe
+        .chars()
+        .flat_map(|c| match c {
+            '"' | '`' | '$' | '\\' => vec!['\\', c],
+            other => vec![other],
+        })
+        .collect();
+    let flag = if minimized {
+        format!(" {MINIMIZED_FLAG}")
+    } else {
+        String::new()
+    };
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Odysync\nComment=Safe software and driver updates\n\
+         Exec=\"{quoted}\"{flag}\nX-GNOME-Autostart-enabled=true\n"
+    )
+}
+
+/// The LaunchAgent property list for `exe`.
+pub fn launch_agent(exe: &str, minimized: bool) -> Vec<u8> {
+    let mut args = vec![plist::Value::String(exe.to_string())];
+    if minimized {
+        args.push(plist::Value::String(MINIMIZED_FLAG.to_string()));
+    }
+    let mut dict = plist::Dictionary::new();
+    dict.insert(
+        "Label".into(),
+        plist::Value::String(LAUNCH_AGENT_LABEL.into()),
+    );
+    dict.insert("ProgramArguments".into(), plist::Value::Array(args));
+    dict.insert("RunAtLoad".into(), plist::Value::Boolean(true));
+    let mut out = Vec::new();
+    // Writing a dictionary of strings and booleans cannot fail.
+    let _ = plist::Value::Dictionary(dict).to_writer_xml(&mut out);
+    out
+}
+
+/// launchd label for Odysync's LaunchAgent.
+pub const LAUNCH_AGENT_LABEL: &str = "com.senseiissei.odysync";
 
 #[cfg(not(windows))]
-pub async fn status() -> Result<AutostartConfig> {
-    anyhow::bail!("autostart is only supported on Windows")
+fn registration_file() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("no home directory"))?;
+    Ok(if cfg!(target_os = "macos") {
+        home.join("Library")
+            .join("LaunchAgents")
+            .join(format!("{LAUNCH_AGENT_LABEL}.plist"))
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| home.join(".config"))
+            .join("autostart")
+            .join("odysync.desktop")
+    })
 }
 
 #[cfg(not(windows))]
-pub async fn enable(_minimized: bool) -> Result<()> {
-    anyhow::bail!("autostart is only supported on Windows")
+use std::path::PathBuf;
+
+#[cfg(not(windows))]
+pub async fn status() -> Result<AutostartConfig> {
+    let path = registration_file()?;
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Ok(AutostartConfig::default());
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let enabled = if cfg!(target_os = "macos") {
+        true
+    } else {
+        crate::startup_items::parse_desktop_entry(&text).enabled()
+    };
+    Ok(AutostartConfig {
+        enabled,
+        minimized: text.contains(MINIMIZED_FLAG),
+    })
+}
+
+#[cfg(not(windows))]
+pub async fn enable(minimized: bool) -> Result<()> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("could not resolve the current executable path: {e}"))?;
+    let exe = exe.display().to_string();
+    let path = registration_file()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let content = if cfg!(target_os = "macos") {
+        launch_agent(&exe, minimized)
+    } else {
+        desktop_entry(&exe, minimized).into_bytes()
+    };
+    std::fs::write(&path, content)?;
+    tracing::info!(minimized, path = %path.display(), "registered autostart entry");
+    Ok(())
 }
 
 #[cfg(not(windows))]
 pub async fn disable() -> Result<()> {
-    anyhow::bail!("autostart is only supported on Windows")
+    let path = registration_file()?;
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_desktop_entry_quotes_the_path_and_carries_the_flag() {
+        let entry = desktop_entry("/opt/My Apps/odysync-gui", true);
+        let parsed = crate::startup_items::parse_desktop_entry(&entry);
+        assert_eq!(parsed.name.as_deref(), Some("Odysync"));
+        assert_eq!(
+            parsed.exec.as_deref(),
+            Some("\"/opt/My Apps/odysync-gui\" --minimized")
+        );
+        assert!(parsed.enabled());
+        // Characters the spec reserves inside quotes are escaped.
+        assert!(desktop_entry("/x/$HOME`id`", false).contains("\\$HOME\\`id\\`"));
+    }
+
+    #[test]
+    fn the_launch_agent_runs_at_login_with_the_right_arguments() {
+        let bytes = launch_agent("/Applications/Odysync.app/Contents/MacOS/odysync-gui", true);
+        let (label, command, disabled) =
+            crate::startup_items::parse_launch_agent(&bytes).expect("a valid agent");
+        assert_eq!(label, LAUNCH_AGENT_LABEL);
+        assert_eq!(
+            command,
+            "/Applications/Odysync.app/Contents/MacOS/odysync-gui --minimized"
+        );
+        assert!(!disabled);
+    }
+
     use super::*;
 
     #[test]
@@ -343,11 +473,34 @@ mod tests {
         assert!(parsed.exe.contains("odysync.exe"));
     }
 
-    #[cfg(not(windows))]
+    /// A real round trip through the filesystem. `XDG_CONFIG_HOME` is only
+    /// read by this module and `startup_items`, whose tests do not touch the
+    /// environment, so pointing it at a temporary directory is safe here.
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[tokio::test]
-    async fn non_windows_reports_unsupported() {
-        assert!(status().await.is_err());
-        assert!(enable(false).await.is_err());
-        assert!(disable().await.is_err());
+    async fn linux_registration_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+
+        assert_eq!(status().await.unwrap(), AutostartConfig::default());
+        enable(true).await.unwrap();
+        assert_eq!(
+            status().await.unwrap(),
+            AutostartConfig {
+                enabled: true,
+                minimized: true
+            }
+        );
+        assert!(dir
+            .path()
+            .join("autostart")
+            .join("odysync.desktop")
+            .exists());
+        disable().await.unwrap();
+        assert_eq!(status().await.unwrap(), AutostartConfig::default());
+        // Disabling twice is not an error.
+        disable().await.unwrap();
+
+        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }

@@ -29,14 +29,29 @@ sha2.workspace = true
 hex.workspace = true
 directories.workspace = true
 anyhow.workspace = true
+# Sparkle appcasts (macOS app updates): the feed is XML, the app's settings a
+# property list, and updates are signed with Ed25519.
+roxmltree = "0.21"
+plist = "1"
+ed25519-dalek = "3"
+base64 = "0.23"
 
 [target.'cfg(windows)'.dependencies]
+# The direct backend reads the Uninstall keys — the list Settings → Apps shows.
+winreg = "0.56"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Com",
     "Win32_System_UpdateAgent",
+    # `cleanup` asks the shell for the Recycle Bin's size and empties it.
+    # Walking `C:\$Recycle.Bin` instead would under-report (it is per-user and
+    # permission-guarded) and is exactly the shape the root-safety rule refuses.
+    "Win32_UI_Shell",
 ] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tempfile = "3"
+
+[lints]
+workspace = true

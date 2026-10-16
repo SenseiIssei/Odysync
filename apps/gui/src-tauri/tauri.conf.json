@@ -1,6 +1,6 @@
 {
   "productName": "Odysync",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "identifier": "com.senseiissei.odysync",
   "build": {
     "frontendDist": "../dist",
@@ -12,10 +12,10 @@
     "windows": [
       {
         "title": "Odysync",
-        "width": 1100,
-        "height": 750,
-        "minWidth": 800,
-        "minHeight": 550,
+        "width": 1180,
+        "height": 780,
+        "minWidth": 860,
+        "minHeight": 560,
         "resizable": true,
         "fullscreen": false,
         "center": true,
@@ -30,7 +30,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,13 +43,21 @@
     "windows": {
       "nsis": {
         "installMode": "perMachine",
-        "languages": ["English", "German"],
+        "languages": [
+          "English",
+          "German"
+        ],
         "displayLanguageSelector": true
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }
-    }
+    },
+    "shortDescription": "Safe software and driver updates",
+    "longDescription": "Odysync keeps installed software, drivers and system components up to date on Windows, macOS and Linux, verifying every installer before it runs.",
+    "category": "Utility",
+    "publisher": "SenseiIssei",
+    "copyright": "MIT License"
   },
   "plugins": {}
 }

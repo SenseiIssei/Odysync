@@ -1,69 +1,72 @@
-import { Shield } from "lucide-react";
 import { useStore } from "../store";
+import { Card, Facts } from "../components/ui";
+import { Logo } from "../components/Logo";
 
-const CHANGELOG = [
-  "Security page: malware, persistence, network and hardening audit",
-  "Hardware Updates page for drivers, firmware and vendor tools",
-  "Start with Windows, optionally minimised to the tray",
-  "Log viewer auto-scrolls and follows new entries",
-  "All pages load in the background at startup and keep their state",
-  "Settings now round-trip correctly and no longer reset holds or exclusions",
-  "Update history is recorded and persisted after every apply",
-  "Startup program enable/disable works in both directions",
-  "Backend detection is cached instead of re-probed on every page",
+const HIGHLIGHTS = [
+  "Updates installed programs straight from their publishers — winget is optional",
+  "Every installer Odysync downloads must carry its publisher's signature",
+  "NVIDIA drivers from NVIDIA's own service, WHQL only",
+  "Mac apps through their own Sparkle feeds, checked against the app's own key",
+  "Cleanup that measures first and asks before anything permanent",
+  "Runtimes, device problems and driver backups in one place",
+  "A calmer interface with light and dark themes",
+];
+
+const PRINCIPLES = [
+  ["Never downgrade", "An update must be newer by real version comparison, not by string order."],
+  ["Never guess", "An unreadable version is a reason to skip, never a reason to install."],
+  ["Never reinstall", "A failed update stays failed; nothing is installed over a working copy."],
+  ["Name who checked", "Every source says who verified what it installs."],
 ];
 
 export default function About() {
   const { sysInfo } = useStore();
+  const info = sysInfo.data;
 
   return (
-    <div className="max-w-2xl mx-auto space-y-4">
-      <div className="text-center py-8">
-        <Shield className="w-16 h-16 mx-auto mb-4 text-accent text-glow-cyan" />
-        <h2 className="text-2xl font-bold text-glow-cyan">Odysync</h2>
-        <p className="text-sm text-cyber-text-dim mt-1">
-          v{sysInfo.data?.version ?? "…"}
-        </p>
-        <p className="text-xs text-cyber-text-faint mt-2">
-          Safe, verified software and driver updates
-        </p>
+    <>
+      <section className="rounded-xl border border-line bg-surface p-8 flex flex-col items-center text-center">
+        <Logo className="w-16 h-16" />
+        <h1 className="text-2xl font-semibold tracking-tight mt-4">Odysync</h1>
+        <p className="text-muted mt-1">Safe software and driver updates for Windows, macOS and Linux.</p>
+        <p className="text-sm text-faint mt-1">Version {info?.version ?? "…"} · free and open source (MIT)</p>
+      </section>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card title="New in this version">
+          <ul className="space-y-2 text-sm text-muted">
+            {HIGHLIGHTS.map((line) => (
+              <li key={line} className="flex gap-2.5">
+                <span className="mt-2 w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
+                {line}
+              </li>
+            ))}
+          </ul>
+        </Card>
+        <Card title="Rules it never breaks">
+          <ul className="space-y-3">
+            {PRINCIPLES.map(([title, text]) => (
+              <li key={title}>
+                <div className="text-sm font-medium">{title}</div>
+                <div className="text-sm text-muted">{text}</div>
+              </li>
+            ))}
+          </ul>
+        </Card>
       </div>
 
-      <div className="gradient-border p-4 space-y-2">
-        <h3 className="text-sm font-bold text-accent">What&apos;s new</h3>
-        <div className="text-xs text-cyber-text-dim space-y-1 font-mono">
-          {CHANGELOG.map((line) => (
-            <div key={line}>
-              <span className="text-success">+</span> {line}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {sysInfo.data && (
-        <div className="rounded-lg border border-cyber-border bg-cyber-surface p-4 text-xs space-y-1.5">
-          <Row label="Operating system" value={sysInfo.data.os} />
-          <Row label="Version" value={sysInfo.data.version} />
-          <Row
-            label="Privileges"
-            value={sysInfo.data.elevated ? "Elevated" : "Standard user"}
+      {info && (
+        <Card title="This installation">
+          <Facts
+            items={[
+              ["System", info.os],
+              ["Odysync", info.version],
+              ["Running as", info.elevated ? "Administrator" : "Standard user"],
+              ["Source code", "github.com/SenseiIssei/Odysync"],
+            ]}
           />
-        </div>
+        </Card>
       )}
-
-      <div className="text-center text-xs text-cyber-text-faint">
-        <p>Built with Tauri, React and Rust.</p>
-        <p className="mt-1 select-text">github.com/SenseiIssei/Odysync</p>
-      </div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-cyber-text-dim">{label}</span>
-      <span className="text-cyber-text font-mono truncate">{value}</span>
-    </div>
+    </>
   );
 }

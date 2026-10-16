@@ -1,38 +1,47 @@
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
-import { CheckCircle, Lock, ShieldCheck } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, Lock, Monitor, Moon, Sun } from "lucide-react";
 import * as api from "../api";
 import { useStore } from "../store";
+import { useTheme, type ThemeChoice } from "../theme";
 import {
+  Badge,
+  Button,
   Card,
   ErrorBar,
   PageHeader,
-  RefreshButton,
   ResourceView,
+  Segmented,
+  Switch,
   Toggle,
-  errorText,
 } from "../components/ui";
-import type { Config } from "../types";
+import { errorText } from "../format";
+import type { BackendDto, Config } from "../types";
+
+const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 export default function Settings() {
   const { config, backends, sysInfo } = useStore();
-  const [draft, setDraft] = useState<Config | null>(null);
+  const theme = useTheme();
+  // Unsaved edits. `null` means "no edits": the form shows the saved config.
+  const [edits, setEdits] = useState<Config | null>(null);
+  const draft = edits ?? config.data;
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // Adopt the loaded config as the edit buffer, but never clobber unsaved edits.
-  useEffect(() => {
-    if (config.data && draft === null) setDraft(config.data);
-  }, [config.data, draft]);
-
   const patch = (p: Partial<Config>) => {
-    setDraft((d) => (d ? { ...d, ...p } : d));
+    setEdits((d) => {
+      const base = d ?? config.data;
+      return base ? { ...base, ...p } : base;
+    });
     setSaved(false);
   };
 
   const patchPolicy = (p: Partial<Config["policy"]>) => {
-    setDraft((d) => (d ? { ...d, policy: { ...d.policy, ...p } } : d));
+    setEdits((d) => {
+      const base = d ?? config.data;
+      return base ? { ...base, policy: { ...base.policy, ...p } } : base;
+    });
     setSaved(false);
   };
 
@@ -42,7 +51,8 @@ export default function Settings() {
     setError(null);
     try {
       await api.saveConfig(draft);
-      await config.refresh();
+      await Promise.all([config.refresh(), backends.refresh()]);
+      setEdits(null);
       setSaved(true);
     } catch (e) {
       setError(errorText(e));
@@ -53,137 +63,126 @@ export default function Settings() {
 
   const revert = async () => {
     await config.refresh();
-    setDraft(null);
+    setEdits(null);
     setSaved(false);
     setError(null);
   };
 
   const dirty =
-    draft !== null &&
-    config.data !== null &&
-    JSON.stringify(draft) !== JSON.stringify(config.data);
+    edits !== null && config.data !== null && JSON.stringify(edits) !== JSON.stringify(config.data);
+
+  /** Whether a source is switched on in the draft. */
+  const isOn = (b: BackendDto) => {
+    if (!draft) return b.enabled;
+    if (draft.disabled_backends.some((d) => same(d, b.kind))) return false;
+    if (b.opt_in) return (draft.enabled_backends ?? []).some((e) => same(e, b.kind));
+    return true;
+  };
+
+  const setOn = (b: BackendDto, on: boolean) => {
+    if (!draft) return;
+    const disabled = draft.disabled_backends.filter((d) => !same(d, b.kind));
+    const enabled = (draft.enabled_backends ?? []).filter((e) => !same(e, b.kind));
+    if (b.opt_in) {
+      patch({ disabled_backends: disabled, enabled_backends: on ? [...enabled, b.kind] : enabled });
+    } else {
+      patch({
+        disabled_backends: on ? disabled : [...disabled, b.kind],
+        enabled_backends: enabled,
+      });
+    }
+  };
+
+  const standard = backends.data.filter((b) => !b.opt_in);
+  const optional = backends.data.filter((b) => b.opt_in);
+  const platform = sysInfo.data?.platform ?? "windows";
 
   return (
-    <div className="max-w-2xl mx-auto space-y-4">
+    <>
       <PageHeader
         title="Settings"
-        subtitle="Safety policy, automation and network behaviour"
-        actions={<RefreshButton onClick={() => void revert()} spinning={config.loading} label="Reload" />}
+        subtitle="How Odysync looks, where it gets updates from, and the rules it never breaks."
       />
 
-      <ResourceView resource={config} loadingLabel="Loading configuration...">
+      <Card title="Appearance">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="text-sm font-medium">Theme</div>
+            <div className="text-sm text-muted">Follow the system, or pick one.</div>
+          </div>
+          <Segmented<ThemeChoice>
+            label="Theme"
+            value={theme.choice}
+            onChange={theme.setChoice}
+            options={[
+              { value: "system", label: "System", icon: <Monitor className="w-3.5 h-3.5" /> },
+              { value: "light", label: "Light", icon: <Sun className="w-3.5 h-3.5" /> },
+              { value: "dark", label: "Dark", icon: <Moon className="w-3.5 h-3.5" /> },
+            ]}
+          />
+        </div>
+      </Card>
+
+      <ResourceView resource={config} loadingLabel="Loading settings…">
         {draft && (
-          <div className="space-y-4">
-            <Card title="Backends">
-              {backends.data.length === 0 ? (
-                <p className="text-xs text-cyber-text-faint">
-                  {backends.loading ? "Detecting backends..." : "No backends detected."}
-                </p>
-              ) : (
-                <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                  {backends.data.map((b) => {
-                    const disabled = draft.disabled_backends.some(
-                      (d) => d.toLowerCase() === b.kind.toLowerCase(),
-                    );
-                    return (
-                      <div key={b.kind} className="flex items-center justify-between gap-3 text-xs">
-                        <span className="text-cyber-text-dim truncate" title={b.kind}>
-                          {b.name}
-                        </span>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                              b.available
-                                ? "bg-success/20 text-success"
-                                : "bg-cyber-bg text-cyber-text-faint"
-                            }`}
-                          >
-                            {b.available ? "Available" : "Not installed"}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              patch({
-                                disabled_backends: disabled
-                                  ? draft.disabled_backends.filter(
-                                      (d) => d.toLowerCase() !== b.kind.toLowerCase(),
-                                    )
-                                  : [...draft.disabled_backends, b.kind],
-                              })
-                            }
-                            className={`px-2 py-0.5 rounded text-[10px] border transition-all ${
-                              disabled
-                                ? "border-danger/30 text-danger hover:bg-danger/10"
-                                : "border-cyber-border text-cyber-text-dim hover:border-accent/30 hover:text-accent"
-                            }`}
-                          >
-                            {disabled ? "Disabled" : "Enabled"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+          <>
+            <Card
+              title="Update sources"
+              description="Everything that is installed on this machine is used by default. Each source names who verifies what it installs."
+              padded={false}
+            >
+              <SourceList backends={standard} isOn={isOn} setOn={setOn} />
+              {optional.length > 0 && (
+                <>
+                  <div className="px-5 pt-5 pb-2 border-t border-line">
+                    <div className="text-sm font-medium">Optional sources</div>
+                    <p className="text-sm text-muted">
+                      Off until you turn them on. Odysync does not need winget: installed
+                      programs are updated straight from their publishers.
+                    </p>
+                  </div>
+                  <SourceList backends={optional} isOn={isOn} setOn={setOn} />
+                </>
               )}
             </Card>
 
-            <Card title="Safety Policy">
-              <div className="space-y-4">
+            <Card title="Safety rules">
+              <div className="space-y-5">
                 <Toggle
                   label="Stable releases only"
-                  description="Never install alpha, beta, rc or nightly builds"
+                  description="Never install alpha, beta, release-candidate or nightly builds."
                   checked={draft.policy.stable_only}
                   onChange={(v) => patchPolicy({ stable_only: v })}
                 />
                 <Toggle
                   label="Require known versions"
-                  description="Refuse updates where either version string is unparseable"
+                  description="Skip an update when either version cannot be read — a guess is how downgrades happen."
                   checked={draft.policy.require_known_versions}
                   onChange={(v) => patchPolicy({ require_known_versions: v })}
                 />
-                <Toggle
-                  label="Create a restore point before applying"
-                  description="Windows only — takes a system restore point before each run"
-                  checked={draft.restore_point}
-                  onChange={(v) => patch({ restore_point: v })}
-                />
-
-                <div className="flex items-center justify-between gap-4 pt-2 border-t border-cyber-border">
-                  <div>
-                    <div className="text-sm font-medium flex items-center gap-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-cyber-text-dim" />
-                      Elevation
-                    </div>
-                    <div className="text-xs text-cyber-text-dim">
-                      Detected from the running process — not a setting
-                    </div>
-                  </div>
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0 ${
-                      sysInfo.data?.elevated
-                        ? "bg-warning/20 text-warning"
-                        : "bg-cyber-bg text-cyber-text-faint"
-                    }`}
-                  >
-                    {sysInfo.data?.elevated ? "Elevated" : "Standard user"}
-                  </span>
-                </div>
-
+                {platform === "windows" && (
+                  <Toggle
+                    label="Create a restore point before installing"
+                    description="A Windows system restore point before each run. Needs administrator rights."
+                    checked={draft.restore_point}
+                    onChange={(v) => patch({ restore_point: v })}
+                  />
+                )}
                 {draft.policy.holds.length > 0 && (
-                  <div className="pt-2 border-t border-cyber-border">
+                  <div className="pt-4 border-t border-line">
                     <div className="text-sm font-medium flex items-center gap-1.5 mb-2">
-                      <Lock className="w-3.5 h-3.5 text-cyber-text-dim" />
-                      Held packages ({draft.policy.holds.length})
+                      <Lock className="w-3.5 h-3.5 text-muted" />
+                      Held packages
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {draft.policy.holds.map((h) => (
-                        <span
-                          key={h.package}
-                          title={h.note ?? undefined}
-                          className="text-[10px] px-2 py-0.5 rounded-full bg-cyber-bg border border-cyber-border text-cyber-text-dim font-mono"
-                        >
-                          {h.package}
-                          {h.pin ? ` @ ${h.pin}` : ""}
+                        <span key={h.package} title={h.note ?? undefined}>
+                          <Badge>
+                            <span className="font-mono">
+                              {h.package}
+                              {h.pin ? ` @ ${h.pin}` : ""}
+                            </span>
+                          </Badge>
                         </span>
                       ))}
                     </div>
@@ -192,96 +191,88 @@ export default function Settings() {
               </div>
             </Card>
 
-            <StartupCard />
+            <StartupCard platform={platform} />
 
             <Card title="Automation">
-              <div className="space-y-4">
+              <div className="space-y-5">
                 <Toggle
-                  label="Auto-apply updates"
-                  description="Apply everything the policy allows straight after a scan"
+                  label="Install automatically after a scan"
+                  description="Applies everything the safety rules allow without asking. Off is the careful choice."
                   checked={draft.auto_apply}
                   onChange={(v) => patch({ auto_apply: v })}
                 />
                 <Toggle
-                  label="Desktop notifications"
-                  description="Notify on scan results and when an apply finishes"
+                  label="Notifications"
+                  description="When a scan finds updates and when an installation finishes."
                   checked={draft.notifications}
                   onChange={(v) => patch({ notifications: v })}
                 />
-
-                <NumberField
-                  label="Scan interval (hours)"
-                  hint="0 = manual only"
-                  min={0}
-                  max={168}
-                  value={draft.scan_interval_hours}
-                  onChange={(v) => patch({ scan_interval_hours: v })}
-                />
-                <NumberField
-                  label="Max retries"
-                  hint="Retry a failed update up to N times"
-                  min={0}
-                  max={10}
-                  value={draft.max_retries}
-                  onChange={(v) => patch({ max_retries: v })}
-                />
-                <NumberField
-                  label="Backend timeout (seconds)"
-                  hint="Time limit for a single backend operation"
-                  min={10}
-                  max={3600}
-                  value={draft.backend_timeout_secs}
-                  onChange={(v) => patch({ backend_timeout_secs: v })}
-                />
+                <div className="grid gap-5 sm:grid-cols-3 pt-1">
+                  <NumberField
+                    label="Scan every (hours)"
+                    hint="0 means only when you ask"
+                    min={0}
+                    max={168}
+                    value={draft.scan_interval_hours}
+                    onChange={(v) => patch({ scan_interval_hours: v })}
+                  />
+                  <NumberField
+                    label="Retries"
+                    hint="For network hiccups"
+                    min={0}
+                    max={10}
+                    value={draft.max_retries}
+                    onChange={(v) => patch({ max_retries: v })}
+                  />
+                  <NumberField
+                    label="Timeout (seconds)"
+                    hint="Per source"
+                    min={10}
+                    max={3600}
+                    value={draft.backend_timeout_secs}
+                    onChange={(v) => patch({ backend_timeout_secs: v })}
+                  />
+                </div>
               </div>
             </Card>
 
             <Card title="Network">
-              <div className="space-y-4">
+              <div className="grid gap-5 sm:grid-cols-[1fr_200px]">
                 <div>
-                  <label htmlFor="proxy" className="block text-sm font-medium mb-1">
-                    HTTP proxy URL
+                  <label htmlFor="proxy" className="block text-sm font-medium mb-1.5">
+                    HTTP proxy
                   </label>
                   <input
                     id="proxy"
                     type="text"
                     value={draft.proxy_url ?? ""}
                     onChange={(e) => patch({ proxy_url: e.target.value.trim() || null })}
-                    className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+                    className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-sm placeholder:text-faint focus:border-accent outline-none"
                     placeholder="http://proxy.example.com:8080"
                   />
-                  <p className="text-xs text-cyber-text-dim mt-1">
-                    Used for version lookups and installer downloads. Leave empty for a
-                    direct connection.
-                  </p>
+                  <p className="text-sm text-muted mt-1.5">Leave empty for a direct connection.</p>
                 </div>
-
                 <div>
-                  <label htmlFor="conc" className="block text-sm font-medium mb-1">
-                    Concurrency
+                  <label htmlFor="conc" className="block text-sm font-medium mb-1.5">
+                    Parallel sources: <span className="tabular-nums">{draft.concurrency}</span>
                   </label>
-                  <div className="flex items-center gap-3">
-                    <input
-                      id="conc"
-                      type="range"
-                      min={1}
-                      max={16}
-                      value={draft.concurrency}
-                      onChange={(e) => patch({ concurrency: Number(e.target.value) })}
-                      className="flex-1 accent-cyan-400"
-                    />
-                    <span className="text-sm font-mono w-8 text-center text-accent">
-                      {draft.concurrency}
-                    </span>
-                  </div>
-                  <p className="text-xs text-cyber-text-dim mt-1">
-                    Maximum backends scanned or applied at the same time.
-                  </p>
+                  <input
+                    id="conc"
+                    type="range"
+                    min={1}
+                    max={16}
+                    value={draft.concurrency}
+                    onChange={(e) => patch({ concurrency: Number(e.target.value) })}
+                    className="w-full accent-[var(--accent)] mt-2"
+                  />
                 </div>
               </div>
             </Card>
 
-            <Card title="Excluded packages">
+            <Card
+              title="Excluded packages"
+              description="One per line, as a bare id (vscode) or source:id (pip:requests). Excluded packages are never updated."
+            >
               <textarea
                 value={draft.policy.exclude.join("\n")}
                 onChange={(e) =>
@@ -293,59 +284,78 @@ export default function Settings() {
                   })
                 }
                 rows={4}
-                className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm font-mono focus:border-accent"
-                placeholder={"One package per line, as backend:id or a bare id"}
+                className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm font-mono placeholder:text-faint focus:border-accent outline-none selectable"
+                placeholder={"vscode\npip:requests"}
               />
             </Card>
 
-            <div className="flex items-center gap-3 sticky bottom-0 py-3 bg-cyber-bg/90 backdrop-blur-sm">
-              <motion.button
-                type="button"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={save}
-                disabled={saving || !dirty}
-                className="px-5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50 transition-all glow-cyan"
-              >
-                {saving ? "Saving..." : "Save Settings"}
-              </motion.button>
+            {error && <ErrorBar message={error} />}
+
+            <div className="sticky bottom-0 -mx-8 px-8 py-3 bg-canvas border-t border-line flex items-center gap-3">
+              <Button variant="primary" onClick={() => void save()} busy={saving} disabled={!dirty}>
+                Save changes
+              </Button>
               {dirty && (
-                <button
-                  type="button"
-                  onClick={() => void revert()}
-                  className="px-4 py-2 rounded-lg border border-cyber-border text-sm hover:bg-cyber-surface-2 transition-all"
-                >
-                  Discard changes
-                </button>
+                <Button variant="ghost" onClick={() => void revert()}>
+                  Discard
+                </Button>
               )}
               {saved && !dirty && (
-                <motion.span
-                  initial={{ opacity: 0, x: -5 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="text-sm text-success flex items-center gap-1"
-                >
-                  <CheckCircle className="w-4 h-4" />
+                <span className="text-sm text-success flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4" />
                   Saved
-                </motion.span>
+                </span>
               )}
             </div>
-
-            {error && <ErrorBar message={error} />}
-          </div>
+          </>
         )}
       </ResourceView>
-    </div>
+    </>
+  );
+}
+
+function SourceList({
+  backends,
+  isOn,
+  setOn,
+}: {
+  backends: BackendDto[];
+  isOn: (b: BackendDto) => boolean;
+  setOn: (b: BackendDto, on: boolean) => void;
+}) {
+  return (
+    <ul className="divide-y divide-line border-t border-line">
+      {backends.map((b) => (
+        <li key={b.kind} className="flex items-center gap-4 px-5 py-3">
+          <div className="flex-1 min-w-0">
+            <div className="text-sm text-fg truncate" title={b.kind}>
+              {b.name}
+            </div>
+            <div className="text-xs text-faint" title={b.verification_detail}>
+              {b.verification}
+            </div>
+          </div>
+          {!b.available && <Badge>not installed</Badge>}
+          <Switch
+            label={`Use ${b.name}`}
+            checked={b.available && isOn(b)}
+            disabled={!b.available}
+            onChange={(v) => setOn(b, v)}
+          />
+        </li>
+      ))}
+    </ul>
   );
 }
 
 /**
- * Windows startup registration.
+ * Starting with the operating system.
  *
- * Kept out of the config file deliberately: the source of truth is the HKCU Run
- * key, so a toggle here must read back from the registry rather than from
- * whatever the config last claimed.
+ * Kept out of the config file deliberately: the source of truth is the OS's
+ * own startup registration, so a toggle here reads back from it rather than
+ * from whatever the config last claimed.
  */
-function StartupCard() {
+function StartupCard({ platform }: { platform: string }) {
   const { autostart, security } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -368,27 +378,29 @@ function StartupCard() {
 
   return (
     <Card title="Startup">
-      <div className="space-y-4">
+      <div className="space-y-5">
         <Toggle
-          label="Start Odysync with Windows"
-          description="Registers Odysync for the current user — no administrator rights needed"
+          label="Start Odysync when you sign in"
+          description="Registered for your user only — no administrator rights needed."
           checked={cfg?.enabled ?? false}
           disabled={busy || autostart.loading}
           onChange={(v) => void set(v, cfg?.minimized ?? true)}
         />
         <Toggle
-          label="Start minimised to the tray"
-          description="Launch hidden in the notification area instead of opening the window"
+          label="Start in the background"
+          description="Stay in the tray instead of opening the window."
           checked={cfg?.minimized ?? false}
           disabled={busy || autostart.loading || !(cfg?.enabled ?? false)}
           onChange={(v) => void set(true, v)}
         />
-        <Toggle
-          label="Run a security audit at startup"
-          description="Check for malware, persistence and unauthorised access each time Odysync starts"
-          checked={security.scanOnStartup}
-          onChange={security.setScanOnStartup}
-        />
+        {platform === "windows" && (
+          <Toggle
+            label="Run the security audit at startup"
+            description="Checks for persistence, tampering and weak settings each time Odysync starts."
+            checked={security.scanOnStartup}
+            onChange={security.setScanOnStartup}
+          />
+        )}
         {error && <ErrorBar message={error} />}
       </div>
     </Card>
@@ -413,21 +425,19 @@ function NumberField({
   const clamp = (n: number) => Math.min(max, Math.max(min, n));
   return (
     <div>
-      <label className="block text-sm font-medium mb-1">{label}</label>
-      <div className="flex items-center gap-3">
-        <input
-          type="number"
-          min={min}
-          max={max}
-          value={value}
-          onChange={(e) => {
-            const parsed = parseInt(e.target.value, 10);
-            onChange(Number.isNaN(parsed) ? min : clamp(parsed));
-          }}
-          className="w-24 px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
-        />
-        <span className="text-xs text-cyber-text-dim">{hint}</span>
-      </div>
+      <label className="block text-sm font-medium mb-1.5">{label}</label>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(e) => {
+          const parsed = parseInt(e.target.value, 10);
+          onChange(Number.isNaN(parsed) ? min : clamp(parsed));
+        }}
+        className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-sm tabular-nums focus:border-accent outline-none"
+      />
+      <p className="text-xs text-faint mt-1">{hint}</p>
     </div>
   );
 }

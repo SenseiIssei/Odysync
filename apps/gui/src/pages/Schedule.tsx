@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { CalendarClock, Trash2 } from "lucide-react";
 import * as api from "../api";
+import { useStore } from "../store";
 import {
+  Badge,
+  Button,
   Card,
   ErrorBar,
   PageHeader,
+  Segmented,
   SuccessBar,
-  errorText,
 } from "../components/ui";
+import { errorText } from "../format";
+
+const SCHEDULER: Record<string, string> = {
+  windows: "Windows Task Scheduler",
+  macos: "launchd",
+  linux: "a systemd user timer",
+};
 
 export default function Schedule() {
+  const { sysInfo } = useStore();
   const [frequency, setFrequency] = useState("daily");
   const [time, setTime] = useState("09:00");
   const [taskName, setTaskName] = useState("Odysync");
@@ -35,8 +46,8 @@ export default function Schedule() {
     }
   }, []);
 
-  // Debounced so typing in the task-name field does not spawn a schtasks
-  // query per keystroke.
+  // Debounced so typing in the name field does not query the scheduler per
+  // keystroke.
   useEffect(() => {
     const id = setTimeout(() => void check(taskName), 400);
     return () => clearTimeout(id);
@@ -48,7 +59,7 @@ export default function Schedule() {
     setMessage(null);
     try {
       await api.createSchedule({ frequency, time, task_name: taskName.trim() || null });
-      setMessage(`Scheduled "${taskName}" ${frequency} at ${time}.`);
+      setMessage(`Odysync will check for updates ${frequency === "daily" ? "every day" : "every week"} at ${time}.`);
       await check(taskName);
     } catch (e) {
       setError(errorText(e));
@@ -63,7 +74,7 @@ export default function Schedule() {
     setMessage(null);
     try {
       const existed = await api.removeSchedule(taskName);
-      setMessage(existed ? `Removed "${taskName}".` : "No schedule existed.");
+      setMessage(existed ? "The schedule was removed." : "There was no schedule to remove.");
       await check(taskName);
     } catch (e) {
       setError(errorText(e));
@@ -72,48 +83,53 @@ export default function Schedule() {
     }
   };
 
-  const statusLabel =
-    checking || scheduled === null ? "Checking..." : scheduled ? "Scheduled" : "Not scheduled";
+  const scheduler = SCHEDULER[sysInfo.data?.platform ?? "windows"] ?? "the system scheduler";
 
   return (
-    <div className="max-w-2xl mx-auto space-y-4">
+    <>
       <PageHeader
-        title="Scheduled Updates"
-        subtitle="Run a scan automatically on a schedule via the system task scheduler."
+        title="Schedule"
+        subtitle={`Let ${scheduler} run Odysync for you. A scheduled run installs the updates that pass every safety rule — the same ones the Updates page shows as ready — and nothing else.`}
       />
 
-      <Card>
-        <div className="space-y-4">
-          <div>
-            <label htmlFor="freq" className="block text-sm font-medium mb-1">
-              Frequency
-            </label>
-            <select
-              id="freq"
-              value={frequency}
-              onChange={(e) => setFrequency(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
-            >
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-            </select>
-          </div>
+      {message && <SuccessBar message={message} />}
+      {error && <ErrorBar message={error} />}
 
+      <Card
+        title="Automatic scan"
+        actions={
+          <Badge tone={scheduled ? "success" : "neutral"}>
+            {checking || scheduled === null ? "Checking…" : scheduled ? "Active" : "Not scheduled"}
+          </Badge>
+        }
+      >
+        <div className="grid gap-5 sm:grid-cols-3">
           <div>
-            <label htmlFor="time" className="block text-sm font-medium mb-1">
-              Time (24h)
+            <div className="text-sm font-medium mb-1.5">How often</div>
+            <Segmented
+              label="Frequency"
+              value={frequency}
+              onChange={setFrequency}
+              options={[
+                { value: "daily", label: "Daily" },
+                { value: "weekly", label: "Weekly" },
+              ]}
+            />
+          </div>
+          <div>
+            <label htmlFor="time" className="block text-sm font-medium mb-1.5">
+              At
             </label>
             <input
               id="time"
               type="time"
               value={time}
               onChange={(e) => setTime(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+              className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:border-accent"
             />
           </div>
-
           <div>
-            <label htmlFor="task" className="block text-sm font-medium mb-1">
+            <label htmlFor="task" className="block text-sm font-medium mb-1.5">
               Task name
             </label>
             <input
@@ -121,49 +137,27 @@ export default function Schedule() {
               type="text"
               value={taskName}
               onChange={(e) => setTaskName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-cyber-border bg-cyber-bg text-sm focus:border-accent"
+              className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:border-accent"
             />
           </div>
-
-          <div className="flex items-center gap-2 text-sm">
-            <span
-              className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                scheduled
-                  ? "bg-success/20 text-success glow-green"
-                  : "bg-cyber-bg text-cyber-text-faint"
-              }`}
-            >
-              {statusLabel}
-            </span>
-          </div>
-
-          <div className="flex gap-3">
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={create}
-              disabled={busy || !taskName.trim()}
-              className="px-5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-50 transition-all glow-cyan"
-            >
-              {busy ? "Working..." : "Create Schedule"}
-            </motion.button>
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={remove}
-              disabled={busy || !taskName.trim()}
-              className="px-5 py-2 rounded-lg border border-cyber-border text-sm font-medium hover:bg-cyber-surface-2 disabled:opacity-50 transition-all"
-            >
+        </div>
+        <div className="flex gap-2 mt-5">
+          <Button
+            variant="primary"
+            onClick={() => void create()}
+            busy={busy}
+            disabled={!taskName.trim()}
+            icon={<CalendarClock className="w-4 h-4" />}
+          >
+            {scheduled ? "Update schedule" : "Create schedule"}
+          </Button>
+          {scheduled && (
+            <Button variant="ghost" onClick={() => void remove()} disabled={busy} icon={<Trash2 className="w-4 h-4" />}>
               Remove
-            </motion.button>
-          </div>
+            </Button>
+          )}
         </div>
       </Card>
-
-      {message && <SuccessBar message={message} />}
-      {error && <ErrorBar message={error} />}
-    </div>
+    </>
   );
 }

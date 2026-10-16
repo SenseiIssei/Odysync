@@ -52,6 +52,11 @@ enum Command {
         /// Also list packages that policy skipped, and why.
         #[arg(long)]
         show_skipped: bool,
+
+        /// Only ask these backends (repeatable), e.g. `--backend direct`.
+        /// Naming an opt-in backend such as `winget` includes it for this run.
+        #[arg(long = "backend")]
+        backend: Vec<String>,
     },
 
     /// Install the updates that pass every safety check.
@@ -67,6 +72,11 @@ enum Command {
         /// Limit to specific packages (repeatable). Matches id or backend:id.
         #[arg(long = "only")]
         only: Vec<String>,
+
+        /// Only ask these backends (repeatable), e.g. `--backend direct`.
+        /// Naming an opt-in backend such as `winget` includes it for this run.
+        #[arg(long = "backend")]
+        backend: Vec<String>,
 
         /// Limit to a named profile from the config.
         #[arg(long)]
@@ -101,6 +111,34 @@ enum Command {
 
     /// Remove a hold.
     Unhold { package: String },
+
+    /// Defer a whole backend for a number of days.
+    ///
+    /// A deadline rather than an off switch: the pause lapses on its own, so a
+    /// bad week does not turn into a year of missed security updates.
+    Pause {
+        /// Backend id, e.g. `windows-update`.
+        backend: String,
+        /// How many days to defer for.
+        #[arg(long, default_value = "7")]
+        days: u32,
+        /// Why, for your future self.
+        #[arg(long)]
+        note: Option<String>,
+    },
+
+    /// Lift a pause before it lapses.
+    Resume {
+        /// Backend id, e.g. `windows-update`.
+        backend: String,
+    },
+
+    /// Check whether a newer Odysync has been released.
+    ///
+    /// Reports only. Odysync will not download and run its own updates while
+    /// its releases are unsigned — that is the supply-chain hole the v1
+    /// rewrite existed to close.
+    SelfCheck,
 
     /// Show the resolved configuration and where it lives.
     Config,
@@ -159,6 +197,139 @@ enum Command {
         /// Run a single check and exit (for testing or scheduled invocations).
         #[arg(long)]
         once: bool,
+
+        /// Keep scanning while the machine is on battery.
+        ///
+        /// Off by default: a scan spawns one process per detected backend, and
+        /// doing that hourly on battery drains a laptop for no benefit.
+        #[arg(long)]
+        on_battery: bool,
+    },
+
+    /// Back up and restore the Windows driver store.
+    #[cfg(windows)]
+    Drivers {
+        #[command(subcommand)]
+        action: DriverAction,
+    },
+
+    /// Measure reclaimable disk space, and optionally reclaim it.
+    ///
+    /// Scanning is the default. Nothing is deleted without `--apply`, and even
+    /// then only the categories that are safe by default unless `--only` names
+    /// others.
+    Clean {
+        /// Actually delete. Without this the command only measures.
+        #[arg(long)]
+        apply: bool,
+
+        /// Comma-separated category ids instead of the safe defaults.
+        ///
+        /// `odysync clean` lists the ids. Categories that destroy data —
+        /// the Recycle Bin, superseded components — are only ever cleaned when
+        /// named here.
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+
+        /// Skip the confirmation prompt.
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Game and app runtimes: Visual C++, DirectX, .NET (Windows).
+    ///
+    /// Without a subcommand, lists what is installed and what is out of date.
+    Components {
+        #[command(subcommand)]
+        action: Option<ComponentAction>,
+    },
+
+    /// Devices Windows reports as not working, with what each problem means.
+    Devices,
+
+    /// Processor, memory, graphics and disks of this machine.
+    Sysinfo,
+
+    /// Programs that start when you sign in. Turning one off is reversible.
+    Startup {
+        #[command(subcommand)]
+        action: Option<StartupAction>,
+    },
+
+    /// List the largest files in your home folder. Reports only; deletes nothing.
+    LargeFiles {
+        /// How many files to list.
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+
+        /// Ignore files smaller than this many megabytes.
+        #[arg(long, default_value_t = 100)]
+        min_mb: u64,
+    },
+
+    /// Report how each volume should be optimised, and optionally do it.
+    #[cfg(windows)]
+    OptimizeDisk {
+        /// Actually run the optimisation.
+        #[arg(long)]
+        apply: bool,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum StartupAction {
+    /// Let an entry start again. NAME and LOCATION as `odysync startup` lists them.
+    Enable { name: String, location: String },
+    /// Stop an entry from starting, without removing it.
+    Disable { name: String, location: String },
+}
+
+#[derive(clap::Subcommand)]
+enum ComponentAction {
+    /// Install or repair one component from Microsoft, e.g. `vc-redist-x64`.
+    /// Needs an elevated terminal.
+    Install { id: String },
+}
+
+/// Driver-store backup operations.
+///
+/// Exporting works unelevated; putting a package back does not.
+#[cfg(windows)]
+#[derive(clap::Subcommand)]
+enum DriverAction {
+    /// Export every third-party driver package to a new backup.
+    Backup {
+        /// Why this backup is being taken, recorded in the manifest.
+        #[arg(long, default_value = "manual")]
+        reason: String,
+
+        /// Back up only these published names, e.g. `oem23.inf`.
+        ///
+        /// A full export copies the whole driver store — several gigabytes —
+        /// so backing up just the package about to be replaced is often what
+        /// is actually wanted.
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+    },
+
+    /// List the backups on disk, newest first.
+    List,
+
+    /// Re-add a backup's driver packages and install them.
+    ///
+    /// Not a forced downgrade: Windows ranks driver packages, so a newer one
+    /// still in the store can keep winning. Needs administrator rights.
+    Rollback {
+        /// Backup id, as shown by `odysync drivers list`.
+        #[arg(long = "to")]
+        to: String,
+    },
+
+    /// Delete all but the newest backups.
+    Prune {
+        /// How many to keep.
+        #[arg(long, default_value = "3")]
+        keep: usize,
     },
 }
 
@@ -265,6 +436,7 @@ async fn run(cli: Cli) -> Result<u8> {
                         serde_json::json!({
                             "id": b.kind().id(),
                             "name": b.display_name(),
+                            "verification": odysync_core::verification_of(b.kind()),
                         })
                     })
                     .collect();
@@ -274,7 +446,17 @@ async fn run(cli: Cli) -> Result<u8> {
             } else {
                 println!("{}", style.bold("Detected package managers\n"));
                 for b in &backends {
-                    println!("  {:<16}  {}", b.kind().id(), b.display_name());
+                    // Naming who verifies the payload, rather than showing a
+                    // tick that could be read as "Odysync checked this". It
+                    // does not: the payload is downloaded and validated inside
+                    // the package manager's own process.
+                    let verification = odysync_core::verification_of(b.kind());
+                    println!(
+                        "  {:<24}  {:<38}  {}",
+                        b.kind().id(),
+                        b.display_name(),
+                        style.dim(&verification.label()),
+                    );
                 }
                 println!(
                     "\n{}",
@@ -288,8 +470,11 @@ async fn run(cli: Cli) -> Result<u8> {
             Ok(0)
         }
 
-        Command::Scan { show_skipped } => {
-            let backends = odysync_backends::detect_backends(&config).await;
+        Command::Scan {
+            show_skipped,
+            backend,
+        } => {
+            let backends = select_backends(&config, &backend).await?;
             let candidates = scan_all(&backends).await;
             let plan = config.policy.plan(candidates);
 
@@ -305,12 +490,13 @@ async fn run(cli: Cli) -> Result<u8> {
             yes,
             dry_run,
             only,
+            backend,
             profile,
             report: report_path,
             report_format,
             restore_point,
         } => {
-            let backends = odysync_backends::detect_backends(&config).await;
+            let backends = select_backends(&config, &backend).await?;
             let mut candidates = scan_all(&backends).await;
 
             // Narrow before planning, so the summary reflects what the user
@@ -329,6 +515,23 @@ async fn run(cli: Cli) -> Result<u8> {
 
             if actionable == 0 {
                 return Ok(0);
+            }
+
+            #[cfg(windows)]
+            let driver_updates = plan
+                .iter()
+                .filter(|p| p.is_actionable())
+                .filter(|p| {
+                    p.candidate.id.backend == odysync_core::model::BackendKind::WindowsDrivers
+                })
+                .count();
+
+            // A driver update is the one routine change that can leave a
+            // machine without a display or a network card. Say so before the
+            // confirmation prompt, not after.
+            #[cfg(windows)]
+            if driver_updates > 0 && !dry_run && !cli.json {
+                driver_backup_notice(&config, driver_updates, &style).await;
             }
 
             if !yes && !dry_run && !confirm(actionable)? {
@@ -395,6 +598,88 @@ async fn run(cli: Cli) -> Result<u8> {
             Ok(0)
         }
 
+        Command::Pause {
+            backend,
+            days,
+            note,
+        } => {
+            let Some(kind) = odysync_core::model::BackendKind::from_id(&backend) else {
+                anyhow::bail!(
+                    "unknown backend {backend:?}. `odysync backends` lists the ones on this machine."
+                );
+            };
+
+            let until = chrono::Utc::now() + chrono::Duration::days(days as i64);
+            config.pause_backend(kind, until, note);
+            config.save(&config_path)?;
+
+            println!(
+                "Paused {} for {days} day(s), until {}.",
+                kind.id(),
+                until.format("%Y-%m-%d %H:%M UTC")
+            );
+            // Said out loud because a paused security backend is exactly the
+            // state a user can forget they put the machine into.
+            if kind.requires_elevation() {
+                println!(
+                    "{}",
+                    style.dim("  It resumes on its own; `odysync resume` lifts it sooner.")
+                );
+            }
+            Ok(0)
+        }
+
+        Command::Resume { backend } => {
+            let Some(kind) = odysync_core::model::BackendKind::from_id(&backend) else {
+                anyhow::bail!(
+                    "unknown backend {backend:?}. `odysync backends` lists the ones on this machine."
+                );
+            };
+
+            if config.resume_backend(kind) {
+                config.save(&config_path)?;
+                println!("Resumed {}.", kind.id());
+            } else {
+                println!("{} was not paused.", kind.id());
+            }
+            Ok(0)
+        }
+
+        Command::SelfCheck => {
+            let check = odysync_backends::self_update::check(config.proxy_url.as_deref()).await?;
+
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&check)?);
+                return Ok(0);
+            }
+
+            match (&check.latest, check.is_newer) {
+                (Some(latest), true) => {
+                    println!(
+                        "{} {} is available; you are running {}.",
+                        style.bold("Update:"),
+                        latest,
+                        check.current
+                    );
+                    if let Some(url) = &check.release_url {
+                        println!("  {url}");
+                    }
+                    if let Some(sha) = &check.installer_sha256 {
+                        println!("  checksum: {sha}");
+                    }
+                    if let Some(reason) = &check.not_installable_reason {
+                        println!("\n{}", style.dim(reason));
+                    }
+                }
+                (Some(latest), false) => println!(
+                    "Up to date: running {}, latest published is {latest}.",
+                    check.current
+                ),
+                (None, _) => println!("Could not determine the latest release."),
+            }
+            Ok(0)
+        }
+
         Command::Config => {
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&config)?);
@@ -445,6 +730,7 @@ async fn run(cli: Cli) -> Result<u8> {
                 time,
                 task_name: task_name.clone(),
                 extra_args,
+                program: None,
             };
             odysync_backends::scheduler::create_schedule(&spec)
                 .await
@@ -511,15 +797,573 @@ async fn run(cli: Cli) -> Result<u8> {
             apply,
             restore_point,
             once,
+            on_battery,
         } => {
             let opts = daemon::DaemonOpts {
                 interval_minutes: interval,
                 auto_apply: apply,
                 restore_point,
                 once,
+                on_battery,
             };
             let code = daemon::run(&opts, &config_path).await?;
             Ok(code)
+        }
+
+        #[cfg(windows)]
+        Command::Drivers { action } => run_driver_action(action, cli.json, &style).await,
+
+        Command::Clean { apply, only, yes } => run_clean(apply, only, yes, cli.json, &style).await,
+
+        Command::Components { action } => match action {
+            None => {
+                let list = odysync_backends::components::status().await;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&list)?);
+                } else {
+                    print!("{}", render::components(&list, &style));
+                }
+                Ok(0)
+            }
+            Some(ComponentAction::Install { id }) => {
+                match odysync_backends::components::install(&id).await {
+                    Ok(message) => {
+                        println!("{message}");
+                        Ok(0)
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        Ok(1)
+                    }
+                }
+            }
+        },
+
+        Command::Startup { action } => match action {
+            None => {
+                let items = odysync_backends::startup_items::list().await?;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&items)?);
+                } else if items.is_empty() {
+                    println!("Nothing starts automatically.");
+                } else {
+                    println!("{}", style.bold("Starts when you sign in\n"));
+                    for i in &items {
+                        let state = if i.enabled { "on " } else { "off" };
+                        println!(
+                            "  {}  {:<32} {}",
+                            if i.enabled {
+                                style.bold(state)
+                            } else {
+                                style.dim(state)
+                            },
+                            i.label.as_deref().unwrap_or(&i.name),
+                            style.dim(&format!("{}  [{}]", i.name, i.location))
+                        );
+                    }
+                }
+                Ok(0)
+            }
+            Some(StartupAction::Enable { name, location }) => {
+                odysync_backends::startup_items::set_enabled(&name, &location, true).await?;
+                println!("{name} will start when you sign in.");
+                Ok(0)
+            }
+            Some(StartupAction::Disable { name, location }) => {
+                odysync_backends::startup_items::set_enabled(&name, &location, false).await?;
+                println!("{name} no longer starts when you sign in. `odysync startup enable` undoes this.");
+                Ok(0)
+            }
+        },
+
+        Command::Sysinfo => {
+            let r = odysync_backends::system_info::report().await;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            } else {
+                println!("{}", style.bold("This machine\n"));
+                println!("  {:<10} {}", "System", r.os);
+                if let Some(m) = &r.machine {
+                    println!("  {:<10} {m}", "Model");
+                }
+                println!(
+                    "  {:<10} {} ({} threads)",
+                    "Processor", r.cpu, r.cpu_threads
+                );
+                println!("  {:<10} {}", "Memory", render::human_bytes(r.memory_bytes));
+                for g in &r.gpus {
+                    println!(
+                        "  {:<10} {}{}",
+                        "Graphics",
+                        g.name,
+                        g.driver_version
+                            .as_deref()
+                            .map(|v| style.dim(&format!("  driver {v}")))
+                            .unwrap_or_default()
+                    );
+                }
+                for d in &r.disks {
+                    println!(
+                        "  {:<10} {}  {} free of {}  {}",
+                        "Disk",
+                        d.mount,
+                        render::human_bytes(d.free_bytes),
+                        render::human_bytes(d.size_bytes),
+                        style.dim(&d.filesystem)
+                    );
+                }
+            }
+            Ok(0)
+        }
+
+        Command::Devices => {
+            let problems = odysync_backends::devices::problems().await;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&problems)?);
+            } else if problems.is_empty() {
+                println!("Every device is working.");
+            } else {
+                println!("{}", style.bold("Devices with problems\n"));
+                for d in &problems {
+                    println!(
+                        "  {}  {}",
+                        style.bold(&d.name),
+                        style.dim(&format!("({}, code {})", d.class, d.code))
+                    );
+                    println!("    {}", d.meaning);
+                    println!("    {}\n", style.dim(&d.suggestion));
+                }
+            }
+            Ok(0)
+        }
+
+        Command::LargeFiles { limit, min_mb } => {
+            let report = odysync_backends::cleanup::largest_files(
+                limit,
+                min_mb.saturating_mul(1024 * 1024),
+                std::time::Duration::from_secs(120),
+            )
+            .await;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", render::large_files(&report, &style));
+            }
+            Ok(0)
+        }
+
+        #[cfg(windows)]
+        Command::OptimizeDisk { apply } => run_optimize_disk(apply, cli.json, &style).await,
+    }
+}
+
+/// `odysync clean`.
+async fn run_clean(
+    apply: bool,
+    only: Vec<String>,
+    yes: bool,
+    json: bool,
+    style: &Style,
+) -> Result<u8> {
+    use odysync_core::cleanup::{default_reclaimable, CleanupCategory};
+
+    let findings = odysync_backends::cleanup::scan().await;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&findings)?);
+        if !apply {
+            return Ok(0);
+        }
+    }
+
+    if !json {
+        println!("{}", style.bold("Reclaimable disk space\n"));
+        for f in &findings {
+            let size = match (&f.error, f.bytes, f.file_count) {
+                (Some(e), _, _) => format!("could not measure: {e}"),
+                (None, 0, 0) => "nothing found".to_string(),
+                (None, b, n) => format!("{} in {n} files", render::human_bytes(b)),
+            };
+            let marker = if f.category.is_report_only() {
+                "report only"
+            } else if f.category.selected_by_default() {
+                "default"
+            } else {
+                "opt-in"
+            };
+            println!(
+                "  {:<22} {:>22}   {}",
+                f.category.id(),
+                size,
+                style.dim(marker)
+            );
+            if let Some(note) = &f.note {
+                println!("  {:<22} {}", "", style.dim(note));
+            }
+        }
+
+        println!(
+            "\n{} {} in the categories that are safe by default.",
+            style.bold("Total:"),
+            render::human_bytes(default_reclaimable(&findings)),
+        );
+    }
+
+    if !apply {
+        if !json {
+            println!(
+                "\n{}",
+                style.dim("Nothing was deleted. Add --apply to reclaim it.")
+            );
+        }
+        return Ok(0);
+    }
+
+    // Resolve which categories to act on. An unknown id is an error rather
+    // than a silent no-op: a typo must not read as "cleaned successfully".
+    let selected: Vec<CleanupCategory> = if only.is_empty() {
+        findings
+            .iter()
+            .filter(|f| f.is_actionable() && f.category.selected_by_default())
+            .map(|f| f.category)
+            .collect()
+    } else {
+        let mut chosen = Vec::new();
+        for id in &only {
+            let Some(category) = CleanupCategory::from_id(id) else {
+                anyhow::bail!(
+                    "unknown cleanup category {id:?}. Run `odysync clean` to see the ids."
+                );
+            };
+            chosen.push(category);
+        }
+        chosen
+    };
+
+    if selected.is_empty() {
+        println!("\nNothing to clean.");
+        return Ok(0);
+    }
+
+    // Anything that cannot be undone is named individually before the prompt,
+    // not folded into a count.
+    let destructive: Vec<&CleanupCategory> = selected
+        .iter()
+        .filter(|c| c.reversibility().needs_explicit_confirmation())
+        .collect();
+    if !destructive.is_empty() {
+        println!("\n{}", style.bold("This cannot be undone:"));
+        for c in &destructive {
+            println!("  {} — {}", c.label(), c.consequence());
+        }
+    }
+
+    if !yes && !confirm_clean(selected.len())? {
+        println!("Cancelled.");
+        return Ok(0);
+    }
+
+    let results = odysync_backends::cleanup::clean(selected).await;
+
+    if json {
+        let payload: Vec<_> = results
+            .iter()
+            .map(|(c, o)| serde_json::json!({ "category": c.id(), "outcome": o }))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(0);
+    }
+
+    let mut total = 0u64;
+    println!();
+    for (category, outcome) in &results {
+        total += outcome.removed_bytes;
+        println!(
+            "  {:<22} {} in {} files",
+            category.id(),
+            render::human_bytes(outcome.removed_bytes),
+            outcome.removed_files
+        );
+        // Locked files are the normal case on Windows, so these are listed
+        // rather than treated as a failure.
+        for skipped in outcome.skipped.iter().take(5) {
+            println!("  {:<22} {}", "", style.dim(skipped));
+        }
+        if outcome.skipped.len() > 5 {
+            println!(
+                "  {:<22} {}",
+                "",
+                style.dim(&format!("... and {} more", outcome.skipped.len() - 5))
+            );
+        }
+    }
+    println!(
+        "\n{} {}",
+        style.bold("Reclaimed:"),
+        render::human_bytes(total)
+    );
+    Ok(0)
+}
+
+/// Ask before deleting. A closed stdin is never consent.
+fn confirm_clean(count: usize) -> Result<bool> {
+    use std::io::{BufRead, Write};
+
+    print!(
+        "\nClean {count} categor{}? [y/N] ",
+        if count == 1 { "y" } else { "ies" }
+    );
+    std::io::stdout().flush()?;
+
+    let mut line = String::new();
+    if std::io::stdin().lock().read_line(&mut line)? == 0 {
+        return Ok(false);
+    }
+    Ok(matches!(
+        line.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+/// `odysync optimize-disk`.
+#[cfg(windows)]
+async fn run_optimize_disk(apply: bool, json: bool, style: &Style) -> Result<u8> {
+    let plan = odysync_backends::cleanup::plan_disk_optimization().await?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+    } else if plan.is_empty() {
+        println!("No volumes with a drive letter were found.");
+    } else {
+        println!("{}", style.bold("Disk optimisation plan\n"));
+        for v in &plan {
+            println!("  {:<6} {:<10} {}", v.drive, v.media_type, v.operation);
+        }
+        // The media type decides the operation and there is no override:
+        // defragmenting an SSD spends its erase cycles for no benefit.
+        println!(
+            "\n{}",
+            style.dim(
+                "SSDs are trimmed, never defragmented. The media type decides; \
+                 there is no override."
+            )
+        );
+    }
+
+    if !apply {
+        if !json && !plan.is_empty() {
+            println!("{}", style.dim("Add --apply to run it."));
+        }
+        return Ok(0);
+    }
+
+    let report = odysync_backends::cleanup::run_disk_optimization(&plan).await;
+    for line in &report {
+        println!("  {line}");
+    }
+    Ok(0)
+}
+
+/// Take a driver backup before applying, or say plainly that there is none.
+///
+/// Backing up automatically is off by default because a full driver-store
+/// export is a copy of `DriverStore\FileRepository` — 4.7 GB on the machine
+/// this was measured on. Silently spending that, twice over, on the disk of
+/// the machine we are maintaining is not a good default. Silently *not* having
+/// a rollback is not acceptable either, so the user is told which of the two
+/// they are getting.
+#[cfg(windows)]
+async fn driver_backup_notice(config: &Config, driver_updates: usize, style: &Style) {
+    use odysync_backends::driver_backup;
+
+    if config.driver_backup_before_apply {
+        println!(
+            "\nExporting the driver store before applying {driver_updates} driver update(s). \
+             This copies several gigabytes and takes a few minutes."
+        );
+        match driver_backup::create_backup(&format!(
+            "before applying {driver_updates} driver update(s)"
+        ))
+        .await
+        {
+            Ok(manifest) => {
+                println!(
+                    "Backed up {} package(s) as {}.",
+                    manifest.packages.len(),
+                    manifest.id
+                );
+                if let Err(e) = driver_backup::prune(config.driver_backup_keep as usize) {
+                    tracing::warn!(error = %e, "could not prune old driver backups");
+                }
+            }
+            // A failed backup must not silently become "no backup". It also
+            // must not block an update the user asked for; they are told and
+            // then asked to confirm, which is the next thing that happens.
+            Err(e) => eprintln!("warning: the driver backup failed: {e}"),
+        }
+        return;
+    }
+
+    let existing = driver_backup::list_backups().unwrap_or_default();
+    match existing.first() {
+        Some(latest) => println!(
+            "\n{} {} driver update(s). Most recent driver backup: {} ({}).",
+            style.bold("Note:"),
+            driver_updates,
+            latest.id,
+            latest.reason
+        ),
+        None => println!(
+            "\n{} applying {} driver update(s) with no driver backup on disk.\n  \
+             Take one first with `odysync drivers backup`, or set \
+             `driver-backup-before-apply` in the config to do it automatically.\n  \
+             Windows keeps its own single-step rollback in Device Manager either way.",
+            style.bold("Note:"),
+            driver_updates,
+        ),
+    }
+}
+
+/// `odysync drivers <action>`.
+#[cfg(windows)]
+async fn run_driver_action(action: DriverAction, json: bool, style: &Style) -> Result<u8> {
+    use odysync_backends::driver_backup;
+
+    match action {
+        DriverAction::Backup { reason, only } => {
+            let mut packages = driver_backup::list_packages().await?;
+            if packages.is_empty() {
+                println!("No third-party driver packages are installed; nothing to back up.");
+                return Ok(0);
+            }
+
+            if !only.is_empty() {
+                let wanted: Vec<String> =
+                    only.iter().map(|s| s.trim().to_ascii_lowercase()).collect();
+                packages.retain(|p| wanted.contains(&p.published_name.to_ascii_lowercase()));
+
+                // A name that matched nothing is an error, not an empty
+                // backup: silently exporting zero packages would look like a
+                // successful backup right up until someone needed it.
+                for name in &wanted {
+                    if !packages
+                        .iter()
+                        .any(|p| p.published_name.eq_ignore_ascii_case(name))
+                    {
+                        anyhow::bail!(
+                            "no driver package named {name:?} is installed. \
+                             Published names look like `oem23.inf`."
+                        );
+                    }
+                }
+            }
+
+            println!(
+                "Exporting {} driver package(s). This copies the whole driver store and \
+                 can take a few minutes.",
+                packages.len()
+            );
+            let manifest = driver_backup::create_backup_of(&reason, &packages).await?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&manifest)?);
+                return Ok(0);
+            }
+
+            println!(
+                "\n{} {} package(s), {:.1} MB, id {}",
+                style.bold("Backed up"),
+                manifest.packages.len(),
+                manifest.total_size_bytes() as f64 / (1024.0 * 1024.0),
+                manifest.id,
+            );
+            // A partial backup restores less than the user thinks it will, so
+            // it is called out rather than folded into the success line.
+            if !manifest.is_complete() {
+                eprintln!(
+                    "\nwarning: {} package(s) could not be exported:",
+                    manifest.failures.len()
+                );
+                for failure in &manifest.failures {
+                    eprintln!("  {failure}");
+                }
+            }
+            Ok(0)
+        }
+
+        DriverAction::List => {
+            let backups = driver_backup::list_backups()?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&backups)?);
+                return Ok(0);
+            }
+            if backups.is_empty() {
+                println!("No driver backups yet. Create one with `odysync drivers backup`.");
+                return Ok(0);
+            }
+
+            println!("{}", style.bold("Driver backups (newest first)\n"));
+            for b in &backups {
+                println!(
+                    "  {:<22}  {:>4} pkgs  {:>8.1} MB  {}{}",
+                    b.id,
+                    b.packages.len(),
+                    b.total_size_bytes() as f64 / (1024.0 * 1024.0),
+                    b.reason,
+                    if b.is_complete() {
+                        String::new()
+                    } else {
+                        format!("  ({} failed)", b.failures.len())
+                    },
+                );
+            }
+            Ok(0)
+        }
+
+        DriverAction::Rollback { to } => {
+            let report = driver_backup::restore(&to).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                return Ok(0);
+            }
+
+            println!(
+                "Re-added {} package(s) onto a device; {} already current; {} failed.",
+                report.restored.len(),
+                report.already_current.len(),
+                report.failed.len()
+            );
+            for name in &report.already_current {
+                println!(
+                    "  {}",
+                    style.dim(&format!(
+                        "{name}: back in the driver store, but no device needed it"
+                    ))
+                );
+            }
+            for failure in &report.failed {
+                eprintln!("  {failure}");
+            }
+            if report.reboot_required {
+                println!("\n{}", style.bold("A restart is required to finish."));
+            }
+            // Said every time, because it is the part people get wrong: this
+            // puts the old package back, it does not remove the new one.
+            println!(
+                "\n{}",
+                style.dim(
+                    "Windows ranks driver packages. If a newer package is still in the \
+                     store it may keep being preferred; remove it from Device Manager to \
+                     force the older one."
+                )
+            );
+            Ok(if report.is_success() { 0 } else { 1 })
+        }
+
+        DriverAction::Prune { keep } => {
+            let removed = driver_backup::prune(keep)?;
+            println!("Removed {removed} old driver backup(s), keeping {keep}.");
+            Ok(0)
         }
     }
 }
@@ -546,6 +1390,40 @@ async fn scan_all(backends: &[Box<dyn Backend>]) -> Vec<UpdateCandidate> {
     .await;
 
     results.into_iter().flatten().collect()
+}
+
+/// The backends a scan or apply should use.
+///
+/// With no `--backend` flags this is everything enabled and present. Naming a
+/// backend narrows the run to it — and includes it even when it is opt-in,
+/// because typing its name is the opt-in. A backend the user disabled in the
+/// config stays disabled; a flag is not a reason to override that.
+async fn select_backends(config: &Config, named: &[String]) -> Result<Vec<Box<dyn Backend>>> {
+    if named.is_empty() {
+        return Ok(odysync_backends::detect_backends(config).await);
+    }
+    for id in named {
+        if odysync_core::model::BackendKind::from_id(id).is_none() {
+            anyhow::bail!("unknown backend '{id}'; `odysync backends` lists them");
+        }
+    }
+    let wanted = |kind: odysync_core::model::BackendKind| {
+        named
+            .iter()
+            .any(|n| n.trim().eq_ignore_ascii_case(kind.id()))
+    };
+    Ok(odysync_backends::probe_backends(config)
+        .await
+        .into_iter()
+        .filter(|p| p.available && wanted(p.backend.kind()))
+        .filter(|p| {
+            !config
+                .disabled_backends
+                .iter()
+                .any(|d| d.trim().eq_ignore_ascii_case(p.backend.kind().id()))
+        })
+        .map(|p| p.backend)
+        .collect())
 }
 
 /// Work out which packages the user restricted the run to, if any.
@@ -576,6 +1454,11 @@ fn matches_any(candidate: &UpdateCandidate, filters: &[String]) -> bool {
         let f = f.trim();
         f.eq_ignore_ascii_case(&candidate.id.native)
             || f.eq_ignore_ascii_case(&candidate.id.to_string())
+            || candidate
+                .id
+                .alias
+                .as_deref()
+                .is_some_and(|a| f.eq_ignore_ascii_case(a))
     })
 }
 

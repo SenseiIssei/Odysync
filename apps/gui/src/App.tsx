@@ -1,14 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Layers, Minus, Shield, ShieldCheck, X } from "lucide-react";
-import "./App.css";
+import {
+  AlertTriangle,
+  Minus,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RefreshCw,
+  ShieldCheck,
+  Square,
+  Sun,
+  X,
+} from "lucide-react";
 import * as api from "./api";
 import { StoreProvider, useStore } from "./store";
-import { NAV_GROUPS, NAV_ITEMS, TABS, isTab, type Tab } from "./nav";
+import { NAV_GROUPS, NAV_ITEMS, TABS, isTab, type NavItem, type Tab } from "./nav";
 import { safeListen } from "./events";
-import { RefreshButton } from "./components/ui";
+import { inTauri } from "./bridge";
+import { useTheme } from "./theme";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { Logo } from "./components/Logo";
 
 import Dashboard from "./pages/Dashboard";
 import Updates from "./pages/Updates";
@@ -28,6 +39,7 @@ import Settings from "./pages/Settings";
 import About from "./pages/About";
 
 const TAB_STORAGE_KEY = "odysync.activeTab";
+const SIDEBAR_KEY = "odysync.sidebar";
 
 export default function App() {
   return (
@@ -39,27 +51,42 @@ export default function App() {
   );
 }
 
+/** Read a tab from the URL hash, so the browser demo can deep-link a page. */
+function tabFromHash(): Tab | null {
+  const hash = typeof window !== "undefined" ? window.location.hash.replace(/^#\/?/, "") : "";
+  return isTab(hash) ? hash : null;
+}
+
 function Shell() {
   const store = useStore();
+  const theme = useTheme();
   const [tab, setTab] = useState<Tab>(() => {
+    const fromHash = tabFromHash();
+    if (fromHash) return fromHash;
     const saved = localStorage.getItem(TAB_STORAGE_KEY);
     return isTab(saved) ? saved : "dashboard";
   });
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-
-  // Resolved lazily and defensively: `getCurrentWindow` throws outside a Tauri
-  // webview, and a throw here used to blank the entire window.
-  const minimize = useCallback(() => {
-    try {
-      void getCurrentWindow().minimize();
-    } catch (e) {
-      console.error("[odysync] minimize failed:", e);
-    }
-  }, []);
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => localStorage.getItem(SIDEBAR_KEY) !== "collapsed",
+  );
 
   useEffect(() => {
     localStorage.setItem(TAB_STORAGE_KEY, tab);
+    if (!inTauri) window.history.replaceState(null, "", `#${tab}`);
   }, [tab]);
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_KEY, sidebarOpen ? "open" : "collapsed");
+  }, [sidebarOpen]);
+
+  useEffect(() => {
+    const onHash = () => {
+      const next = tabFromHash();
+      if (next) setTab(next);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   const navigate = useCallback((next: Tab) => setTab(next), []);
 
@@ -87,158 +114,70 @@ function Shell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [refreshAll]);
 
-  const elevated = store.sysInfo.data?.elevated ?? false;
+  const info = store.sysInfo.data;
+  const platform = info?.platform ?? (inTauri ? "windows" : "web");
+  // Windows draws no frame (decorations are off), so the app draws its own
+  // title bar and window buttons. macOS keeps its traffic lights over our
+  // header; Linux keeps the window manager's frame.
+  const frameless = inTauri && platform === "windows";
+  const macOverlay = inTauri && platform === "macos";
+  const elevated = info?.elevated ?? false;
+  const updateCount = store.scan.data?.actionable.length ?? 0;
+
+  const badges = useMemo<Partial<Record<Tab, number>>>(
+    () => ({
+      updates: updateCount,
+      drivers: store.devices.data.length,
+    }),
+    [updateCount, store.devices.data.length],
+  );
 
   return (
-    <div className="app-window h-screen flex flex-col text-cyber-text bg-cyber-bg grid-bg">
-      {/* Titlebar. `data-tauri-drag-region` is what makes a frameless Tauri v2
-          window draggable — the CSS `-webkit-app-region` this used before is an
-          Electron feature and does nothing in WebView2. */}
-      <div
-        data-tauri-drag-region
-        className="titlebar flex items-center justify-between px-4 py-2.5 border-b border-cyber-border bg-cyber-surface/80 backdrop-blur-sm flex-shrink-0"
-      >
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setSidebarOpen((v) => !v)}
-            className="text-cyber-text-dim hover:text-accent transition-colors p-1"
-            title="Toggle sidebar"
-            aria-label="Toggle sidebar"
-          >
-            <motion.div animate={{ rotate: sidebarOpen ? 0 : 180 }}>
-              <Layers className="w-4 h-4" />
-            </motion.div>
-          </button>
-          <div className="flex items-center gap-2">
-            <Shield className="w-5 h-5 text-accent text-glow-cyan" />
-            <span className="text-sm font-bold tracking-wide">ODYSYNC</span>
-            <span className="text-xs text-cyber-text-faint">
-              v{store.sysInfo.data?.version ?? "2.0"}
-            </span>
-          </div>
-        </div>
+    <div
+      className="app-window h-screen flex flex-col text-fg bg-canvas"
+      data-frameless={frameless ? "true" : "false"}
+    >
+      <TitleBar
+        frameless={frameless}
+        macOverlay={macOverlay}
+        version={info?.version}
+        elevated={elevated}
+        platform={platform}
+        busy={store.booting}
+        onRefresh={() => void store.refreshAll()}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
+        theme={theme.resolved}
+        onToggleTheme={() => theme.setChoice(theme.resolved === "dark" ? "light" : "dark")}
+      />
 
-        <div className="flex items-center gap-2">
-          <RefreshButton
-            onClick={() => void store.refreshAll()}
-            spinning={store.booting}
-            label="Refresh all"
+      {store.booting && (
+        <div className="h-0.5 bg-transparent flex-shrink-0 overflow-hidden">
+          <div
+            className="h-full bg-accent/70 transition-[width] duration-300"
+            style={{ width: `${Math.round(store.bootProgress * 100)}%` }}
           />
-          {!elevated && (
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => void api.restartAsAdmin().catch(() => {})}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-accent/10 border border-accent/30 text-accent text-xs font-medium hover:bg-accent/20 transition-all glow-cyan"
-              title="Restart Odysync with administrator privileges"
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Run as Admin
-            </motion.button>
-          )}
-          <button
-            type="button"
-            onClick={minimize}
-            className="p-1.5 rounded hover:bg-cyber-surface-2 text-cyber-text-dim hover:text-accent transition-all"
-            title="Minimize"
-            aria-label="Minimize"
-          >
-            <Minus className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => void api.quitApp()}
-            className="p-1.5 rounded hover:bg-danger/20 text-cyber-text-dim hover:text-danger transition-all"
-            title="Quit Odysync"
-            aria-label="Quit"
-          >
-            <X className="w-4 h-4" />
-          </button>
         </div>
-      </div>
-
-      {/* Startup progress */}
-      <AnimatePresence>
-        {store.booting && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 2 }}
-            exit={{ opacity: 0, height: 0 }}
-            className="bg-cyber-surface flex-shrink-0 overflow-hidden"
-          >
-            <motion.div
-              className="h-full bg-accent glow-cyan"
-              animate={{ width: `${Math.round(store.bootProgress * 100)}%` }}
-              transition={{ duration: 0.4 }}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      )}
 
       {/* A config file we could not parse is worth interrupting for: the app is
           running on defaults, and the user's holds are in the .corrupt backup. */}
-      {store.sysInfo.data?.config_error && (
-        <div className="flex items-start gap-2 mx-6 mt-4 text-xs text-warning bg-warning/5 rounded-lg px-4 py-3 border border-warning/30 flex-shrink-0">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-px" />
-          <span className="break-words">{store.sysInfo.data.config_error}</span>
+      {info?.config_error && (
+        <div className="flex items-start gap-2 mx-6 mt-4 text-sm text-warning bg-warning/10 rounded-lg px-4 py-3 border border-warning/25 flex-shrink-0">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span className="break-words">{info.config_error}</span>
         </div>
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <AnimatePresence initial={false}>
-          {sidebarOpen && (
-            <motion.nav
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 200, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              className="border-r border-cyber-border bg-cyber-surface/50 overflow-hidden flex-shrink-0"
-            >
-              <div className="w-[200px] py-3 overflow-y-auto h-full">
-                {NAV_GROUPS.map((group) => (
-                  <div key={group} className="mb-3">
-                    <div className="px-4 mb-1.5 text-[10px] uppercase tracking-widest text-cyber-text-faint font-bold">
-                      {group}
-                    </div>
-                    {NAV_ITEMS.filter((n) => n.group === group).map((item) => (
-                      <button
-                        type="button"
-                        key={item.id}
-                        onClick={() => navigate(item.id)}
-                        aria-current={tab === item.id ? "page" : undefined}
-                        className={`relative w-full flex items-center gap-3 px-4 py-2 text-sm whitespace-nowrap transition-all ${
-                          tab === item.id
-                            ? "text-accent text-glow-cyan"
-                            : "text-cyber-text-dim hover:text-cyber-text hover:bg-cyber-surface-2"
-                        }`}
-                      >
-                        {tab === item.id && (
-                          <motion.div
-                            layoutId="sidebar-active"
-                            className="absolute left-0 top-0 bottom-0 w-[2px] bg-accent glow-cyan"
-                          />
-                        )}
-                        {item.icon}
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </motion.nav>
-          )}
-        </AnimatePresence>
+        <Sidebar open={sidebarOpen} tab={tab} onNavigate={navigate} badges={badges} />
 
         {/*
           Every page stays mounted for the lifetime of the app. Only the active
           one is displayed. This is what makes navigation instant and keeps each
-          page's scroll position, filters and in-flight work intact — swapping
-          the subtree on every tab change was what made the app feel broken.
+          page's scroll position, filters and in-flight work intact.
         */}
-        <main className="flex-1 relative">
+        <main className="flex-1 relative min-w-0">
           {TABS.map((id) => (
             <Page key={id} active={tab === id}>
               <ErrorBoundary label={NAV_ITEMS.find((n) => n.id === id)?.label ?? id}>
@@ -252,6 +191,226 @@ function Shell() {
   );
 }
 
+function TitleBar({
+  frameless,
+  macOverlay,
+  version,
+  elevated,
+  platform,
+  busy,
+  onRefresh,
+  sidebarOpen,
+  onToggleSidebar,
+  theme,
+  onToggleTheme,
+}: {
+  frameless: boolean;
+  macOverlay: boolean;
+  version?: string;
+  elevated: boolean;
+  platform: string;
+  busy: boolean;
+  onRefresh: () => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+  theme: "light" | "dark";
+  onToggleTheme: () => void;
+}) {
+  // Resolved lazily and defensively: `getCurrentWindow` throws outside a Tauri
+  // webview, and a throw here used to blank the entire window.
+  const windowAction = (action: "minimize" | "toggleMaximize") => {
+    try {
+      void getCurrentWindow()[action]();
+    } catch (e) {
+      console.error(`[odysync] ${action} failed:`, e);
+    }
+  };
+
+  return (
+    <div
+      data-tauri-drag-region={frameless || macOverlay ? true : undefined}
+      className={`titlebar h-12 flex items-center justify-between gap-3 border-b border-line bg-surface/60 flex-shrink-0 ${
+        macOverlay ? "pl-[84px] pr-3" : "px-3"
+      }`}
+    >
+      <div className="flex items-center gap-2 min-w-0" data-tauri-drag-region={frameless || macOverlay ? true : undefined}>
+        <IconButton
+          label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          onClick={onToggleSidebar}
+        >
+          {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
+        </IconButton>
+        <Logo className="w-6 h-6 flex-shrink-0" />
+        <span className="text-sm font-semibold tracking-tight">Odysync</span>
+        {version && <span className="text-xs text-faint">v{version}</span>}
+      </div>
+
+      <div className="flex items-center gap-1">
+        <IconButton label="Refresh everything (Ctrl+R)" onClick={onRefresh} disabled={busy}>
+          <RefreshCw className={`w-4 h-4 ${busy ? "animate-spin" : ""}`} />
+        </IconButton>
+        <IconButton
+          label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          onClick={onToggleTheme}
+        >
+          {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </IconButton>
+        {!elevated && platform === "windows" && (
+          <button
+            type="button"
+            onClick={() => void api.restartAsAdmin().catch(() => {})}
+            className="ml-1 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line text-xs font-medium text-muted hover:text-fg hover:bg-raised transition-colors"
+            title="Windows updates, drivers and machine-wide apps need administrator rights"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            Run as admin
+          </button>
+        )}
+        {frameless && (
+          <div className="flex items-center ml-2 pl-2 border-l border-line gap-0.5">
+            <IconButton label="Minimize" onClick={() => windowAction("minimize")}>
+              <Minus className="w-4 h-4" />
+            </IconButton>
+            <IconButton label="Maximize" onClick={() => windowAction("toggleMaximize")}>
+              <Square className="w-3.5 h-3.5" />
+            </IconButton>
+            <IconButton label="Quit Odysync" danger onClick={() => void api.quitApp()}>
+              <X className="w-4 h-4" />
+            </IconButton>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function IconButton({
+  label,
+  onClick,
+  children,
+  disabled,
+  danger,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className={`h-8 w-8 inline-flex items-center justify-center rounded-lg text-muted transition-colors disabled:opacity-50 ${
+        danger ? "hover:bg-danger/15 hover:text-danger" : "hover:bg-raised hover:text-fg"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Sidebar({
+  open,
+  tab,
+  onNavigate,
+  badges,
+}: {
+  open: boolean;
+  tab: Tab;
+  onNavigate: (t: Tab) => void;
+  badges: Partial<Record<Tab, number>>;
+}) {
+  const item = (n: NavItem) => (
+    <NavButton
+      key={n.id}
+      item={n}
+      active={tab === n.id}
+      compact={!open}
+      badge={badges[n.id]}
+      onClick={() => onNavigate(n.id)}
+    />
+  );
+
+  return (
+    <nav
+      aria-label="Sections"
+      className={`flex flex-col border-r border-line bg-surface/40 flex-shrink-0 transition-[width] duration-200 ${
+        open ? "w-[224px]" : "w-[60px]"
+      }`}
+    >
+      <div className="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2.5 space-y-3">
+        {NAV_GROUPS.map((group) => (
+          <div key={group || "top"}>
+            {group && open && (
+              <div className="px-2.5 mb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-faint">
+                {group}
+              </div>
+            )}
+            {group && !open && <div className="mx-2 mb-2 border-t border-line" />}
+            <div className="space-y-0.5">
+              {NAV_ITEMS.filter((n) => n.group === group).map(item)}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="border-t border-line py-1.5 px-2.5 space-y-0.5">
+        {NAV_ITEMS.filter((n) => n.group === "footer").map(item)}
+      </div>
+    </nav>
+  );
+}
+
+function NavButton({
+  item,
+  active,
+  compact,
+  badge,
+  onClick,
+}: {
+  item: NavItem;
+  active: boolean;
+  compact: boolean;
+  badge?: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      title={compact ? item.label : undefined}
+      className={`group relative w-full flex items-center gap-3 h-8 rounded-lg text-sm transition-colors ${
+        compact ? "justify-center px-0" : "px-2.5"
+      } ${
+        active
+          ? "bg-raised text-fg font-medium"
+          : "text-muted hover:text-fg hover:bg-raised/60"
+      }`}
+    >
+      {active && (
+        <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full bg-accent" aria-hidden />
+      )}
+      <span className={active ? "text-accent" : "text-faint group-hover:text-muted"}>
+        {item.icon}
+      </span>
+      {!compact && <span className="truncate">{item.label}</span>}
+      {!!badge && badge > 0 && (
+        <span
+          className={`${
+            compact ? "absolute top-1 right-1.5 min-w-4 h-4 text-[10px]" : "ml-auto min-w-5 h-5 text-[11px]"
+          } px-1.5 inline-flex items-center justify-center rounded-full bg-accent/15 text-accent font-semibold tabular-nums`}
+        >
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
 /**
  * A permanently mounted page. Inactive pages are hidden rather than unmounted,
  * and are made inert so their controls stay out of the tab order.
@@ -261,10 +420,10 @@ function Page({ active, children }: { active: boolean; children: React.ReactNode
     <div
       hidden={!active}
       aria-hidden={!active}
-      className={`absolute inset-0 overflow-y-auto p-6 ${active ? "" : "pointer-events-none"}`}
+      className={`absolute inset-0 overflow-y-auto ${active ? "" : "pointer-events-none"}`}
       style={{ display: active ? "block" : "none" }}
     >
-      {children}
+      <div className="mx-auto max-w-[1180px] px-8 py-7 space-y-6">{children}</div>
     </div>
   );
 }

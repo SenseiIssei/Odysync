@@ -1,0 +1,49 @@
+version: 2
+
+# Odysync's whole purpose is keeping other people's software current, so
+# shipping it on stale dependencies would be a poor advertisement. More to the
+# point: `cargo audit` and `npm audit` tell us an advisory exists, and this is
+# what actually closes it.
+#
+# Weekly rather than daily, and grouped rather than one PR per crate, because a
+# solo maintainer with forty open dependency PRs reviews none of them.
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Patch and minor bumps are the ones that are safe to take as a batch.
+      # A major bump gets its own PR so it can be read properly.
+      rust-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: npm
+    directory: "/apps/gui"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: "chore(deps)"
+
+  # The workflows pin third-party actions by tag; those tags move and the
+  # pinned ones go stale, which is how a build ends up running a
+  # three-year-old action with a known problem.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(ci)"

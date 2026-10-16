@@ -1,4 +1,4 @@
-# Architecture — v2 (Rust)
+# Architecture
 
 > The v1 Python implementation was removed once the Rust CLI reached feature
 > parity. It remains available at the `v1.3.0` tag.
@@ -29,14 +29,19 @@ odysync-core       domain model, version algebra, safety policy, planner, runner
 odysync-verify     SHA-256 integrity + platform code-signature verification
   └─ Authenticode (Windows), codesign (macOS), repo-signed (Linux)
 
-odysync-backends   package manager integrations
-  └─ winget, msstore, homebrew, apt, flatpak
+odysync-backends   every update source and every maintenance tool
+  ├─ direct/       installers straight from the publisher (catalog, Sparkle)
+  ├─ windows_update/, gpu/, oem/, firmware: drivers and the OS itself
+  ├─ homebrew, apt, dnf, pacman, zypper, flatpak, snap, nix, …
+  ├─ cleanup, components, devices, startup_items, system_info
+  └─ winget, chocolatey, scoop: optional
 
 odysync-cli        `odysync` binary — argument parsing and rendering only
+apps/gui           Tauri 2 shell + React front-end over the same crates
 ```
 
-Dependencies point one direction only: `cli -> backends -> core`. A backend
-cannot reach into the CLI, and `core` cannot reach into a backend.
+Dependencies point one direction only: `cli/gui -> backends -> core`. A
+backend cannot reach into a front-end, and `core` cannot reach into a backend.
 
 ## Where each guarantee lives
 
@@ -85,6 +90,32 @@ leading/trailing dot). Localised summary text sliced at a column boundary can
 otherwise look plausible — German winget yields the fragment `erfügbar.`, which
 has no whitespace and even contains a dot.
 
+## Installers Odysync downloads itself
+
+Most sources hand the whole job to a tool that verifies its own payload —
+apt, Homebrew, the Windows Update Agent. Three do not: the `direct` source,
+the NVIDIA driver source and the runtime components download an installer
+and run it. For those the chain lives in
+`backends::direct::windows_apply::lock_and_verify` and is the same for all
+three:
+
+1. the release is re-read and must equal the approved version;
+2. the URL must belong to the publisher — a GitHub asset must be a release of
+   the repository the catalog names, a vendor URL must start with the pinned
+   prefix — and every redirect must stay on HTTPS;
+3. the file is opened with `FILE_SHARE_READ` only, so nothing can write,
+   rename or delete it until the installer exits, and it is hashed from disk
+   under that lock;
+4. the published digest must match;
+5. the Authenticode signature must be valid and its subject's CN or O must
+   equal the signer the catalog pins. The subject is parsed, not searched, so
+   a quoted comma or a longer name cannot satisfy the check.
+
+The catalog (`backends/src/direct/catalog.json`) only lists apps whose
+installers are signed; each signer was read from the real installer. On macOS
+the trust anchor is the installed app itself: its Sparkle Ed25519 key and its
+Apple Team ID.
+
 ## Adding a backend
 
 Implement `core::backend::Backend` (five methods) and add one line to
@@ -97,8 +128,6 @@ installing a package that is already present.
 
 ## Status
 
-Phase 1 (core engine + CLI) is complete: 100 unit tests, clippy-clean,
-warning-free, CI on Windows/macOS/Linux.
-
-Phase 2 (Tauri + React GUI, background service) reuses these crates unchanged;
-the GUI is a front-end over `core`, not a reimplementation.
+Version 3.0: about 620 Rust tests and the frontend tests run in CI on Windows,
+macOS and Linux, which also packages the app for all three. What remains open
+is in [NEXT.md](NEXT.md).

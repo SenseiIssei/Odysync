@@ -24,13 +24,45 @@ pub struct DaemonOpts {
     pub restore_point: bool,
     /// Run once and exit (for testing or scheduled invocations).
     pub once: bool,
+    /// Scan even when the machine is on battery.
+    ///
+    /// Off by default. A scan spawns one process per detected backend — over
+    /// thirty on a well-equipped Windows machine — and doing that every hour
+    /// on battery is a laptop problem, not a feature. An explicit `--once`
+    /// run always proceeds: the user asked for it directly.
+    pub on_battery: bool,
 }
 
 /// Run the daemon loop.
 pub async fn run(opts: &DaemonOpts, config_path: &std::path::Path) -> Result<u8> {
     let interval = Duration::from_secs(opts.interval_minutes as u64 * 60);
 
+    // Logged once at startup rather than every cycle, so the target in
+    // ROADMAP.md §4 is measured rather than assumed — and so a regression
+    // shows up in a user's log without them having to instrument anything.
+    if let Some(rss) = platform::resident_memory_bytes() {
+        tracing::info!(
+            bytes = rss,
+            mb = rss as f64 / (1024.0 * 1024.0),
+            "daemon resident memory at startup"
+        );
+    }
+
     loop {
+        // An explicit one-shot run is the user asking directly, so it is never
+        // deferred; only the unattended loop waits for mains power.
+        if !opts.on_battery && !opts.once {
+            let source = platform::power_source();
+            if !source.allows_background_work() {
+                tracing::info!(
+                    ?source,
+                    "on battery; skipping this scan. Pass --on-battery to scan anyway"
+                );
+                tokio::time::sleep(interval).await;
+                continue;
+            }
+        }
+
         let mut config = Config::load(config_path)
             .with_context(|| format!("loading {}", config_path.display()))?;
         config.policy.elevated = platform::is_elevated();

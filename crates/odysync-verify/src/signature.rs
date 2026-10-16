@@ -97,6 +97,16 @@ fn parse_authenticode(stdout: &str) -> SignatureStatus {
         "" => SignatureStatus::Invalid {
             detail: "Authenticode check produced no status".into(),
         },
+        // The script reports a thrown exception as `Error` and puts its
+        // message where the subject would be; without it the failure is
+        // undiagnosable.
+        "Error" => SignatureStatus::Invalid {
+            detail: if subject.is_empty() {
+                "the Authenticode check failed".into()
+            } else {
+                format!("the Authenticode check failed: {subject}")
+            },
+        },
         other => SignatureStatus::Invalid {
             detail: format!("Authenticode status: {other}"),
         },

@@ -195,6 +195,18 @@ impl<'a> Runner<'a> {
             }
         }
 
+        // Ask the OS whether it now wants a restart, rather than trusting a
+        // backend to say so. `reboot_required` had three display sites and no
+        // assignment anywhere, so the banners could never appear; asking here
+        // covers every backend at once, including an installer that quietly
+        // queued a pending file rename. A dry run changed nothing, so it
+        // cannot have created a new reason to restart — but the machine may
+        // already have been waiting on one before we started, and hiding that
+        // would be the same omission in a smaller form.
+        if !self.dry_run && has_actionable {
+            report.reboot_required = crate::platform::reboot_pending();
+        }
+
         // A terminal event so the UI can settle on "done" rather than being
         // left at whatever the last per-item update happened to be.
         emit(emitter, "", current, "done");
