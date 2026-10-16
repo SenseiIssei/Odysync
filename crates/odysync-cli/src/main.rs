@@ -95,6 +95,22 @@ enum Command {
         restore_point: bool,
     },
 
+    /// Everything Odysync can do safely without you deciding, in one pass:
+    /// install the updates that pass every safety rule, then remove the
+    /// cleanup categories that are safe by default. Made for schedules.
+    Care {
+        /// Run without asking for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+
+        /// Show what would happen without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Disk and battery health, as the hardware reports it.
+    Health,
+
     /// List the package managers detected on this machine.
     Backends,
 
@@ -161,9 +177,14 @@ enum Command {
         /// Task name (for later removal).
         #[arg(long, default_value = odysync_backends::scheduler::DEFAULT_TASK_NAME)]
         task_name: String,
-        /// Extra arguments to pass to `odysync apply`.
+        /// Extra arguments to pass to `odysync apply` (or `care`).
         #[arg(long = "arg")]
         extra_args: Vec<String>,
+
+        /// Run automatic care (updates plus the safe cleanup) instead of
+        /// updates alone.
+        #[arg(long)]
+        care: bool,
     },
 
     /// Remove a scheduled task.
@@ -724,13 +745,20 @@ async fn run(cli: Cli) -> Result<u8> {
             time,
             task_name,
             extra_args,
+            care,
         } => {
-            let spec = odysync_backends::scheduler::ScheduleSpec {
+            use odysync_backends::scheduler::{ScheduleSpec, ScheduledCommand};
+            let spec = ScheduleSpec {
                 frequency: frequency.into(),
                 time,
                 task_name: task_name.clone(),
                 extra_args,
                 program: None,
+                command: if care {
+                    ScheduledCommand::Care
+                } else {
+                    ScheduledCommand::Apply
+                },
             };
             odysync_backends::scheduler::create_schedule(&spec)
                 .await
@@ -814,6 +842,18 @@ async fn run(cli: Cli) -> Result<u8> {
         Command::Drivers { action } => run_driver_action(action, cli.json, &style).await,
 
         Command::Clean { apply, only, yes } => run_clean(apply, only, yes, cli.json, &style).await,
+
+        Command::Care { yes, dry_run } => run_care(&config, yes, dry_run, cli.json, &style).await,
+
+        Command::Health => {
+            let report = odysync_backends::device_health::report().await;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", render::health(&report, &style));
+            }
+            Ok(0)
+        }
 
         Command::Components { action } => match action {
             None => {
@@ -957,6 +997,152 @@ async fn run(cli: Cli) -> Result<u8> {
         #[cfg(windows)]
         Command::OptimizeDisk { apply } => run_optimize_disk(apply, cli.json, &style).await,
     }
+}
+
+/// `odysync care`: the updates that pass every rule, then the safe cleanup.
+///
+/// Deliberately narrower than `apply` followed by `clean --apply` with options:
+/// no filters, no opt-in or destructive cleanup categories, and the restore
+/// point and driver-backup settings from the config. It is what a schedule
+/// runs while nobody is watching.
+async fn run_care(
+    config: &Config,
+    yes: bool,
+    dry_run: bool,
+    json: bool,
+    style: &Style,
+) -> Result<u8> {
+    use odysync_core::cleanup::CleanupCategory;
+
+    // ── Look ──
+    let backends = select_backends(config, &[]).await?;
+    let candidates = scan_all(&backends).await;
+    let plan = config.policy.plan(candidates);
+    let actionable = plan.iter().filter(|p| p.is_actionable()).count();
+
+    let findings = odysync_backends::cleanup::scan().await;
+    let to_clean: Vec<CleanupCategory> = findings
+        .iter()
+        .filter(|f| f.is_actionable() && f.category.selected_by_default())
+        .filter(|f| !f.category.reversibility().needs_explicit_confirmation())
+        .map(|f| f.category)
+        .collect();
+    let reclaimable: u64 = findings
+        .iter()
+        .filter(|f| to_clean.contains(&f.category))
+        .map(|f| f.bytes)
+        .sum();
+
+    if !json {
+        print!("{}", render::plan_table(&plan, style, false));
+        println!(
+            "{} {} in {} cleanup categor{} that are safe to clear.",
+            style.bold("Cleanup:"),
+            render::human_bytes(reclaimable),
+            to_clean.len(),
+            if to_clean.len() == 1 { "y" } else { "ies" }
+        );
+    }
+
+    if actionable == 0 && to_clean.is_empty() {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "updates": serde_json::Value::Null,
+                    "cleanup": [],
+                    "reclaimed_bytes": 0,
+                }))?
+            );
+        } else {
+            println!("\nNothing to do — this machine is up to date and tidy.");
+        }
+        return Ok(0);
+    }
+
+    if dry_run {
+        if !json {
+            println!(
+                "\n{}",
+                style.dim("Dry run: nothing was installed or deleted.")
+            );
+        }
+        return Ok(0);
+    }
+
+    if !yes {
+        use std::io::{BufRead, Write};
+        print!(
+            "\nInstall {actionable} update(s) and clear {}? [y/N] ",
+            render::human_bytes(reclaimable)
+        );
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        // A closed stdin is never consent.
+        if std::io::stdin().lock().read_line(&mut line)? == 0
+            || !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+        {
+            println!("Cancelled.");
+            return Ok(0);
+        }
+    }
+
+    // ── Updates ──
+    let mut report = RunReport::new();
+    if actionable > 0 {
+        #[cfg(windows)]
+        {
+            let driver_updates = plan
+                .iter()
+                .filter(|p| p.is_actionable())
+                .filter(|p| {
+                    p.candidate.id.backend == odysync_core::model::BackendKind::WindowsDrivers
+                })
+                .count();
+            if driver_updates > 0 && !json {
+                driver_backup_notice(config, driver_updates, style).await;
+            }
+        }
+        let refs: Vec<&dyn Backend> = backends.iter().map(|b| b.as_ref()).collect();
+        let mut runner = Runner::new(refs, false);
+        runner.run(&plan, &mut report, config.restore_point).await;
+    }
+
+    // ── Cleanup ──
+    let results = if to_clean.is_empty() {
+        Vec::new()
+    } else {
+        odysync_backends::cleanup::clean(to_clean).await
+    };
+    let reclaimed: u64 = results.iter().map(|(_, o)| o.removed_bytes).sum();
+
+    if json {
+        let cleanup: Vec<_> = results
+            .iter()
+            .map(|(c, o)| serde_json::json!({ "category": c.id(), "outcome": o }))
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "updates": report,
+                "cleanup": cleanup,
+                "reclaimed_bytes": reclaimed,
+            }))?
+        );
+    } else {
+        if actionable > 0 {
+            print!("{}", render::summary(&report, style));
+        }
+        if !results.is_empty() {
+            println!(
+                "{} {}",
+                style.bold("Cleared:"),
+                render::human_bytes(reclaimed)
+            );
+        }
+    }
+
+    Ok(report.exit_code() as u8)
 }
 
 /// `odysync clean`.

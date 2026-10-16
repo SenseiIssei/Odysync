@@ -5,7 +5,9 @@
 //! Linux: systemd user timer via `~/.config/systemd/user/`.
 //!
 //! The schedule is a simple daily or weekly trigger at a specified time.
-//! The scheduled command is `odysync apply --yes` (or the user's custom args).
+//! The scheduled command is `odysync apply --yes`, or `odysync care --yes`
+//! for automatic care (updates plus the safe cleanup), followed by any extra
+//! arguments.
 
 // Only the launchd (macOS) and systemd (Linux) paths build file paths; on
 // Windows this would be an unused import, which `-D warnings` rejects.
@@ -43,6 +45,17 @@ impl std::fmt::Display for ScheduleFrequency {
     }
 }
 
+/// What a schedule runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScheduledCommand {
+    /// Install the updates that pass every safety rule.
+    #[default]
+    Apply,
+    /// The updates, then the cleanup categories that are safe by default.
+    Care,
+}
+
 /// A schedule specification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleSpec {
@@ -61,9 +74,23 @@ pub struct ScheduleSpec {
     /// not take command-line verbs.
     #[serde(default)]
     pub program: Option<String>,
+    /// What to run. Older saved specs have no field and meant `apply`.
+    #[serde(default)]
+    pub command: ScheduledCommand,
 }
 
 impl ScheduleSpec {
+    /// The arguments the scheduler passes to [`Self::program`].
+    pub fn args(&self) -> Vec<String> {
+        let verb = match self.command {
+            ScheduledCommand::Apply => "apply",
+            ScheduledCommand::Care => "care",
+        };
+        let mut args = vec![verb.to_string(), "--yes".to_string()];
+        args.extend(self.extra_args.iter().cloned());
+        args
+    }
+
     fn program(&self) -> Result<String> {
         match &self.program {
             Some(p) => Ok(p.clone()),
@@ -84,8 +111,7 @@ fn current_exe() -> Result<String> {
 #[cfg(windows)]
 pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
     let exe = spec.program()?;
-    let mut args = vec!["apply".to_string(), "--yes".to_string()];
-    args.extend(spec.extra_args.iter().cloned());
+    let args = spec.args();
     let tr = format!("\"{exe}\" {}", args.join(" "));
 
     let sc = match spec.frequency {
@@ -168,8 +194,7 @@ fn plist_path(task_name: &str) -> PathBuf {
 #[cfg(target_os = "macos")]
 pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
     let exe = spec.program()?;
-    let mut args = vec!["apply".to_string(), "--yes".to_string()];
-    args.extend(spec.extra_args.iter().cloned());
+    let args = spec.args();
 
     let label = format!("dev.odysync.{}", spec.task_name);
     let calendar = match spec.frequency {
@@ -274,8 +299,7 @@ fn unit_dir() -> Result<PathBuf> {
 #[cfg(target_os = "linux")]
 pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
     let exe = spec.program()?;
-    let mut args = vec!["apply".to_string(), "--yes".to_string()];
-    args.extend(spec.extra_args.iter().cloned());
+    let args = spec.args();
 
     let dir = unit_dir()?;
     std::fs::create_dir_all(&dir)?;
@@ -455,5 +479,34 @@ mod tests {
         assert_eq!(json, "\"daily\"");
         let json = serde_json::to_string(&ScheduleFrequency::Weekly).unwrap();
         assert_eq!(json, "\"weekly\"");
+    }
+    fn spec(command: ScheduledCommand) -> ScheduleSpec {
+        ScheduleSpec {
+            frequency: ScheduleFrequency::Daily,
+            time: "09:00".into(),
+            task_name: DEFAULT_TASK_NAME.into(),
+            extra_args: vec!["--restore-point".into()],
+            program: None,
+            command,
+        }
+    }
+
+    #[test]
+    fn a_schedule_runs_apply_or_care_unattended() {
+        assert_eq!(
+            spec(ScheduledCommand::Apply).args(),
+            ["apply", "--yes", "--restore-point"]
+        );
+        assert_eq!(
+            spec(ScheduledCommand::Care).args(),
+            ["care", "--yes", "--restore-point"]
+        );
+    }
+
+    #[test]
+    fn a_spec_saved_before_care_existed_still_means_apply() {
+        let old = r#"{"frequency":"daily","time":"09:00","task_name":"Odysync","extra_args":[]}"#;
+        let spec: ScheduleSpec = serde_json::from_str(old).unwrap();
+        assert_eq!(spec.command, ScheduledCommand::Apply);
     }
 }

@@ -246,6 +246,68 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// `odysync health`.
+pub fn health(report: &odysync_backends::device_health::HealthReport, style: &Style) -> String {
+    use odysync_backends::device_health::HealthState;
+    use std::fmt::Write;
+
+    let mark = |state: HealthState| match state {
+        HealthState::Good => style.green("ok  "),
+        HealthState::Warning => style.yellow("warn"),
+        HealthState::Bad => style.red("BAD "),
+        HealthState::Unknown => style.dim("?   "),
+    };
+
+    let mut out = String::new();
+    let _ = writeln!(out, "{}", style.bold("Disks\n"));
+    if report.disks.is_empty() {
+        let _ = writeln!(out, "  {}", style.dim("No disks could be read."));
+    }
+    for d in &report.disks {
+        let mut facts = vec![d.kind.clone(), human_bytes(d.size_bytes)];
+        if let Some(t) = d.temperature_c {
+            facts.push(format!("{t} °C"));
+        }
+        if let Some(w) = d.wear_percent {
+            facts.push(format!("{w}% worn"));
+        }
+        if let Some(h) = d.power_on_hours {
+            facts.push(format!("{h} h powered on"));
+        }
+        let _ = writeln!(
+            out,
+            "  {}  {}  {}",
+            mark(d.state),
+            style.bold(&d.name),
+            style.dim(&facts.join(" · "))
+        );
+        let _ = writeln!(out, "        {}", d.summary);
+    }
+
+    if let Some(b) = &report.battery {
+        let _ = writeln!(out, "\n{}\n", style.bold("Battery"));
+        let mut facts = Vec::new();
+        if let (Some(full), Some(design)) = (b.full_capacity, b.design_capacity) {
+            facts.push(format!("{full} of {design} {}", b.capacity_unit));
+        }
+        if let Some(c) = b.cycle_count {
+            facts.push(format!("{c} cycles"));
+        }
+        let _ = writeln!(
+            out,
+            "  {}  {}  {}",
+            mark(b.state),
+            b.summary,
+            style.dim(&facts.join(" · "))
+        );
+    }
+
+    for note in &report.notes {
+        let _ = writeln!(out, "\n{}", style.dim(note));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

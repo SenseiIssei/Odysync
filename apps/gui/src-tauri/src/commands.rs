@@ -183,6 +183,10 @@ pub struct ScheduleRequest {
     pub frequency: String,
     pub time: String,
     pub task_name: Option<String>,
+    /// Run automatic care (updates plus the safe cleanup) instead of updates
+    /// alone.
+    #[serde(default)]
+    pub care: bool,
 }
 
 // ── Config DTO ───────────────────────────────────────────────────────────────
@@ -644,7 +648,9 @@ fn bundled_cli(app: &AppHandle) -> Option<std::path::PathBuf> {
 
 #[tauri::command]
 pub async fn create_schedule(app: AppHandle, request: ScheduleRequest) -> Result<String, String> {
-    use odysync_backends::scheduler::{ScheduleFrequency, ScheduleSpec, create_schedule};
+    use odysync_backends::scheduler::{
+        ScheduleFrequency, ScheduleSpec, ScheduledCommand, create_schedule,
+    };
 
     let freq = match request.frequency.as_str() {
         "daily" => ScheduleFrequency::Daily,
@@ -670,6 +676,11 @@ pub async fn create_schedule(app: AppHandle, request: ScheduleRequest) -> Result
         task_name: task_name.clone(),
         extra_args: Vec::new(),
         program: Some(cli.to_string_lossy().to_string()),
+        command: if request.care {
+            ScheduledCommand::Care
+        } else {
+            ScheduledCommand::Apply
+        },
     };
 
     create_schedule(&spec).await.map_err(|e| e.to_string())?;

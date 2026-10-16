@@ -115,6 +115,7 @@ pub fn run() {
             tools::components_status,
             tools::component_install,
             tools::device_problems,
+            tools::device_health,
             tools::driver_backups,
             tools::driver_backup_create,
             tools::driver_backup_restore,

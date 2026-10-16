@@ -130,6 +130,11 @@ pub async fn component_install(id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub async fn device_health() -> Result<odysync_backends::device_health::HealthReport, String> {
+    Ok(odysync_backends::device_health::report().await)
+}
+
+#[tauri::command]
 pub async fn device_problems() -> Result<Vec<odysync_backends::devices::DeviceProblem>, String> {
     Ok(odysync_backends::devices::problems().await)
 }
