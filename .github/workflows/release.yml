@@ -109,7 +109,7 @@ jobs:
           fi
           cat "${{ matrix.archive }}.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.target }}
           path: |
@@ -217,7 +217,7 @@ jobs:
             cat "$f.sha256"
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: app-${{ matrix.os }}
           path: dist-out/*
@@ -298,7 +298,7 @@ jobs:
           EOF
           find winget -type f
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: winget-manifests
           path: winget/**
