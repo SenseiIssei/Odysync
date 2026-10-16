@@ -133,6 +133,9 @@ pub struct BackendDto {
     pub verification: String,
     /// The full sentence behind `verification`.
     pub verification_detail: String,
+    /// Drivers, firmware, OS upgrades: never part of one-click or automatic
+    /// care.
+    pub attended: bool,
 }
 
 #[derive(Serialize)]
@@ -531,6 +534,7 @@ pub async fn list_backends(state: State<'_, AppState>) -> Result<Vec<BackendDto>
                 opt_in: !kind.enabled_by_default(),
                 verification: verification.label(),
                 verification_detail: verification.detail(),
+                attended: kind.needs_attended_install(),
             }
         })
         .collect())

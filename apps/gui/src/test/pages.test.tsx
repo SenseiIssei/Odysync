@@ -7,13 +7,18 @@ vi.mock("../api", async (importOriginal) => {
   const real = await importOriginal<typeof import("../api")>();
   return {
     ...real,
+    scan: vi.fn(real.scan),
+    apply: vi.fn(real.apply),
     cleanupRun: vi.fn(async () => []),
     saveConfig: vi.fn(async () => undefined),
+    checkSchedule: vi.fn(async () => false),
+    createSchedule: vi.fn(async () => "OdysyncCare"),
   };
 });
 
 import * as api from "../api";
 import { StoreProvider } from "../store";
+import Dashboard from "../pages/Dashboard";
 import Maintenance from "../pages/Maintenance";
 import Settings from "../pages/Settings";
 import Updates from "../pages/Updates";
@@ -71,5 +76,58 @@ describe("Settings", () => {
     const saved = vi.mocked(api.saveConfig).mock.calls[0][0];
     expect(saved.enabled_backends).toContain("winget");
     expect(saved.disabled_backends).not.toContain("winget");
+  });
+});
+
+describe("Home", () => {
+  it("fixes safe updates and junk files in one click, and leaves drivers alone", async () => {
+    const real = await vi.importActual<typeof import("../api")>("../api");
+    vi.mocked(api.scan).mockImplementation(async () => {
+      const result = await real.scan();
+      return {
+        ...result,
+        actionable: [
+          ...result.actionable,
+          {
+            backend: "windows-drivers",
+            id: "intel-wifi",
+            name: "Intel Wi-Fi driver",
+            installed: "23.1",
+            available: "23.4",
+            size_bytes: null,
+          },
+        ],
+      };
+    });
+
+    withStore(<Dashboard onNavigate={() => {}} />);
+    const fix = await screen.findByRole("button", { name: "Fix everything" }, { timeout: 8000 });
+    fireEvent.click(fix);
+
+    await waitFor(() => expect(api.apply).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    const sent = vi.mocked(api.apply).mock.calls[0][0].updates.map((u) => u.backend);
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent).not.toContain("windows-drivers");
+
+    await waitFor(() => expect(api.cleanupRun).toHaveBeenCalled(), { timeout: 4000 });
+    const ids = vi.mocked(api.cleanupRun).mock.calls.at(-1)![0];
+    expect(ids).toContain("temp-files");
+    expect(ids).not.toContain("recycle-bin");
+    expect(ids).not.toContain("browser-cache");
+
+    // The driver is still there, for a person to start.
+    expect(await screen.findByText(/driver or system update to review/, {}, { timeout: 4000 })).toBeTruthy();
+  }, 20000);
+
+  it("turns automatic care on as a scheduled care run", async () => {
+    withStore(<Dashboard onNavigate={() => {}} />);
+    const toggle = await screen.findByRole("switch", { name: "Automatic care" });
+    await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(toggle);
+    await waitFor(() => expect(api.createSchedule).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.createSchedule).mock.calls[0][0]).toMatchObject({
+      task_name: "OdysyncCare",
+      care: true,
+    });
   });
 });

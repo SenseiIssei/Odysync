@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
+  ChevronDown,
   Minus,
   Moon,
   PanelLeftClose,
@@ -14,7 +15,7 @@ import {
 } from "lucide-react";
 import * as api from "./api";
 import { StoreProvider, useStore } from "./store";
-import { NAV_GROUPS, NAV_ITEMS, TABS, isTab, type NavItem, type Tab } from "./nav";
+import { MORE_TOOLS, NAV_GROUPS, NAV_ITEMS, TABS, isTab, type NavItem, type Tab } from "./nav";
 import { safeListen } from "./events";
 import { inTauri } from "./bridge";
 import { useTheme } from "./theme";
@@ -40,6 +41,7 @@ import About from "./pages/About";
 
 const TAB_STORAGE_KEY = "odysync.activeTab";
 const SIDEBAR_KEY = "odysync.sidebar";
+const MORE_TOOLS_KEY = "odysync.moreTools";
 
 export default function App() {
   return (
@@ -137,6 +139,7 @@ function Shell() {
       className="app-window h-screen flex flex-col text-fg bg-canvas"
       data-frameless={frameless ? "true" : "false"}
     >
+      <div className="aurora" aria-hidden />
       <TitleBar
         frameless={frameless}
         macOverlay={macOverlay}
@@ -154,7 +157,7 @@ function Shell() {
       {store.booting && (
         <div className="h-0.5 bg-transparent flex-shrink-0 overflow-hidden">
           <div
-            className="h-full bg-accent/70 transition-[width] duration-300"
+            className="h-full bg-gradient-accent transition-[width] duration-300"
             style={{ width: `${Math.round(store.bootProgress * 100)}%` }}
           />
         </div>
@@ -229,7 +232,7 @@ function TitleBar({
   return (
     <div
       data-tauri-drag-region={frameless || macOverlay ? true : undefined}
-      className={`titlebar h-12 flex items-center justify-between gap-3 border-b border-line bg-surface/60 flex-shrink-0 ${
+      className={`titlebar h-12 flex items-center justify-between gap-3 border-b border-line bg-canvas/40 backdrop-blur-xl flex-shrink-0 ${
         macOverlay ? "pl-[84px] pr-3" : "px-3"
       }`}
     >
@@ -241,7 +244,7 @@ function TitleBar({
           {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
         </IconButton>
         <Logo className="w-6 h-6 flex-shrink-0" />
-        <span className="text-sm font-semibold tracking-tight">Odysync</span>
+        <span className="text-sm font-bold tracking-tight font-display">Odysync</span>
         {version && <span className="text-xs text-faint">v{version}</span>}
       </div>
 
@@ -324,6 +327,26 @@ function Sidebar({
   onNavigate: (t: Tab) => void;
   badges: Partial<Record<Tab, number>>;
 }) {
+  const [moreOpen, setMoreOpen] = useState(() => {
+    try {
+      return localStorage.getItem(MORE_TOOLS_KEY) === "open";
+    } catch {
+      return false;
+    }
+  });
+  const toggleMore = () =>
+    setMoreOpen((v) => {
+      try {
+        localStorage.setItem(MORE_TOOLS_KEY, v ? "closed" : "open");
+      } catch {
+        /* remembered for convenience only */
+      }
+      return !v;
+    });
+  // A page inside the collapsed group stays reachable: its group opens.
+  const activeInMore = NAV_ITEMS.some((n) => n.id === tab && n.group === MORE_TOOLS);
+  const showMore = moreOpen || activeInMore || !open;
+
   const item = (n: NavItem) => (
     <NavButton
       key={n.id}
@@ -338,26 +361,49 @@ function Sidebar({
   return (
     <nav
       aria-label="Sections"
-      className={`flex flex-col border-r border-line bg-surface/40 flex-shrink-0 transition-[width] duration-200 ${
-        open ? "w-[224px]" : "w-[60px]"
+      className={`flex flex-col border-r border-line bg-canvas/30 backdrop-blur-xl flex-shrink-0 transition-[width] duration-200 ${
+        open ? "w-[232px]" : "w-[64px]"
       }`}
     >
-      <div className="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2.5 space-y-3">
-        {NAV_GROUPS.map((group) => (
-          <div key={group || "top"}>
-            {group && open && (
-              <div className="px-2.5 mb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-faint">
-                {group}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-2.5 space-y-4">
+        {NAV_GROUPS.map((group) => {
+          const items = NAV_ITEMS.filter((n) => n.group === group);
+          if (group === MORE_TOOLS) {
+            return (
+              <div key={group}>
+                {open ? (
+                  <button
+                    type="button"
+                    onClick={toggleMore}
+                    aria-expanded={showMore}
+                    className="w-full flex items-center justify-between px-2.5 mb-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-faint hover:text-muted transition-colors"
+                  >
+                    {group}
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 transition-transform duration-200 ${showMore ? "" : "-rotate-90"}`}
+                    />
+                  </button>
+                ) : (
+                  <div className="mx-2 mb-2 border-t border-line" />
+                )}
+                {showMore && <div className="space-y-0.5 animate-fade-in">{items.map(item)}</div>}
               </div>
-            )}
-            {group && !open && <div className="mx-2 mb-2 border-t border-line" />}
-            <div className="space-y-0.5">
-              {NAV_ITEMS.filter((n) => n.group === group).map(item)}
+            );
+          }
+          return (
+            <div key={group || "top"}>
+              {group && open && (
+                <div className="px-2.5 mb-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-faint">
+                  {group}
+                </div>
+              )}
+              {group && !open && <div className="mx-2 mb-2 border-t border-line" />}
+              <div className="space-y-0.5">{items.map(item)}</div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-      <div className="border-t border-line py-1.5 px-2.5 space-y-0.5">
+      <div className="border-t border-line py-2 px-2.5 space-y-0.5">
         {NAV_ITEMS.filter((n) => n.group === "footer").map(item)}
       </div>
     </nav>
@@ -383,16 +429,16 @@ function NavButton({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       title={compact ? item.label : undefined}
-      className={`group relative w-full flex items-center gap-3 h-8 rounded-lg text-sm transition-colors ${
-        compact ? "justify-center px-0" : "px-2.5"
+      className={`group relative w-full flex items-center gap-3 h-9 rounded-xl text-sm transition-all duration-150 ${
+        compact ? "justify-center px-0" : "px-3"
       } ${
         active
-          ? "bg-raised text-fg font-medium"
+          ? "bg-accent/12 text-fg font-medium shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_22%,transparent)]"
           : "text-muted hover:text-fg hover:bg-raised/60"
       }`}
     >
       {active && (
-        <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full bg-accent" aria-hidden />
+        <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-gradient-accent" aria-hidden />
       )}
       <span className={active ? "text-accent" : "text-faint group-hover:text-muted"}>
         {item.icon}
@@ -423,7 +469,7 @@ function Page({ active, children }: { active: boolean; children: React.ReactNode
       className={`absolute inset-0 overflow-y-auto ${active ? "" : "pointer-events-none"}`}
       style={{ display: active ? "block" : "none" }}
     >
-      <div className="mx-auto max-w-[1180px] px-8 py-7 space-y-6">{children}</div>
+      <div className="page-enter mx-auto max-w-[1180px] px-8 py-7 space-y-6">{children}</div>
     </div>
   );
 }

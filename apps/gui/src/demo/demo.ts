@@ -17,6 +17,7 @@ import type {
   DeviceProblem,
   DriverBackupDto,
   HardwareInfoDto,
+  HealthReportDto,
   HistoryEntryDto,
   InstalledPackageDto,
   LargeFileReport,
@@ -29,6 +30,41 @@ const GB = 1024 * 1024 * 1024;
 const MB = 1024 * 1024;
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * What the demo has "done", so a one-click fix in the browser behaves like the
+ * app: installed updates leave the list and cleaned categories measure zero.
+ */
+const applied = new Set<string>();
+const cleaned = new Set<string>();
+const schedules = new Set<string>();
+
+const health: HealthReportDto = {
+  disks: [
+    {
+      name: "Samsung SSD 990 PRO 2TB",
+      kind: "NVMe SSD",
+      size_bytes: 2000 * GB,
+      state: "good",
+      summary: "Healthy.",
+      temperature_c: 41,
+      wear_percent: 3,
+      power_on_hours: 4211,
+    },
+    {
+      name: "WD_BLACK SN850X 4TB",
+      kind: "NVMe SSD",
+      size_bytes: 4000 * GB,
+      state: "good",
+      summary: "Healthy.",
+      temperature_c: 46,
+      wear_percent: 9,
+      power_on_hours: 9873,
+    },
+  ],
+  battery: null,
+  notes: [],
+};
 
 const backends: BackendDto[] = [
   b("direct", "Direct from publisher", true, true, false, "verified by Odysync"),
@@ -63,6 +99,7 @@ function b(
     opt_in,
     verification,
     verification_detail: `${verification}.`,
+    attended: ["windows-drivers", "nvidia-gpu", "windows-feature-update"].includes(kind),
   };
 }
 
@@ -232,7 +269,10 @@ export async function demoInvoke<T>(command: string, args?: Record<string, unkno
       return answer({ os: "Windows", platform: "windows", elevated: false, version: "3.0.0", config_error: null });
     case "scan":
       await wait(500);
-      return answer(scan);
+      return answer({
+        ...scan,
+        actionable: scan.actionable.filter((u) => !applied.has(`${u.backend}:${u.id}`)),
+      });
     case "list_backends":
     case "refresh_backends":
       return answer(backends);
@@ -252,7 +292,8 @@ export async function demoInvoke<T>(command: string, args?: Record<string, unkno
       return answer(undefined);
     case "apply": {
       const request = args?.request as ApplyRequest | undefined;
-      await wait(900);
+      await wait(1600);
+      for (const u of request?.updates ?? []) applied.add(`${u.backend}:${u.id}`);
       const result: ApplyResultDto = {
         updated: request?.updates.length ?? 0,
         failed: 0,
@@ -309,12 +350,31 @@ export async function demoInvoke<T>(command: string, args?: Record<string, unkno
     case "list_maintenance":
       return answer(["system_health"]);
     case "check_schedule":
-      return answer(true);
+      return answer(schedules.has(String(args?.taskName ?? args?.task_name ?? "")));
+    case "create_schedule": {
+      const request = args?.request as { task_name: string | null } | undefined;
+      const name = request?.task_name ?? "Odysync";
+      schedules.add(name);
+      return answer(name);
+    }
+    case "remove_schedule": {
+      const name = String(args?.taskName ?? args?.task_name ?? "");
+      return answer(schedules.delete(name));
+    }
+    case "device_health":
+      await wait(300);
+      return answer(health);
     case "cleanup_scan":
       await wait(400);
-      return answer(cleanup);
+      return answer(
+        cleanup.map((item) =>
+          cleaned.has(item.id) ? { ...item, bytes: 0, file_count: 0 } : item,
+        ),
+      );
     case "cleanup_run": {
       const ids = (args?.categories as string[]) ?? [];
+      await wait(900);
+      for (const id of ids) cleaned.add(id);
       const results: CleanupResultDto[] = cleanup
         .filter((item) => ids.includes(item.id))
         .map((item) => ({

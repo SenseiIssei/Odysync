@@ -45,6 +45,7 @@ import type {
   ComponentStatus,
   DeviceProblem,
   DriverBackupDto,
+  HealthReportDto,
 } from "./types";
 
 // ── Concurrency queue ────────────────────────────────────────────────────────
@@ -215,6 +216,7 @@ export interface AppStore {
   components: Resource<ComponentStatus[]>;
   devices: Resource<DeviceProblem[]>;
   driverBackups: Resource<DriverBackupDto[]>;
+  health: Resource<HealthReportDto | null>;
   /** True until the initial background load of every resource has settled. */
   booting: boolean;
   /** Fraction of the initial background load that has completed, 0..1. */
@@ -367,6 +369,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     () => api.driverBackups(),
     [],
   );
+  const health = useResource<HealthReportDto | null>(
+    "hardware health",
+    () => api.deviceHealth(),
+    null,
+    { heavy: true },
+  );
 
   // Whether the security audit runs as part of the startup load. It is the
   // slowest thing in the app, so it is opt-in — but on by default, because a
@@ -397,6 +405,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       driverBackups,
       components,
       devices,
+      health,
       cleanup,
       scan,
       ...(scanOnStartup ? [securityScan] : []),
@@ -418,6 +427,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       driverBackups,
       components,
       devices,
+      health,
       cleanup,
       scan,
       securityScan,
@@ -538,6 +548,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       components,
       devices,
       driverBackups,
+      health,
       booting,
       bootProgress: bootTotal === 0 ? 1 : bootDone / bootTotal,
       refreshAll,
@@ -562,6 +573,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       components,
       devices,
       driverBackups,
+      health,
       booting,
       bootDone,
       bootTotal,

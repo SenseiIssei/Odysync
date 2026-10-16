@@ -1,5 +1,6 @@
 import { invoke } from "./bridge";
 import type {
+  HealthReportDto,
   ScanResult,
   BackendDto,
   SystemInfoDto,
@@ -301,6 +302,10 @@ export async function componentsStatus(): Promise<ComponentStatus[]> {
 
 export async function componentInstall(id: string): Promise<string> {
   return invoke<string>("component_install", { id });
+}
+
+export async function deviceHealth(): Promise<HealthReportDto> {
+  return invoke("device_health");
 }
 
 export async function deviceProblems(): Promise<DeviceProblem[]> {
