@@ -26,7 +26,7 @@
 use std::time::Duration;
 
 use odysync_core::error::{Error, Result};
-use odysync_core::windows_update::{classify, UpdateClass};
+use odysync_core::windows_update::{UpdateClass, classify};
 
 /// One update as the Windows Update Agent describes it.
 #[derive(Debug, Clone)]
@@ -128,13 +128,13 @@ pub fn explain_hresult(hr: i32) -> String {
 mod imp {
     use super::*;
 
-    use windows::core::BSTR;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+        CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
     };
     use windows::Win32::System::UpdateAgent::{
         IUpdate, IUpdateCollection, IUpdateSession, UpdateCollection, UpdateSession,
     };
+    use windows::core::BSTR;
 
     /// `OperationResultCode::orcFailed`.
     const ORC_FAILED: i32 = 2;
@@ -223,10 +223,10 @@ mod imp {
         if let Ok(categories) = unsafe { update.Categories() } {
             let count = unsafe { categories.Count() }.unwrap_or(0);
             for i in 0..count {
-                if let Ok(category) = unsafe { categories.get_Item(i) } {
-                    if let Ok(cid) = unsafe { category.CategoryID() } {
-                        category_ids.push(cid.to_string());
-                    }
+                if let Ok(category) = unsafe { categories.get_Item(i) }
+                    && let Ok(cid) = unsafe { category.CategoryID() }
+                {
+                    category_ids.push(cid.to_string());
                 }
             }
         }

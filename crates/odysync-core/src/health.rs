@@ -157,10 +157,10 @@ async fn check_battery_or_ac_power() -> HealthCheckResult {
                 let online_path = bat_path.join(&name).join("online");
                 if online_path.exists() {
                     has_battery = true;
-                    if let Ok(content) = std::fs::read_to_string(&online_path) {
-                        if content.trim() == "1" {
-                            on_ac = true;
-                        }
+                    if let Ok(content) = std::fs::read_to_string(&online_path)
+                        && content.trim() == "1"
+                    {
+                        on_ac = true;
                     }
                 }
             }
@@ -250,18 +250,17 @@ async fn check_no_running_package_manager() -> HealthCheckResult {
             // Check if the lock is held (flock-style check is complex; just
             // check if the process has been recently active by seeing if
             // the lock file is non-empty or very recently modified).
-            if let Ok(metadata) = std::fs::metadata(lock) {
-                if let Ok(modified) = metadata.modified() {
-                    if let Ok(elapsed) = modified.elapsed() {
-                        // If the lock was modified in the last 60 seconds,
-                        // assume a package manager is actively running.
-                        if elapsed.as_secs() < 60 {
-                            return HealthCheckResult::fail(
-                                "package-manager-busy",
-                                format!("package manager lock {} is recently active", lock),
-                            );
-                        }
-                    }
+            if let Ok(metadata) = std::fs::metadata(lock)
+                && let Ok(modified) = metadata.modified()
+                && let Ok(elapsed) = modified.elapsed()
+            {
+                // If the lock was modified in the last 60 seconds,
+                // assume a package manager is actively running.
+                if elapsed.as_secs() < 60 {
+                    return HealthCheckResult::fail(
+                        "package-manager-busy",
+                        format!("package manager lock {} is recently active", lock),
+                    );
                 }
             }
         }
@@ -294,7 +293,7 @@ fn get_free_space(path: &Path) -> Option<u64> {
             .chain(std::iter::once(0))
             .collect();
 
-        extern "system" {
+        unsafe extern "system" {
             fn GetDiskFreeSpaceExW(
                 directory: *const u16,
                 free_bytes_available: *mut u64,
@@ -308,11 +307,7 @@ fn get_free_space(path: &Path) -> Option<u64> {
         let mut total_free: u64 = 0;
         let ret =
             unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, &mut total_free) };
-        if ret != 0 {
-            Some(free)
-        } else {
-            None
-        }
+        if ret != 0 { Some(free) } else { None }
     }
 }
 

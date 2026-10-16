@@ -79,10 +79,10 @@ pub async fn check(proxy_url: Option<&str>) -> Result<UpdateCheck> {
     let mut builder = reqwest::Client::builder()
         .timeout(TIMEOUT)
         .user_agent(USER_AGENT);
-    if let Some(proxy) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(proxy) {
-            builder = builder.proxy(proxy);
-        }
+    if let Some(proxy) = proxy_url
+        && let Ok(proxy) = reqwest::Proxy::all(proxy)
+    {
+        builder = builder.proxy(proxy);
     }
     let client = builder.build()?;
 
@@ -190,10 +190,11 @@ mod tests {
             asset("Odysync_2.2.0_x64-setup.exe.sha256"),
         ];
         let c = evaluate("2.1.0", "v2.2.0", "u", &assets);
-        assert!(c
-            .installer_sha256
-            .as_deref()
-            .is_some_and(|u| u.ends_with(".exe.sha256")));
+        assert!(
+            c.installer_sha256
+                .as_deref()
+                .is_some_and(|u| u.ends_with(".exe.sha256"))
+        );
     }
 
     #[test]

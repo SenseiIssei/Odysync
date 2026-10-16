@@ -25,7 +25,7 @@ use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::version::Version;
 use odysync_core::windows_update::UpdateClass;
 
-use session::{WuaUpdate, CRITERIA_SOFTWARE};
+use session::{CRITERIA_SOFTWARE, WuaUpdate};
 
 /// One backend per [`UpdateClass`], all sharing the same Windows Update search.
 pub struct WindowsUpdateBackend {

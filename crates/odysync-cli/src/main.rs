@@ -12,13 +12,13 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use odysync_core::Backend;
 use odysync_core::config::Config;
 use odysync_core::maintenance::MaintenanceKind;
 use odysync_core::model::UpdateCandidate;
 use odysync_core::platform;
 use odysync_core::report::RunReport;
 use odysync_core::runner::Runner;
-use odysync_core::Backend;
 
 use render::Style;
 
@@ -871,7 +871,9 @@ async fn run(cli: Cli) -> Result<u8> {
             }
             Some(StartupAction::Disable { name, location }) => {
                 odysync_backends::startup_items::set_enabled(&name, &location, false).await?;
-                println!("{name} no longer starts when you sign in. `odysync startup enable` undoes this.");
+                println!(
+                    "{name} no longer starts when you sign in. `odysync startup enable` undoes this."
+                );
                 Ok(0)
             }
         },
@@ -965,7 +967,7 @@ async fn run_clean(
     json: bool,
     style: &Style,
 ) -> Result<u8> {
-    use odysync_core::cleanup::{default_reclaimable, CleanupCategory};
+    use odysync_core::cleanup::{CleanupCategory, default_reclaimable};
 
     let findings = odysync_backends::cleanup::scan().await;
 

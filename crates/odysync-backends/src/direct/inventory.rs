@@ -52,12 +52,11 @@ pub fn install_dir_from(
         return Some(PathBuf::from(loc.trim_matches('"')));
     }
     for raw in [display_icon, uninstall_string].into_iter().flatten() {
-        if let Some(exe) = executable_path(raw) {
-            if let Some(parent) = Path::new(&exe).parent() {
-                if parent.components().count() > 1 {
-                    return Some(parent.to_path_buf());
-                }
-            }
+        if let Some(exe) = executable_path(raw)
+            && let Some(parent) = Path::new(&exe).parent()
+            && parent.components().count() > 1
+        {
+            return Some(parent.to_path_buf());
         }
     }
     None
@@ -82,10 +81,10 @@ fn executable_path(raw: &str) -> Option<String> {
 
 #[cfg(windows)]
 pub fn installed_apps() -> Vec<InstalledApp> {
+    use winreg::RegKey;
     use winreg::enums::{
         HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY,
     };
-    use winreg::RegKey;
 
     const UNINSTALL: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
     let native = machine_arch();

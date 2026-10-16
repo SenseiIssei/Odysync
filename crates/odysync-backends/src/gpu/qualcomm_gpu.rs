@@ -15,7 +15,7 @@ use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::proc;
 use odysync_core::version::Version;
 
-use super::{enumerate_display_adapters, GpuVendor};
+use super::{GpuVendor, enumerate_display_adapters};
 
 const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);

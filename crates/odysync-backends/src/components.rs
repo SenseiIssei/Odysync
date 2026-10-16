@@ -171,7 +171,7 @@ mod windows_impl {
 
     use super::*;
     use crate::direct::http;
-    use crate::direct::windows_apply::{lock_and_verify, ExpectedDigest};
+    use crate::direct::windows_apply::{ExpectedDigest, lock_and_verify};
 
     const MICROSOFT: &str = "Microsoft Corporation";
     const INSTALL_TIMEOUT: Duration = Duration::from_secs(20 * 60);
@@ -549,17 +549,21 @@ mod tests {
 
     #[test]
     fn an_installer_off_microsofts_hosts_or_without_a_full_hash_is_refused() {
-        assert!(dotnet_installer(
-            &releases("https://example.com/x.exe", &"b".repeat(128)),
-            "windowsdesktop",
-            "win-x64"
-        )
-        .is_none());
-        assert!(dotnet_installer(
-            &releases("https://builds.dotnet.microsoft.com/x.exe", "abc"),
-            "windowsdesktop",
-            "win-x64"
-        )
-        .is_none());
+        assert!(
+            dotnet_installer(
+                &releases("https://example.com/x.exe", &"b".repeat(128)),
+                "windowsdesktop",
+                "win-x64"
+            )
+            .is_none()
+        );
+        assert!(
+            dotnet_installer(
+                &releases("https://builds.dotnet.microsoft.com/x.exe", "abc"),
+                "windowsdesktop",
+                "win-x64"
+            )
+            .is_none()
+        );
     }
 }

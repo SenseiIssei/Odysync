@@ -240,7 +240,8 @@ mod tests {
 
     #[test]
     fn sanitize_redacts_home_paths() {
-        std::env::set_var("HOME", "/home/testuser");
+        // SAFETY: no other test in this crate reads HOME concurrently.
+        unsafe { std::env::set_var("HOME", "/home/testuser") };
         let e = Error::CommandFailed {
             command: "test".into(),
             code: 1,

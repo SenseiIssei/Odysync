@@ -18,7 +18,7 @@ use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::proc;
 use odysync_core::version::Version;
 
-use super::{enumerate_display_adapters, GpuVendor};
+use super::{GpuVendor, enumerate_display_adapters};
 
 const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
@@ -92,32 +92,30 @@ impl Backend for IntelGpuBackend {
         )
         .await;
 
-        if let Ok(out) = out {
-            if out.success() {
-                let candidates: Vec<_> = crate::winget::table::parse(&out.stdout)
-                    .into_iter()
-                    .filter(|row| row.id.eq_ignore_ascii_case(WINGET_PACKAGE_ID))
-                    .map(|row| {
-                        let name = if intel_adapters.len() == 1 {
-                            format!("Intel {} Driver", intel_adapters[0].name)
-                        } else {
-                            "Intel Graphics Driver".to_string()
-                        };
-                        UpdateCandidate {
-                            id: PackageId::new(BackendKind::IntelGpu, WINGET_PACKAGE_ID),
-                            name,
-                            installed: Version::parse(
-                                installed_version.as_deref().unwrap_or("0.0.0"),
-                            ),
-                            available: Version::parse(&row.version),
-                            size_bytes: None,
-                            expected_sha256: None,
-                        }
-                    })
-                    .collect();
-                if !candidates.is_empty() {
-                    return Ok(candidates);
-                }
+        if let Ok(out) = out
+            && out.success()
+        {
+            let candidates: Vec<_> = crate::winget::table::parse(&out.stdout)
+                .into_iter()
+                .filter(|row| row.id.eq_ignore_ascii_case(WINGET_PACKAGE_ID))
+                .map(|row| {
+                    let name = if intel_adapters.len() == 1 {
+                        format!("Intel {} Driver", intel_adapters[0].name)
+                    } else {
+                        "Intel Graphics Driver".to_string()
+                    };
+                    UpdateCandidate {
+                        id: PackageId::new(BackendKind::IntelGpu, WINGET_PACKAGE_ID),
+                        name,
+                        installed: Version::parse(installed_version.as_deref().unwrap_or("0.0.0")),
+                        available: Version::parse(&row.version),
+                        size_bytes: None,
+                        expected_sha256: None,
+                    }
+                })
+                .collect();
+            if !candidates.is_empty() {
+                return Ok(candidates);
             }
         }
 

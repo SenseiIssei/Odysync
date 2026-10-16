@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use odysync_core::error::Result;
 
-use super::{is_system_dir, trust_of, Finding, Remediation, Severity, TrustMap};
+use super::{Finding, Remediation, Severity, TrustMap, is_system_dir, trust_of};
 
 /// Evidence lists are capped: an inventory finding with 300 lines in it is not
 /// evidence, it is a wall the user scrolls past.
@@ -703,29 +703,29 @@ const DEFAULT_SHELL: &str = "explorer.exe";
 pub fn analyze_winlogon(w: &WinlogonEntry) -> Vec<Finding> {
     let mut out = Vec::new();
 
-    if let Some(shell) = w.shell.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        if !shell.eq_ignore_ascii_case(DEFAULT_SHELL) {
-            out.push(
-                Finding::new(
-                    "persistence-winlogon-shell",
-                    Severity::Critical,
-                    "persistence",
-                    "The Windows logon shell has been replaced",
-                    "`Winlogon\\Shell` decides what program becomes your desktop when \
+    if let Some(shell) = w.shell.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        && !shell.eq_ignore_ascii_case(DEFAULT_SHELL)
+    {
+        out.push(
+            Finding::new(
+                "persistence-winlogon-shell",
+                Severity::Critical,
+                "persistence",
+                "The Windows logon shell has been replaced",
+                "`Winlogon\\Shell` decides what program becomes your desktop when \
                      you log in. It should say exactly `explorer.exe`. Anything else \
                      runs before and alongside your desktop, with your full \
                      privileges, every single time you log in.",
-                )
-                .with_evidence(vec![format!("Winlogon\\Shell = {shell}")])
-                .with_remediation(Remediation::Manual {
-                    instructions: "Set HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\\
+            )
+            .with_evidence(vec![format!("Winlogon\\Shell = {shell}")])
+            .with_remediation(Remediation::Manual {
+                instructions: "Set HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\\
                          Winlogon\\Shell back to explorer.exe, then investigate the program \
                          it was pointing at. Because this key needs administrator rights to \
                          write, its modification means something ran elevated on this machine."
-                        .into(),
-                }),
-            );
-        }
+                    .into(),
+            }),
+        );
     }
 
     if let Some(userinit) = w
@@ -733,27 +733,26 @@ pub fn analyze_winlogon(w: &WinlogonEntry) -> Vec<Finding> {
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
+        && !is_default_userinit(userinit)
     {
-        if !is_default_userinit(userinit) {
-            out.push(
-                Finding::new(
-                    "persistence-winlogon-userinit",
-                    Severity::Critical,
-                    "persistence",
-                    "The Winlogon Userinit value has extra programs in it",
-                    "`Userinit` normally lists only `userinit.exe`. Appending a second \
+        out.push(
+            Finding::new(
+                "persistence-winlogon-userinit",
+                Severity::Critical,
+                "persistence",
+                "The Winlogon Userinit value has extra programs in it",
+                "`Userinit` normally lists only `userinit.exe`. Appending a second \
                      program after a comma is a long-standing persistence trick: the \
                      extra program runs at every logon, before the desktop appears.",
-                )
-                .with_evidence(vec![format!("Winlogon\\Userinit = {userinit}")])
-                .with_remediation(Remediation::Manual {
-                    instructions: "Restore Userinit to C:\\Windows\\system32\\userinit.exe, \
+            )
+            .with_evidence(vec![format!("Winlogon\\Userinit = {userinit}")])
+            .with_remediation(Remediation::Manual {
+                instructions: "Restore Userinit to C:\\Windows\\system32\\userinit.exe, \
                          (including the trailing comma) and investigate anything else that \
                          was listed."
-                        .into(),
-                }),
-            );
-        }
+                    .into(),
+            }),
+        );
     }
 
     if let Some(taskman) = w
@@ -1168,7 +1167,7 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::{trust_map, FileTrust};
+    use crate::security::{FileTrust, trust_map};
 
     fn unsigned(path: &str) -> FileTrust {
         FileTrust {

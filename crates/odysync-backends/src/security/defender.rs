@@ -236,46 +236,46 @@ pub fn analyze_status(s: &DefenderStatus) -> Vec<Finding> {
         .into_iter()
         .chain(s.antispyware_signature_age)
         .max();
-    if let Some(age) = age {
-        if age > SIGNATURE_AGE_WARN_DAYS {
-            let mut evidence = vec![format!("signature age: {age} day(s)")];
-            if let Some(v) = &s.antivirus_signature_version {
-                evidence.push(format!("version: {v}"));
-            }
-            if let Some(t) = &s.antivirus_signature_last_updated {
-                evidence.push(format!("last updated: {t}"));
-            }
-            out.push(
-                Finding::new(
-                    "defender-signatures-stale",
-                    if age > 30 {
-                        Severity::High
-                    } else {
-                        Severity::Medium
-                    },
-                    "posture",
-                    format!("Defender signatures are {age} days old"),
-                    "Definitions older than a week miss recent malware families, \
+    if let Some(age) = age
+        && age > SIGNATURE_AGE_WARN_DAYS
+    {
+        let mut evidence = vec![format!("signature age: {age} day(s)")];
+        if let Some(v) = &s.antivirus_signature_version {
+            evidence.push(format!("version: {v}"));
+        }
+        if let Some(t) = &s.antivirus_signature_last_updated {
+            evidence.push(format!("last updated: {t}"));
+        }
+        out.push(
+            Finding::new(
+                "defender-signatures-stale",
+                if age > 30 {
+                    Severity::High
+                } else {
+                    Severity::Medium
+                },
+                "posture",
+                format!("Defender signatures are {age} days old"),
+                "Definitions older than a week miss recent malware families, \
                      and stealer kits are rebuilt constantly. Signature updates \
                      that stop arriving can also mean update traffic is being \
                      blocked on purpose.",
-                )
-                .with_evidence(evidence),
-            );
-        }
+            )
+            .with_evidence(evidence),
+        );
     }
 
-    if let Some(q) = s.quick_scan_age {
-        if q > 14 {
-            out.push(Finding::new(
-                "defender-no-recent-scan",
-                Severity::Low,
-                "posture",
-                format!("No Defender scan in {q} days"),
-                "A scheduled scan has not completed recently, so anything sitting \
+    if let Some(q) = s.quick_scan_age
+        && q > 14
+    {
+        out.push(Finding::new(
+            "defender-no-recent-scan",
+            Severity::Low,
+            "posture",
+            format!("No Defender scan in {q} days"),
+            "A scheduled scan has not completed recently, so anything sitting \
                  dormant on disk may never have been looked at.",
-            ));
-        }
+        ));
     }
 
     out

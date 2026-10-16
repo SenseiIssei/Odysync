@@ -116,26 +116,26 @@ fn parse_softwareupdate_list(output: &str) -> Vec<UpdateCandidate> {
             continue;
         }
 
-        if let Some(title) = extract_field(line, "Title:") {
-            if let Some(label) = current_label.take() {
-                let version = extract_field(line, "Version:").unwrap_or_default();
-                let name = title.trim_end_matches(',').to_string();
-                let is_firmware =
-                    line.contains("Firmware") || line.contains("EFI") || line.contains("SMC");
+        if let Some(title) = extract_field(line, "Title:")
+            && let Some(label) = current_label.take()
+        {
+            let version = extract_field(line, "Version:").unwrap_or_default();
+            let name = title.trim_end_matches(',').to_string();
+            let is_firmware =
+                line.contains("Firmware") || line.contains("EFI") || line.contains("SMC");
 
-                candidates.push(UpdateCandidate {
-                    id: PackageId::new(BackendKind::MacSoftwareUpdate, &label),
-                    name: if is_firmware {
-                        format!("[Firmware] {name}")
-                    } else {
-                        name
-                    },
-                    installed: Version::parse("0.0.0"),
-                    available: Version::parse(&version),
-                    size_bytes: extract_field(line, "Size:").and_then(|s| parse_size(&s)),
-                    expected_sha256: None,
-                });
-            }
+            candidates.push(UpdateCandidate {
+                id: PackageId::new(BackendKind::MacSoftwareUpdate, &label),
+                name: if is_firmware {
+                    format!("[Firmware] {name}")
+                } else {
+                    name
+                },
+                installed: Version::parse("0.0.0"),
+                available: Version::parse(&version),
+                size_bytes: extract_field(line, "Size:").and_then(|s| parse_size(&s)),
+                expected_sha256: None,
+            });
         }
     }
 
@@ -146,11 +146,7 @@ fn extract_label(line: &str) -> Option<String> {
     let pos = line.find("Label:")?;
     let rest = &line[pos + "Label:".len()..];
     let label = rest.trim().trim_end_matches(',').to_string();
-    if label.is_empty() {
-        None
-    } else {
-        Some(label)
-    }
+    if label.is_empty() { None } else { Some(label) }
 }
 
 fn extract_field(line: &str, field: &str) -> Option<String> {

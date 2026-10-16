@@ -26,7 +26,7 @@ use odysync_core::error::{Error, Result};
 use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::version::Version;
 
-use super::{enumerate_display_adapters, GpuAdapter, GpuVendor};
+use super::{GpuAdapter, GpuVendor, enumerate_display_adapters};
 
 /// Native id of the one package this backend manages: the display driver.
 const PACKAGE_ID: &str = "geforce-driver";

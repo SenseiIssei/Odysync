@@ -82,11 +82,7 @@ impl Severity {
 
     /// Raise this severity to `other` when `other` is more severe.
     pub fn escalate(self, other: Severity) -> Severity {
-        if other < self {
-            other
-        } else {
-            self
-        }
+        if other < self { other } else { self }
     }
 }
 
@@ -777,7 +773,8 @@ mod tests {
     /// had 7 genuinely missing targets.
     #[test]
     fn env_vars_in_paths_are_expanded() {
-        std::env::set_var("ODYSYNC_TEST_ROOT", r"C:\Windows");
+        // SAFETY: no other test reads or writes ODYSYNC_TEST_ROOT.
+        unsafe { std::env::set_var("ODYSYNC_TEST_ROOT", r"C:\Windows") };
 
         assert_eq!(
             expand_env_vars(r"%ODYSYNC_TEST_ROOT%\system32\foo.exe"),
@@ -802,7 +799,8 @@ mod tests {
         assert_eq!(expand_env_vars("100%"), "100%");
         assert_eq!(expand_env_vars("a%%b"), "a%%b");
 
-        std::env::remove_var("ODYSYNC_TEST_ROOT");
+        // SAFETY: as above.
+        unsafe { std::env::remove_var("ODYSYNC_TEST_ROOT") };
     }
 
     #[test]

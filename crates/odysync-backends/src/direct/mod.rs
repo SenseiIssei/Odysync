@@ -43,8 +43,8 @@ use async_trait::async_trait;
 use odysync_core::backend::Backend;
 use odysync_core::error::{Error, Result};
 use odysync_core::model::{
-    BackendKind, InstalledPackage, PackageId, UpdateCandidate, DIRECT_MACHINE_SCOPE,
-    DIRECT_USER_SCOPE,
+    BackendKind, DIRECT_MACHINE_SCOPE, DIRECT_USER_SCOPE, InstalledPackage, PackageId,
+    UpdateCandidate,
 };
 use odysync_core::version::Version;
 
@@ -621,7 +621,7 @@ pub mod windows_apply {
 
 #[cfg(all(test, windows))]
 mod verify_tests {
-    use super::windows_apply::{lock_and_verify, ExpectedDigest};
+    use super::windows_apply::{ExpectedDigest, lock_and_verify};
     use std::path::PathBuf;
 
     /// A Microsoft-signed file every Windows machine has, copied somewhere

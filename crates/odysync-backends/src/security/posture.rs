@@ -224,40 +224,42 @@ pub fn analyze_firewall(profiles: &[FirewallProfile]) -> Vec<Finding> {
         return Vec::new();
     }
     let names: Vec<String> = off.iter().map(|p| p.name.clone()).collect();
-    vec![Finding::new(
-        "posture-firewall-disabled",
-        Severity::High,
-        "posture",
-        format!(
-            "Windows Firewall is off for the {} profile(s)",
-            names.join(", ")
-        ),
-        "With the firewall off, anything listening on this machine is reachable from \
+    vec![
+        Finding::new(
+            "posture-firewall-disabled",
+            Severity::High,
+            "posture",
+            format!(
+                "Windows Firewall is off for the {} profile(s)",
+                names.join(", ")
+            ),
+            "With the firewall off, anything listening on this machine is reachable from \
          the network it is attached to. Malware routinely disables the firewall as a \
          first step, so if you did not turn this off yourself, that is worth taking \
          seriously on its own.",
-    )
-    .with_evidence(
-        profiles
-            .iter()
-            .map(|p| {
-                format!(
-                    "{}: {}",
-                    p.name,
-                    match p.enabled {
-                        Some(true) => "enabled",
-                        Some(false) => "DISABLED",
-                        None => "unknown",
-                    }
-                )
-            })
-            .collect::<Vec<_>>(),
-    )
-    .with_remediation(Remediation::Manual {
-        instructions: "Windows Security > Firewall & network protection > turn the \
+        )
+        .with_evidence(
+            profiles
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}: {}",
+                        p.name,
+                        match p.enabled {
+                            Some(true) => "enabled",
+                            Some(false) => "DISABLED",
+                            None => "unknown",
+                        }
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+        .with_remediation(Remediation::Manual {
+            instructions: "Windows Security > Firewall & network protection > turn the \
              firewall on for every profile."
-            .into(),
-    })]
+                .into(),
+        }),
+    ]
 }
 
 /// UAC: `EnableLUA=0` switches it off entirely, and
@@ -312,22 +314,24 @@ pub fn analyze_smb1(state: Option<&str>, server_enabled: Option<bool>) -> Vec<Fi
     if let Some(e) = server_enabled {
         evidence.push(format!("SMB1 server protocol enabled: {e}"));
     }
-    vec![Finding::new(
-        "posture-smb1-enabled",
-        Severity::High,
-        "posture",
-        "SMBv1 is installed and enabled",
-        "SMBv1 is the thirty-year-old file sharing protocol that WannaCry and NotPetya \
+    vec![
+        Finding::new(
+            "posture-smb1-enabled",
+            Severity::High,
+            "posture",
+            "SMBv1 is installed and enabled",
+            "SMBv1 is the thirty-year-old file sharing protocol that WannaCry and NotPetya \
          spread through. Microsoft removed it from default installs for that reason. \
          Unless you have a device on your network old enough to require it — some NAS \
          boxes and printers do — turning it off costs nothing.",
-    )
-    .with_evidence(evidence)
-    .with_remediation(Remediation::Manual {
-        instructions: "Windows Features > untick \"SMB 1.0/CIFS File Sharing Support\", \
+        )
+        .with_evidence(evidence)
+        .with_remediation(Remediation::Manual {
+            instructions: "Windows Features > untick \"SMB 1.0/CIFS File Sharing Support\", \
              then restart."
-            .into(),
-    })]
+                .into(),
+        }),
+    ]
 }
 
 pub fn analyze_bitlocker(protection: Option<i64>, volume_status: Option<&str>) -> Vec<Finding> {
@@ -342,23 +346,25 @@ pub fn analyze_bitlocker(protection: Option<i64>, volume_status: Option<&str>) -
     if let Some(v) = volume_status {
         evidence.push(format!("VolumeStatus: {v}"));
     }
-    vec![Finding::new(
-        "posture-bitlocker-off",
-        Severity::Medium,
-        "posture",
-        "The system drive is not encrypted",
-        "Without disk encryption, anyone who can boot this machine from a USB stick, or \
+    vec![
+        Finding::new(
+            "posture-bitlocker-off",
+            Severity::Medium,
+            "posture",
+            "The system drive is not encrypted",
+            "Without disk encryption, anyone who can boot this machine from a USB stick, or \
          who takes the drive out, reads everything on it — including saved passwords and \
          session tokens — without needing your Windows password at all. This matters for \
          a laptop far more than a desktop that never leaves the house.",
-    )
-    .with_evidence(evidence)
-    .with_remediation(Remediation::Manual {
-        instructions: "Settings > Privacy & security > Device encryption, or Control \
+        )
+        .with_evidence(evidence)
+        .with_remediation(Remediation::Manual {
+            instructions: "Settings > Privacy & security > Device encryption, or Control \
              Panel > BitLocker Drive Encryption. Save the recovery key somewhere that is \
              not this machine."
-            .into(),
-    })]
+                .into(),
+        }),
+    ]
 }
 
 pub fn analyze_execution_policy(scopes: &[ExecutionPolicyScope]) -> Vec<Finding> {
@@ -371,22 +377,24 @@ pub fn analyze_execution_policy(scopes: &[ExecutionPolicyScope]) -> Vec<Finding>
     if unrestricted.is_empty() {
         return Vec::new();
     }
-    vec![Finding::new(
-        "posture-execution-policy",
-        Severity::Low,
-        "posture",
-        "PowerShell execution policy is unrestricted",
-        "The execution policy is a guard rail against accidentally running a downloaded \
+    vec![
+        Finding::new(
+            "posture-execution-policy",
+            Severity::Low,
+            "posture",
+            "PowerShell execution policy is unrestricted",
+            "The execution policy is a guard rail against accidentally running a downloaded \
          script, not a security boundary — anyone who wants to bypass it can, in one \
          flag. Still, leaving it unrestricted removes the last prompt between a \
          double-clicked .ps1 and it running.",
-    )
-    .with_evidence(
-        unrestricted
-            .iter()
-            .map(|s| format!("{}: {}", s.scope, s.policy))
-            .collect::<Vec<_>>(),
-    )]
+        )
+        .with_evidence(
+            unrestricted
+                .iter()
+                .map(|s| format!("{}: {}", s.scope, s.policy))
+                .collect::<Vec<_>>(),
+        ),
+    ]
 }
 
 /// Windows' own accounts, which exist on every install and are disabled by
@@ -703,9 +711,10 @@ mod tests {
             .into_iter()
             .map(|f| f.id)
             .collect();
-        assert!(ids
-            .iter()
-            .any(|i| i == "account-builtin-administrator-enabled"));
+        assert!(
+            ids.iter()
+                .any(|i| i == "account-builtin-administrator-enabled")
+        );
         assert!(ids.iter().any(|i| i == "account-administrators"));
     }
 

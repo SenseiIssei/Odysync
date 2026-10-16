@@ -80,11 +80,7 @@ impl RunReport {
     /// Process exit code: non-zero when anything actually failed. Skips are
     /// deliberate decisions, not failures, so they do not affect this.
     pub fn exit_code(&self) -> i32 {
-        if self.failed() > 0 {
-            1
-        } else {
-            0
-        }
+        if self.failed() > 0 { 1 } else { 0 }
     }
 
     /// Render the report as human-readable text, suitable for a `.txt` file.

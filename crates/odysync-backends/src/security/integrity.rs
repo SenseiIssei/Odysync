@@ -263,29 +263,31 @@ pub fn analyze_client_mods(mods: &[ClientMod]) -> Vec<Finding> {
     } else {
         Severity::Medium
     };
-    vec![Finding::new(
-        "integrity-discord-client-mod",
-        severity,
-        "integrity",
-        "A modified Discord client is installed",
-        "Client mods inject third-party JavaScript into Discord, and that code runs \
+    vec![
+        Finding::new(
+            "integrity-discord-client-mod",
+            severity,
+            "integrity",
+            "A modified Discord client is installed",
+            "Client mods inject third-party JavaScript into Discord, and that code runs \
          with the same access to your session token as Discord itself. The frameworks \
          are usually legitimate; the plugins and themes people install into them are \
          where accounts get taken. Given a confirmed account compromise, treat every \
          installed plugin as suspect: remove the mod entirely, then re-add only what \
          you can identify.",
-    )
-    .with_evidence(
-        mods.iter()
-            .map(|m| format!("{}: {}", m.name, m.path))
-            .collect::<Vec<_>>(),
-    )
-    .with_remediation(Remediation::Manual {
-        instructions: "Uninstall the client mod, delete its data directory, and \
+        )
+        .with_evidence(
+            mods.iter()
+                .map(|m| format!("{}: {}", m.name, m.path))
+                .collect::<Vec<_>>(),
+        )
+        .with_remediation(Remediation::Manual {
+            instructions: "Uninstall the client mod, delete its data directory, and \
              reinstall Discord. Then change your Discord password to invalidate every \
              existing session token."
-            .into(),
-    })]
+                .into(),
+        }),
+    ]
 }
 
 /// Findings for an unpacked `app` directory shadowing `app.asar`.
@@ -536,19 +538,21 @@ pub fn analyze_extensions(exts: &[BrowserExtension]) -> Vec<Finding> {
         })
         .collect();
 
-    vec![Finding::new(
-        "integrity-browser-extensions",
-        Severity::Info,
-        "integrity",
-        format!("{} browser extensions installed", exts.len()),
-        "A malicious extension sees everything you do in the browser, including \
+    vec![
+        Finding::new(
+            "integrity-browser-extensions",
+            Severity::Info,
+            "integrity",
+            format!("{} browser extensions installed", exts.len()),
+            "A malicious extension sees everything you do in the browser, including \
          session cookies for every site you are logged into — which is one of the two \
          usual ways a Discord account gets taken without any malware on disk. No \
          heuristic here can tell a good extension from a bad one, so read the list: \
          anything you do not remember installing should be removed, and its ID can be \
          looked up in the Chrome Web Store to see what it claims to be.",
-    )
-    .with_evidence(evidence)]
+        )
+        .with_evidence(evidence),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -630,30 +634,20 @@ pub fn classify_dropped_file(
     // like a document.
     if matches!(ext, "exe" | "scr" | "com" | "pif" | "bat" | "cmd") {
         let stem = lower.trim_end_matches(&format!(".{ext}"));
-        if let Some(inner) = stem.rsplit('.').next() {
-            if inner != stem
-                && matches!(
-                    inner,
-                    "pdf"
-                        | "doc"
-                        | "docx"
-                        | "xls"
-                        | "xlsx"
-                        | "jpg"
-                        | "jpeg"
-                        | "png"
-                        | "txt"
-                        | "mp4"
-                )
-            {
-                return Some((
-                    Severity::High,
-                    format!(
-                        "the double extension makes an executable look like a .{inner} \
+        if let Some(inner) = stem.rsplit('.').next()
+            && inner != stem
+            && matches!(
+                inner,
+                "pdf" | "doc" | "docx" | "xls" | "xlsx" | "jpg" | "jpeg" | "png" | "txt" | "mp4"
+            )
+        {
+            return Some((
+                Severity::High,
+                format!(
+                    "the double extension makes an executable look like a .{inner} \
                          document, which has no legitimate use"
-                    ),
-                ));
-            }
+                ),
+            ));
         }
     }
 
@@ -1068,12 +1062,14 @@ setTimeout(steal, 5000);
 
         // The webhook URL and the localStorage token read are the two that
         // matter; both must be Critical.
-        assert!(hits
-            .iter()
-            .any(|h| h.severity == Severity::Critical && h.pattern.contains("webhook")));
-        assert!(hits
-            .iter()
-            .any(|h| h.severity == Severity::Critical && h.pattern.contains("local storage")));
+        assert!(
+            hits.iter()
+                .any(|h| h.severity == Severity::Critical && h.pattern.contains("webhook"))
+        );
+        assert!(
+            hits.iter()
+                .any(|h| h.severity == Severity::Critical && h.pattern.contains("local storage"))
+        );
         assert!(hits.iter().any(|h| h.pattern.contains("account API")));
 
         // Line numbers must point at the real line so the user can find it.
@@ -1090,9 +1086,11 @@ setTimeout(steal, 5000);
         let hits = scan_text_for_grabber(PATCHED_INDEX_JS);
         let webhook = hits.iter().find(|h| h.pattern.contains("webhook")).unwrap();
         assert!(webhook.excerpt.contains("[REDACTED]"));
-        assert!(!webhook
-            .excerpt
-            .contains("aVeryLongLookingWebhookTokenValueHere"));
+        assert!(
+            !webhook
+                .excerpt
+                .contains("aVeryLongLookingWebhookTokenValueHere")
+        );
         // The useful part is still readable.
         assert!(webhook.excerpt.contains("discord.com/api/webhooks"));
     }

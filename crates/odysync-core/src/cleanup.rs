@@ -536,10 +536,9 @@ fn is_safe_windows_root(root: &Path) -> bool {
     if let Some(last) = normalized
         .file_name()
         .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        && FORBIDDEN_LEAVES.contains(&last.as_str())
     {
-        if FORBIDDEN_LEAVES.contains(&last.as_str()) {
-            return false;
-        }
+        return false;
     }
 
     // `C:\Windows` itself is refused, but `C:\Windows\Temp` is a legitimate
@@ -639,9 +638,11 @@ mod tests {
         assert!(!Reversibility::Regenerated.needs_explicit_confirmation());
         assert!(!Reversibility::Discardable.needs_explicit_confirmation());
 
-        assert!(CleanupCategory::PreviousWindows
-            .reversibility()
-            .needs_explicit_confirmation());
+        assert!(
+            CleanupCategory::PreviousWindows
+                .reversibility()
+                .needs_explicit_confirmation()
+        );
     }
 
     // ── Findings ────────────────────────────────────────────────────────────

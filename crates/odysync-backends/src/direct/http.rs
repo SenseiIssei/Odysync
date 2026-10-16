@@ -127,10 +127,10 @@ pub async fn get_text(client: &reqwest::Client, url: &str) -> Result<String> {
             .header("X-GitHub-Api-Version", "2022-11-28");
         // A token, when the user has one, raises the limit from 60 to 5 000
         // requests an hour. Only ever sent to api.github.com.
-        if let Ok(token) = std::env::var("GITHUB_TOKEN") {
-            if !token.trim().is_empty() {
-                request = request.bearer_auth(token.trim());
-            }
+        if let Ok(token) = std::env::var("GITHUB_TOKEN")
+            && !token.trim().is_empty()
+        {
+            request = request.bearer_auth(token.trim());
         }
     }
     if let Some(c) = &cached {
@@ -151,15 +151,15 @@ pub async fn get_text(client: &reqwest::Client, url: &str) -> Result<String> {
                     Ok(c.body)
                 }
                 None => Err(other(format!("could not fetch {url}: {e}"))),
-            }
+            };
         }
     };
 
     let status = response.status();
-    if status == reqwest::StatusCode::NOT_MODIFIED {
-        if let Some(c) = cached {
-            return Ok(c.body);
-        }
+    if status == reqwest::StatusCode::NOT_MODIFIED
+        && let Some(c) = cached
+    {
+        return Ok(c.body);
     }
     if !status.is_success() {
         if let Some(c) = cached {
@@ -257,12 +257,12 @@ pub async fn download(
             on_progress(written, total);
         }
         file.flush().await?;
-        if let Some(total) = total {
-            if written != total {
-                return Err(other(format!(
-                    "the download ended early ({written} of {total} bytes)"
-                )));
-            }
+        if let Some(total) = total
+            && written != total
+        {
+            return Err(other(format!(
+                "the download ended early ({written} of {total} bytes)"
+            )));
         }
         Ok(hex::encode(hasher.finalize()))
     }

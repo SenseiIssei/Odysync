@@ -644,7 +644,7 @@ fn bundled_cli(app: &AppHandle) -> Option<std::path::PathBuf> {
 
 #[tauri::command]
 pub async fn create_schedule(app: AppHandle, request: ScheduleRequest) -> Result<String, String> {
-    use odysync_backends::scheduler::{create_schedule, ScheduleFrequency, ScheduleSpec};
+    use odysync_backends::scheduler::{ScheduleFrequency, ScheduleSpec, create_schedule};
 
     let freq = match request.frequency.as_str() {
         "daily" => ScheduleFrequency::Daily,
@@ -1149,7 +1149,7 @@ pub async fn restart_as_admin(app: AppHandle) -> Result<(), String> {
         // GUI's dependency surface small; shell32 is linked explicitly so the
         // symbol resolves at link time on MSVC.
         #[link(name = "shell32")]
-        extern "system" {
+        unsafe extern "system" {
             fn ShellExecuteW(
                 hwnd: *mut std::ffi::c_void,
                 operation: *const u16,

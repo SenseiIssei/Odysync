@@ -9,7 +9,7 @@
 pub fn is_elevated() -> bool {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Security::{
-        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -47,7 +47,7 @@ pub fn is_elevated() -> bool {
 }
 
 #[cfg(not(windows))]
-extern "C" {
+unsafe extern "C" {
     #[link_name = "geteuid"]
     fn libc_geteuid() -> u32;
 }
@@ -87,7 +87,7 @@ pub fn reboot_pending() -> bool {
 #[cfg(windows)]
 fn hklm_key_exists(path: windows::core::PCWSTR) -> bool {
     use windows::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
+        HKEY, HKEY_LOCAL_MACHINE, KEY_READ, RegCloseKey, RegOpenKeyExW,
     };
 
     let mut key = HKEY::default();
@@ -106,7 +106,7 @@ fn hklm_key_exists(path: windows::core::PCWSTR) -> bool {
 #[cfg(windows)]
 fn hklm_value_exists(path: windows::core::PCWSTR, name: windows::core::PCWSTR) -> bool {
     use windows::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
+        HKEY, HKEY_LOCAL_MACHINE, KEY_READ, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
     };
 
     let mut key = HKEY::default();

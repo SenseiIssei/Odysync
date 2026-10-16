@@ -211,12 +211,11 @@ impl Backend for CargoBackend {
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
         let out = proc::run("cargo", &["install", "--list"], SCAN_TIMEOUT).await?;
         for line in out.stdout.lines() {
-            if let Some((name, rest)) = line.split_once(' ') {
-                if name == candidate.id.native {
-                    if let Some(v) = rest.strip_prefix('v') {
-                        return Ok(Some(v.trim_end_matches(':').trim().to_string()));
-                    }
-                }
+            if let Some((name, rest)) = line.split_once(' ')
+                && name == candidate.id.native
+                && let Some(v) = rest.strip_prefix('v')
+            {
+                return Ok(Some(v.trim_end_matches(':').trim().to_string()));
             }
         }
         Ok(None)
@@ -697,10 +696,10 @@ impl Backend for VscodeExtensionBackend {
         };
         let out = proc::run(cmd, &["--list-extensions", "--show-versions"], SCAN_TIMEOUT).await?;
         for line in out.stdout.lines() {
-            if let Some((id, version)) = line.rsplit_once('@') {
-                if id == candidate.id.native {
-                    return Ok(Some(version.to_string()));
-                }
+            if let Some((id, version)) = line.rsplit_once('@')
+                && id == candidate.id.native
+            {
+                return Ok(Some(version.to_string()));
             }
         }
         Ok(None)
@@ -822,11 +821,7 @@ impl Backend for PowerShellModuleBackend {
         );
         let out = proc::run(pwsh, &["-NoProfile", "-Command", &script], SCAN_TIMEOUT).await?;
         let v = out.stdout.trim().to_string();
-        if v.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(v))
-        }
+        if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
     }
 }
 
@@ -958,10 +953,10 @@ impl Backend for JetbrainsPluginBackend {
             for entry in entries.flatten() {
                 let plugin_path = entry.path().join("plugins").join(&candidate.id.native);
                 let meta_inf = plugin_path.join("META-INF/plugin.xml");
-                if let Ok(content) = std::fs::read_to_string(&meta_inf) {
-                    if let Some(v) = extract_xml_version(&content) {
-                        return Ok(Some(v));
-                    }
+                if let Ok(content) = std::fs::read_to_string(&meta_inf)
+                    && let Some(v) = extract_xml_version(&content)
+                {
+                    return Ok(Some(v));
                 }
             }
         }
@@ -1154,11 +1149,7 @@ impl Backend for NvidiaGeForceExperienceBackend {
             SCAN_TIMEOUT,
         ).await?;
         let v = out.stdout.trim().to_string();
-        if v.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(v))
-        }
+        if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
     }
 }
 

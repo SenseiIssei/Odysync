@@ -457,10 +457,10 @@ pub async fn download_and_cache(
 
     let mut client_builder =
         reqwest::Client::builder().timeout(std::time::Duration::from_secs(300));
-    if let Some(proxy) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(proxy) {
-            client_builder = client_builder.proxy(proxy);
-        }
+    if let Some(proxy) = proxy_url
+        && let Ok(proxy) = reqwest::Proxy::all(proxy)
+    {
+        client_builder = client_builder.proxy(proxy);
     }
     let client = client_builder.build()?;
 

@@ -208,11 +208,13 @@ mod tests {
         assert_eq!(releases[0].short_version.as_deref(), Some("2.0.3"));
         assert!(releases[0].url.ends_with("Rectangle2.0.3.dmg"));
         assert_eq!(releases[0].length, Some(4_730_793));
-        assert!(releases[0]
-            .ed_signature
-            .as_deref()
-            .unwrap()
-            .starts_with("T+3C4w"));
+        assert!(
+            releases[0]
+                .ed_signature
+                .as_deref()
+                .unwrap()
+                .starts_with("T+3C4w")
+        );
     }
 
     #[test]

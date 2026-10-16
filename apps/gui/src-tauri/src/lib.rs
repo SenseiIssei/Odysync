@@ -4,8 +4,8 @@ mod tools;
 mod tray;
 
 use tauri::Manager;
-use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 pub fn run() {
     let dirs = directories::ProjectDirs::from("dev", "SenseiIssei", "Odysync");

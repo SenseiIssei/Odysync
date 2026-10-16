@@ -434,9 +434,10 @@ mod tests {
             .pause_for_at(BackendKind::WindowsUpdate, at("2026-07-27T12:00:00Z"))
             .expect("pause should be reported");
         assert_eq!(pause.note.as_deref(), Some("waiting out a bad cumulative"));
-        assert!(cfg
-            .pause_for_at(BackendKind::WindowsUpdate, at("2026-08-04T00:00:00Z"))
-            .is_none());
+        assert!(
+            cfg.pause_for_at(BackendKind::WindowsUpdate, at("2026-08-04T00:00:00Z"))
+                .is_none()
+        );
     }
 
     #[test]
