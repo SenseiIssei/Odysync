@@ -3,12 +3,21 @@ on:
   push:
     tags:
       - "v*.*.*"
+  # Re-run a release for an existing tag — e.g. after fixing this workflow —
+  # without moving the tag. The code is checked out at the tag; only the
+  # workflow definition comes from the branch it is dispatched on.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and publish, e.g. v3.0.0"
+        required: true
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build-cli:
@@ -39,6 +48,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -129,6 +140,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -185,11 +198,15 @@ jobs:
       # without trusting the page it came from.
       - name: Collect packages with checksums
         shell: bash
+        # Passed through the environment: interpolated straight into the
+        # script, the multi-line list broke the `for` statement.
+        env:
+          BUNDLES: ${{ matrix.bundles }}
         run: |
           set -euo pipefail
           mkdir -p dist-out
-          for f in ${{ matrix.bundles }}; do
-            cp "$f" dist-out/
+          for pattern in $BUNDLES; do
+            for f in $pattern; do cp "$f" dist-out/; done
           done
           cd dist-out
           for f in *; do
@@ -210,6 +227,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -224,10 +243,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           installer=$(ls artifacts/*setup.exe | head -n1)
           sha=$(sha256sum "$installer" | cut -d' ' -f1 | tr 'a-f' 'A-F')
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$installer")"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/$(basename "$installer")"
           out="winget/SenseiIssei.Odysync/${version}"
           mkdir -p "$out"
 
@@ -285,14 +304,14 @@ jobs:
       - name: Release notes
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           notes="docs/release-notes/v${version}.md"
           if [ -f "$notes" ]; then cp "$notes" release-notes.md; else echo "Odysync ${version}" > release-notes.md; fi
 
       - name: Publish GitHub Release
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ github.ref_name }}
-          name: Odysync ${{ github.ref_name }}
+          tag: ${{ env.RELEASE_TAG }}
+          name: Odysync ${{ env.RELEASE_TAG }}
           bodyFile: release-notes.md
           artifacts: "artifacts/*"
