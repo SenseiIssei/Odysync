@@ -108,6 +108,9 @@ describe("Home", () => {
     const sent = vi.mocked(api.apply).mock.calls[0][0].updates.map((u) => u.backend);
     expect(sent.length).toBeGreaterThan(0);
     expect(sent).not.toContain("windows-drivers");
+    // Developer packages are the developer's call, not a background job.
+    expect(sent).not.toContain("pip");
+    expect(sent).not.toContain("npm");
 
     await waitFor(() => expect(api.cleanupRun).toHaveBeenCalled(), { timeout: 4000 });
     const ids = vi.mocked(api.cleanupRun).mock.calls.at(-1)![0];

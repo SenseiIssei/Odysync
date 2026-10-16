@@ -37,6 +37,8 @@ export interface CareInput {
   updates: UpdateDto[];
   /** Ready drivers, firmware and OS upgrades — for a person to start. */
   attendedUpdates: UpdateDto[];
+  /** pip, npm, cargo … packages with newer versions — for the developer. */
+  developerUpdates: UpdateDto[];
   /** Updates that only need administrator rights to go ahead. */
   needsAdmin: number;
   devices: number;
@@ -118,6 +120,19 @@ export function assess(input: CareInput): CareAssessment {
       tone: "warning",
       fix: null,
       tab: "drivers",
+    });
+  }
+
+  if (input.developerUpdates.length > 0) {
+    const n = input.developerUpdates.length;
+    add({
+      id: "developer",
+      title: `${n} developer ${plural(n, "package")} can be updated`,
+      detail: "pip, npm and similar packages are only updated when you ask — your projects may depend on the versions you have.",
+      points: Math.min(4, n),
+      tone: "info",
+      fix: null,
+      tab: "updates",
     });
   }
 

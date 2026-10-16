@@ -25,6 +25,7 @@ const cleanupItem = (over: Partial<CleanupItemDto>): CleanupItemDto =>
 const clean: CareInput = {
   updates: [],
   attendedUpdates: [],
+  developerUpdates: [],
   needsAdmin: 0,
   devices: 0,
   outdatedRuntimes: 0,
@@ -60,6 +61,14 @@ describe("care score", () => {
     const a = assess({ ...clean, attendedUpdates: [update("GeForce driver", "nvidia-gpu")] });
     const drivers = a.issues.find((i) => i.id === "drivers");
     expect(drivers?.fix).toBeNull();
+    expect(a.fixable).toBe(0);
+  });
+
+  it("leaves pip, npm and other developer packages to the developer", () => {
+    const a = assess({ ...clean, developerUpdates: [update("requests", "pip"), update("typescript", "npm")] });
+    const dev = a.issues.find((i) => i.id === "developer");
+    expect(dev?.fix).toBeNull();
+    expect(dev?.tab).toBe("updates");
     expect(a.fixable).toBe(0);
   });
 

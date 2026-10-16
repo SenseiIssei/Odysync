@@ -359,6 +359,31 @@ impl BackendKind {
         )
     }
 
+    /// Global packages of programming languages — pip, npm, cargo, go, .NET
+    /// tools, PowerShell modules.
+    ///
+    /// Other code depends on their exact versions: a background upgrade of a
+    /// global Python or Node package can break a project that has nothing to
+    /// do with Odysync. Unattended care leaves them for the developer, who
+    /// updates them from the Updates page or with `odysync apply`.
+    pub fn is_developer_package(&self) -> bool {
+        matches!(
+            self,
+            BackendKind::Pip
+                | BackendKind::Npm
+                | BackendKind::Cargo
+                | BackendKind::Go
+                | BackendKind::DotnetTool
+                | BackendKind::PowerShellModule
+        )
+    }
+
+    /// Whether unattended care (`odysync care`, a schedule, the one-click fix)
+    /// may install updates from this backend.
+    pub fn in_unattended_care(&self) -> bool {
+        !self.needs_attended_install() && !self.is_developer_package()
+    }
+
     /// Whether this backend shells out to winget to do its work.
     ///
     /// These are opt-in together with winget itself: enabling them without
@@ -652,6 +677,22 @@ impl PlannedUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn developer_packages_are_never_updated_in_the_background() {
+        for kind in [BackendKind::Pip, BackendKind::Npm, BackendKind::Cargo] {
+            assert!(kind.is_developer_package(), "{kind:?}");
+            assert!(!kind.in_unattended_care(), "{kind:?}");
+        }
+        for kind in [
+            BackendKind::Direct,
+            BackendKind::Homebrew,
+            BackendKind::WindowsUpdate,
+        ] {
+            assert!(kind.in_unattended_care(), "{kind:?}");
+        }
+        assert!(!BackendKind::NvidiaGpu.in_unattended_care());
+    }
 
     #[test]
     fn drivers_firmware_and_os_upgrades_wait_for_a_person() {

@@ -163,6 +163,7 @@ export function CareRing({
         {center ?? (
           <div className="font-display text-[60px] leading-none font-bold tabular-nums text-gradient">
             {shown}
+            {mode === "busy" && <span className="text-[26px] ml-0.5 align-top">%</span>}
           </div>
         )}
         <div className="mt-2 text-[15px] font-semibold text-fg font-display">{label}</div>

@@ -136,6 +136,8 @@ pub struct BackendDto {
     /// Drivers, firmware, OS upgrades: never part of one-click or automatic
     /// care.
     pub attended: bool,
+    /// pip, npm, cargo and other developer packages: updated on request only.
+    pub developer: bool,
 }
 
 #[derive(Serialize)]
@@ -535,6 +537,7 @@ pub async fn list_backends(state: State<'_, AppState>) -> Result<Vec<BackendDto>
                 verification: verification.label(),
                 verification_detail: verification.detail(),
                 attended: kind.needs_attended_install(),
+                developer: kind.is_developer_package(),
             }
         })
         .collect())

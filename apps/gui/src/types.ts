@@ -49,6 +49,8 @@ export interface BackendDto {
   verification_detail: string;
   /** Drivers, firmware, OS upgrades: never part of one-click or automatic care. */
   attended: boolean;
+  /** pip, npm, cargo and other developer packages: updated on request only. */
+  developer: boolean;
 }
 
 export interface SystemInfoDto {

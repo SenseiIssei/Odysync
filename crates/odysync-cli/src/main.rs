@@ -1002,7 +1002,8 @@ async fn run(cli: Cli) -> Result<u8> {
 /// `odysync care`: the updates that pass every rule, then the safe cleanup.
 ///
 /// Deliberately narrower than `apply` followed by `clean --apply`: no filters,
-/// no drivers, firmware or OS upgrades, no opt-in or destructive cleanup
+/// no drivers, firmware, OS upgrades or developer packages (pip, npm, cargo …),
+/// no opt-in or destructive cleanup
 /// categories, and the restore point setting from the config. It is what a
 /// schedule runs while nobody is watching.
 async fn run_care(
@@ -1017,13 +1018,13 @@ async fn run_care(
     // ── Look ──
     let backends = select_backends(config, &[]).await?;
     let candidates = scan_all(&backends).await;
-    // Drivers, firmware and OS upgrades wait for a person; see
-    // `BackendKind::needs_attended_install`.
+    // Drivers, firmware, OS upgrades and developer packages wait for a
+    // person; see `BackendKind::in_unattended_care`.
     let (attended, plan): (Vec<_>, Vec<_>) = config
         .policy
         .plan(candidates)
         .into_iter()
-        .partition(|p| p.is_actionable() && p.candidate.id.backend.needs_attended_install());
+        .partition(|p| p.is_actionable() && !p.candidate.id.backend.in_unattended_care());
     let actionable = plan.iter().filter(|p| p.is_actionable()).count();
 
     let findings = odysync_backends::cleanup::scan().await;
@@ -1052,7 +1053,8 @@ async fn run_care(
             println!(
                 "{}",
                 style.dim(&format!(
-                    "{} driver, firmware or system upgrade(s) are left for you to start                      with `odysync apply`.",
+                    "{} driver, firmware, system or developer-package update(s) are left for you \
+                     to start with `odysync apply`.",
                     attended.len()
                 ))
             );

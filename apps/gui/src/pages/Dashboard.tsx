@@ -80,14 +80,24 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
     () => new Set(backends.data.filter((b) => b.attended).map((b) => b.kind)),
     [backends.data],
   );
+  const developerKinds = useMemo(
+    () => new Set(backends.data.filter((b) => b.developer).map((b) => b.kind)),
+    [backends.data],
+  );
   const actionable = useMemo(() => scan.data?.actionable ?? [], [scan.data]);
+  // Only what unattended care may install: no drivers, no developer packages.
   const updates = useMemo(
-    () => actionable.filter((u) => !attendedKinds.has(u.backend)),
-    [actionable, attendedKinds],
+    () =>
+      actionable.filter((u) => !attendedKinds.has(u.backend) && !developerKinds.has(u.backend)),
+    [actionable, attendedKinds, developerKinds],
   );
   const attendedUpdates = useMemo(
     () => actionable.filter((u) => attendedKinds.has(u.backend)),
     [actionable, attendedKinds],
+  );
+  const developerUpdates = useMemo(
+    () => actionable.filter((u) => developerKinds.has(u.backend)),
+    [actionable, developerKinds],
   );
   const safeCleanup = useMemo(() => safeCleanupItems(cleanup.data), [cleanup.data]);
   const findings = useMemo(
@@ -100,6 +110,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
       assess({
         updates,
         attendedUpdates,
+        developerUpdates,
         needsAdmin: (scan.data?.skipped ?? []).filter((s) =>
           s.reason.toLowerCase().includes("administrator"),
         ).length,
@@ -116,6 +127,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
     [
       updates,
       attendedUpdates,
+      developerUpdates,
       scan.data,
       devices.data,
       components.data,
@@ -349,7 +361,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
 
       {outcome && <OutcomeBanner outcome={outcome} onHistory={() => onNavigate("history")} />}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">
         <Card
           title="What Odysync found"
           description={
