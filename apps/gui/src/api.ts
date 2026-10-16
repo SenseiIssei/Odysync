@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./bridge";
 import type {
   ScanResult,
   BackendDto,
@@ -21,6 +21,14 @@ import type {
   DefenderStatusDto,
   Remediation,
   AutostartConfig,
+  CleanupItemDto,
+  CleanupResultDto,
+  LargeFileReport,
+  ComponentStatus,
+  DeviceProblem,
+  DriverBackupDto,
+  DriverRestoreDto,
+  VolumeOptimization,
 } from "./types";
 
 export async function scan(): Promise<ScanResult> {
@@ -253,4 +261,64 @@ export async function enableAutostart(minimized: boolean): Promise<void> {
 
 export async function disableAutostart(): Promise<void> {
   return invoke<void>("disable_autostart");
+}
+
+// ── Cleanup ──────────────────────────────────────────────────────────────────
+
+/** Measure every cleanup category. Deletes nothing. */
+export async function cleanupScan(): Promise<CleanupItemDto[]> {
+  return invoke<CleanupItemDto[]>("cleanup_scan");
+}
+
+/** Remove exactly these categories, and nothing else. */
+export async function cleanupRun(categories: string[]): Promise<CleanupResultDto[]> {
+  return invoke<CleanupResultDto[]>("cleanup_run", { categories });
+}
+
+/** The largest files in the user's home folder. Report only. */
+export async function largeFiles(limit: number, minMb: number): Promise<LargeFileReport> {
+  return invoke<LargeFileReport>("large_files", { limit, minMb });
+}
+
+/** Show a file in Explorer, Finder or the Linux file manager. */
+export async function revealPath(path: string): Promise<void> {
+  return invoke<void>("reveal_path", { path });
+}
+
+export async function diskOptimizationPlan(): Promise<VolumeOptimization[]> {
+  return invoke<VolumeOptimization[]>("disk_optimization_plan");
+}
+
+export async function diskOptimizationRun(): Promise<string[]> {
+  return invoke<string[]>("disk_optimization_run");
+}
+
+// ── Drivers and runtimes ─────────────────────────────────────────────────────
+
+export async function componentsStatus(): Promise<ComponentStatus[]> {
+  return invoke<ComponentStatus[]>("components_status");
+}
+
+export async function componentInstall(id: string): Promise<string> {
+  return invoke<string>("component_install", { id });
+}
+
+export async function deviceProblems(): Promise<DeviceProblem[]> {
+  return invoke<DeviceProblem[]>("device_problems");
+}
+
+export async function driverBackups(): Promise<DriverBackupDto[]> {
+  return invoke<DriverBackupDto[]>("driver_backups");
+}
+
+export async function driverBackupCreate(reason: string): Promise<DriverBackupDto> {
+  return invoke<DriverBackupDto>("driver_backup_create", { reason });
+}
+
+export async function driverBackupRestore(id: string): Promise<DriverRestoreDto> {
+  return invoke<DriverRestoreDto>("driver_backup_restore", { id });
+}
+
+export async function driverBackupPrune(keep: number): Promise<number> {
+  return invoke<number>("driver_backup_prune", { keep });
 }

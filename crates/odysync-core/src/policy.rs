@@ -66,8 +66,30 @@ impl Policy {
     /// qualified `backend:id` or the bare native id, case-insensitively.
     fn matches(pattern: &str, candidate: &UpdateCandidate) -> bool {
         let pattern = pattern.trim();
-        pattern.eq_ignore_ascii_case(&candidate.id.to_string())
+        if pattern.is_empty() {
+            // A blank line in `exclude` would otherwise match a package whose
+            // native id is empty, and silently skipping an update is exactly
+            // the failure mode this engine exists to prevent.
+            return false;
+        }
+
+        if pattern.eq_ignore_ascii_case(&candidate.id.to_string())
             || pattern.eq_ignore_ascii_case(&candidate.id.native)
+        {
+            return true;
+        }
+
+        // The alias, and `backend:alias`. Windows updates are the case that
+        // needs this: their native id must be `<guid>.<revision>` for the
+        // Update Agent, but a user holds `KB5101650`.
+        match &candidate.id.alias {
+            Some(alias) => {
+                pattern.eq_ignore_ascii_case(alias)
+                    || pattern
+                        .eq_ignore_ascii_case(&format!("{}:{alias}", candidate.id.backend.id()))
+            }
+            None => false,
+        }
     }
 
     /// Run one candidate through every rule, returning the first that blocks
@@ -100,7 +122,7 @@ impl Policy {
         if candidate.id.backend.forbids_elevation() && self.elevated {
             return Some(SkipReason::RequiresUnelevated);
         }
-        if candidate.id.backend.requires_elevation() && !self.elevated {
+        if candidate.requires_elevation() && !self.elevated {
             return Some(SkipReason::RequiresElevation);
         }
 
@@ -165,6 +187,79 @@ mod tests {
 
     fn policy() -> Policy {
         Policy::default()
+    }
+
+    /// A Windows update: native id is `<guid>.<revision>`, but the name a user
+    /// knows it by — and will type into a hold — is the KB number.
+    fn windows_update_candidate() -> UpdateCandidate {
+        UpdateCandidate {
+            id: PackageId::new(
+                BackendKind::WindowsUpdate,
+                "11111111-2222-3333-4444-555555555555.3",
+            )
+            .with_alias("KB5101650"),
+            name: "2026-07 Sicherheitsupdate (KB5101650)".into(),
+            installed: Version::parse("0"),
+            available: Version::parse("3"),
+            size_bytes: None,
+            expected_sha256: None,
+        }
+    }
+
+    #[test]
+    fn a_windows_update_can_be_held_by_its_kb_number() {
+        let c = windows_update_candidate();
+
+        for pattern in [
+            "KB5101650",
+            "kb5101650",
+            "  KB5101650  ",
+            "windows-update:KB5101650",
+        ] {
+            let p = Policy {
+                holds: vec![Hold {
+                    package: pattern.into(),
+                    pin: None,
+                    note: None,
+                }],
+                ..Policy::default()
+            };
+            assert!(
+                matches!(p.evaluate(&c), Some(SkipReason::Held { .. })),
+                "hold pattern {pattern:?} did not match"
+            );
+        }
+    }
+
+    #[test]
+    fn the_guid_handle_still_works_alongside_the_kb_alias() {
+        let c = windows_update_candidate();
+        let p = Policy {
+            exclude: vec!["11111111-2222-3333-4444-555555555555.3".into()],
+            ..Policy::default()
+        };
+        assert_eq!(p.evaluate(&c), Some(SkipReason::Excluded));
+    }
+
+    #[test]
+    fn a_different_kb_number_does_not_match() {
+        let c = windows_update_candidate();
+        let p = Policy {
+            exclude: vec!["KB5101651".into()],
+            ..Policy::default()
+        };
+        // Blocked for needing elevation, not for being excluded.
+        assert_ne!(p.evaluate(&c), Some(SkipReason::Excluded));
+    }
+
+    /// A stray blank line in `exclude` must not silently skip every update.
+    #[test]
+    fn an_empty_pattern_matches_nothing() {
+        let p = Policy {
+            exclude: vec!["".into(), "   ".into()],
+            ..Policy::default()
+        };
+        assert_eq!(p.evaluate(&candidate("1.0.0", "1.1.0")), None);
     }
 
     #[test]

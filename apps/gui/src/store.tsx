@@ -41,6 +41,10 @@ import type {
   StartupProgramDto,
   SystemInfoDto,
   BackendDto,
+  CleanupItemDto,
+  ComponentStatus,
+  DeviceProblem,
+  DriverBackupDto,
 } from "./types";
 
 // ── Concurrency queue ────────────────────────────────────────────────────────
@@ -207,6 +211,10 @@ export interface AppStore {
   offline: Resource<OfflineData>;
   startup: Resource<StartupProgramDto[]>;
   backup: Resource<BackupData>;
+  cleanup: Resource<CleanupItemDto[]>;
+  components: Resource<ComponentStatus[]>;
+  devices: Resource<DeviceProblem[]>;
+  driverBackups: Resource<DriverBackupDto[]>;
   /** True until the initial background load of every resource has settled. */
   booting: boolean;
   /** Fraction of the initial background load that has completed, 0..1. */
@@ -342,6 +350,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     { heavy: true },
   );
 
+  const cleanup = useResource<CleanupItemDto[]>("cleanup", () => api.cleanupScan(), [], {
+    heavy: true,
+  });
+  const components = useResource<ComponentStatus[]>(
+    "components",
+    () => api.componentsStatus(),
+    [],
+    { heavy: true },
+  );
+  const devices = useResource<DeviceProblem[]>("devices", () => api.deviceProblems(), [], {
+    heavy: true,
+  });
+  const driverBackups = useResource<DriverBackupDto[]>(
+    "driverBackups",
+    () => api.driverBackups(),
+    [],
+  );
+
   // Whether the security audit runs as part of the startup load. It is the
   // slowest thing in the app, so it is opt-in — but on by default, because a
   // machine that has already been compromised should be told, not asked.
@@ -368,6 +394,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       packages,
       startup,
       backup,
+      driverBackups,
+      components,
+      devices,
+      cleanup,
       scan,
       ...(scanOnStartup ? [securityScan] : []),
     ],
@@ -385,6 +415,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       packages,
       startup,
       backup,
+      driverBackups,
+      components,
+      devices,
+      cleanup,
       scan,
       securityScan,
       scanOnStartup,
@@ -500,6 +534,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       offline,
       startup,
       backup,
+      cleanup,
+      components,
+      devices,
+      driverBackups,
       booting,
       bootProgress: bootTotal === 0 ? 1 : bootDone / bootTotal,
       refreshAll,
@@ -520,6 +558,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       offline,
       startup,
       backup,
+      cleanup,
+      components,
+      devices,
+      driverBackups,
       booting,
       bootDone,
       bootTotal,

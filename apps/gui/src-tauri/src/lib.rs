@@ -1,5 +1,6 @@
 mod commands;
 mod state;
+mod tools;
 mod tray;
 
 use tauri::Manager;
@@ -107,6 +108,19 @@ pub fn run() {
             commands::create_backup,
             commands::restore_backup,
             commands::is_system_protection_enabled,
+            tools::cleanup_scan,
+            tools::cleanup_run,
+            tools::large_files,
+            tools::reveal_path,
+            tools::components_status,
+            tools::component_install,
+            tools::device_problems,
+            tools::driver_backups,
+            tools::driver_backup_create,
+            tools::driver_backup_restore,
+            tools::driver_backup_prune,
+            tools::disk_optimization_plan,
+            tools::disk_optimization_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Odysync GUI");

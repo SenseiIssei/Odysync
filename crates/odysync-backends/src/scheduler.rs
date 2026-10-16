@@ -53,6 +53,23 @@ pub struct ScheduleSpec {
     pub task_name: String,
     /// Extra arguments to pass to `odysync`.
     pub extra_args: Vec<String>,
+    /// The `odysync` command-line binary to run.
+    ///
+    /// `None` means "this executable", which is right for the CLI. The GUI
+    /// must say where the CLI is: scheduling its own executable would open a
+    /// window at the scheduled time and update nothing, because the GUI does
+    /// not take command-line verbs.
+    #[serde(default)]
+    pub program: Option<String>,
+}
+
+impl ScheduleSpec {
+    fn program(&self) -> Result<String> {
+        match &self.program {
+            Some(p) => Ok(p.clone()),
+            None => current_exe(),
+        }
+    }
 }
 
 /// Resolve the path to the current executable, for the scheduler to launch.
@@ -66,7 +83,7 @@ fn current_exe() -> Result<String> {
 
 #[cfg(windows)]
 pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
-    let exe = current_exe()?;
+    let exe = spec.program()?;
     let mut args = vec!["apply".to_string(), "--yes".to_string()];
     args.extend(spec.extra_args.iter().cloned());
     let tr = format!("\"{exe}\" {}", args.join(" "));
@@ -150,7 +167,7 @@ fn plist_path(task_name: &str) -> PathBuf {
 
 #[cfg(target_os = "macos")]
 pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
-    let exe = current_exe()?;
+    let exe = spec.program()?;
     let mut args = vec!["apply".to_string(), "--yes".to_string()];
     args.extend(spec.extra_args.iter().cloned());
 
@@ -256,7 +273,7 @@ fn unit_dir() -> Result<PathBuf> {
 
 #[cfg(target_os = "linux")]
 pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
-    let exe = current_exe()?;
+    let exe = spec.program()?;
     let mut args = vec!["apply".to_string(), "--yes".to_string()];
     args.extend(spec.extra_args.iter().cloned());
 

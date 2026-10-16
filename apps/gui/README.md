@@ -1,32 +1,20 @@
-# React + TypeScript + Vite
+# Odysync app
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Tauri 2 shell (`src-tauri/`) around a React 19 + TypeScript front-end (`src/`),
+styled with Tailwind 4.
 
-Currently, two official plugins are available:
+- `src/api.ts` — one function per Tauri command; `src/bridge.ts` routes calls to
+  Tauri, or to the demo data in `src/demo/` when running in a plain browser.
+- `src/store.tsx` — every resource the pages show, loaded once in the
+  background and refreshed on demand.
+- `src/components/ui.tsx` — the shared building blocks; colours are semantic
+  tokens defined for both themes in `src/index.css`.
+- `src/pages/` — one file per page.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+npm ci
+npm run dev          # browser, demo data; add ?theme=light or ?theme=dark
+npx tauri dev        # the real app
+npm test             # Vitest + Testing Library
+npx tauri build --config src-tauri/release-windows.conf.json   # or release-unix
 ```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.

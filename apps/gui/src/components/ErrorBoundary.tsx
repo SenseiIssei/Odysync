@@ -46,10 +46,10 @@ export class ErrorBoundary extends Component<Props, State> {
     return (
       <div className="max-w-2xl mx-auto space-y-4">
         <h1 className="text-2xl font-bold text-danger">{this.props.label} failed to render</h1>
-        <p className="text-sm text-cyber-text-dim">
+        <p className="text-sm text-muted">
           This is a bug in Odysync. The rest of the app is still usable.
         </p>
-        <pre className="text-xs whitespace-pre-wrap break-words font-mono bg-cyber-surface border border-danger/30 rounded-lg p-4 max-h-64 overflow-y-auto select-text text-danger">
+        <pre className="text-xs whitespace-pre-wrap break-words font-mono bg-surface border border-danger/30 rounded-lg p-4 max-h-64 overflow-y-auto select-text text-danger">
           {error.message}
           {stack}
         </pre>

@@ -35,6 +35,33 @@ pub struct CacheManifestEntry {
     pub sha256: String,
     pub size_bytes: u64,
     pub cached_at: String,
+    /// How the file's code signature checked out at download time.
+    ///
+    /// `#[serde(default)]` so a manifest written before this field existed
+    /// still loads; those entries read as `Unknown`, which is honest — they
+    /// were cached before anything looked.
+    #[serde(default)]
+    pub signature: CachedSignature,
+}
+
+/// What [`verify_installer`](odysync_verify::verify_installer) said about a
+/// cached file when it was downloaded.
+///
+/// Recorded rather than recomputed so the UI can show it without re-hashing an
+/// 800 MB installer, and so a file that was signed when it arrived and is not
+/// signed now is a visible discrepancy rather than a silent one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+pub enum CachedSignature {
+    /// Cached before signatures were checked, or on a platform without them.
+    #[default]
+    Unknown,
+    /// Signed, and the signature verified. `subject` is the signing identity.
+    Valid { subject: String },
+    /// The file carries no code signature at all.
+    Unsigned,
+    /// A signature is present and did not verify.
+    Invalid { detail: String },
 }
 
 /// Shorter alias for [`CacheManifestEntry`].
@@ -361,7 +388,61 @@ pub async fn cached_entry(package_id: &str, backend: &str) -> Option<CacheEntry>
 
 // ── Download ────────────────────────────────────────────────────────────────
 
-/// Download a file from a URL and cache it with SHA256 verification.
+/// Reject a download URL that is not something we are willing to fetch.
+///
+/// This is the only place Odysync downloads an executable itself, and the URL
+/// arrives from the front-end, so it is untrusted input.
+///
+/// **HTTPS only.** A plaintext installer download is trivially replaced in
+/// transit, and "we hash it afterwards" does not help when the hash is not
+/// known in advance — which it usually is not, since `expected_sha256` is
+/// optional. Refusing `http://` is the difference between a MITM having to
+/// break TLS and a MITM having to be on the same coffee-shop network.
+///
+/// `file://` and every other scheme are refused too: this function's job is
+/// fetching from the network, and a `file://` URL here would be a confusing
+/// way to copy a local file into the cache with a "downloaded" label.
+fn check_download_url(url: &str) -> Result<()> {
+    let trimmed = url.trim();
+    let scheme = trimmed
+        .split_once("://")
+        .map(|(s, _)| s.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    match scheme.as_str() {
+        "https" => {}
+        "http" => anyhow::bail!(
+            "refusing to download an installer over plaintext HTTP: {trimmed}. \
+             An installer fetched over http:// can be replaced in transit."
+        ),
+        "" => anyhow::bail!("not a URL: {trimmed:?}"),
+        other => anyhow::bail!("refusing to download from an unsupported scheme {other:?}"),
+    }
+
+    // "https://" with nothing after it, or with only a slash, is not a host.
+    let rest = &trimmed[scheme.len() + 3..];
+    if rest.is_empty() || rest.starts_with('/') {
+        anyhow::bail!("URL has no host: {trimmed}");
+    }
+
+    Ok(())
+}
+
+/// Download a file from a URL and cache it, verifying it before it is kept.
+///
+/// Three checks, in the order that makes each one meaningful:
+///
+///   1. **The URL** must be HTTPS — see [`check_download_url`].
+///   2. **The digest**, when the caller supplied one. A mismatch means the
+///      bytes are not what was promised and nothing else matters.
+///   3. **The code signature**, via `odysync-verify`. An installer with a
+///      *broken* signature is refused outright: unsigned is a state the world
+///      is genuinely in, but a signature that fails to validate means the file
+///      was tampered with after signing, or its certificate was revoked.
+///
+/// The file is written to a temporary name and only moved into place once it
+/// passes, so a rejected download cannot be left sitting in the cache looking
+/// like a legitimate entry.
 pub async fn download_and_cache(
     url: &str,
     package_id: &str,
@@ -371,6 +452,8 @@ pub async fn download_and_cache(
     proxy_url: Option<&str>,
 ) -> Result<CacheManifestEntry> {
     use sha2::{Digest, Sha256};
+
+    check_download_url(url)?;
 
     let mut client_builder =
         reqwest::Client::builder().timeout(std::time::Duration::from_secs(300));
@@ -394,6 +477,15 @@ pub async fn download_and_cache(
     let sha256 = hex::encode(hasher.finalize());
 
     if let Some(expected) = expected_sha256 {
+        let expected = expected.trim();
+        // A malformed expected digest used to pass silently: `eq_ignore_ascii_case`
+        // against "deadbeef" simply returned false and produced a mismatch
+        // error, but against an empty string it would have compared against
+        // nothing. Reject the shape explicitly so a caller bug reads as a
+        // caller bug.
+        if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
+            anyhow::bail!("expected digest is not a SHA-256 hex string: {expected:?}");
+        }
         if !sha256.eq_ignore_ascii_case(expected) {
             anyhow::bail!("SHA256 mismatch: expected {expected}, got {sha256}");
         }
@@ -405,9 +497,40 @@ pub async fn download_and_cache(
     // thing that would actually escape, so it is checked at the join.
     let file_path = safe_cache_path(&dir, &filename)?;
 
-    let mut file = fs::File::create(&file_path).await?;
+    // Write to a sibling temporary name first. The signature check needs the
+    // bytes on disk — Authenticode is a file-level check — and a file that
+    // fails it must never have existed at the real path, or a later run would
+    // find it in the cache directory and treat it as vetted.
+    let staging = safe_cache_path(&dir, &format!("{filename}.partial"))?;
+    let mut file = fs::File::create(&staging).await?;
     file.write_all(&bytes).await?;
     file.flush().await?;
+    drop(file);
+
+    let signature = match odysync_verify::verify_signature(&staging).await {
+        odysync_verify::SignatureStatus::Valid { subject } => {
+            tracing::info!(package = package_id, %subject, "cached installer is signed");
+            CachedSignature::Valid { subject }
+        }
+        odysync_verify::SignatureStatus::Unsigned => {
+            // Not fatal. Plenty of legitimate installers are unsigned, and
+            // refusing them would make the cache useless. It is recorded, so
+            // the UI can say so rather than implying a check that passed.
+            tracing::warn!(package = package_id, "cached installer is unsigned");
+            CachedSignature::Unsigned
+        }
+        odysync_verify::SignatureStatus::Invalid { detail } => {
+            let _ = fs::remove_file(&staging).await;
+            anyhow::bail!(
+                "refusing to cache {package_id}: its code signature does not validate ({detail}). \
+                 A broken signature means the file changed after it was signed, or the \
+                 certificate was revoked."
+            );
+        }
+        odysync_verify::SignatureStatus::Unsupported => CachedSignature::Unknown,
+    };
+
+    fs::rename(&staging, &file_path).await?;
 
     let entry = CacheManifestEntry {
         package_id: package_id.to_string(),
@@ -417,6 +540,7 @@ pub async fn download_and_cache(
         sha256,
         size_bytes,
         cached_at: chrono::Utc::now().to_rfc3339(),
+        signature,
     };
 
     let mut manifest = CacheManifest::load_async().await;
@@ -471,6 +595,83 @@ pub async fn verify_cached_file(entry: &CacheManifestEntry) -> Result<bool> {
 mod tests {
     use super::*;
 
+    // ── Download URL hardening ──────────────────────────────────────────────
+
+    #[test]
+    fn https_urls_are_accepted() {
+        assert!(check_download_url("https://example.com/setup.exe").is_ok());
+        assert!(check_download_url("  https://example.com/a.msi  ").is_ok());
+        // Scheme comparison is case-insensitive; URLs are not case-normalised
+        // before they reach us.
+        assert!(check_download_url("HTTPS://example.com/setup.exe").is_ok());
+    }
+
+    /// The check that matters. An installer fetched over plaintext can be
+    /// swapped in transit, and `expected_sha256` is optional, so there is
+    /// frequently nothing to catch the swap afterwards.
+    #[test]
+    fn plaintext_http_is_refused() {
+        let err = check_download_url("http://example.com/setup.exe").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("plaintext"), "unhelpful message: {msg}");
+        assert!(msg.contains("http://example.com/setup.exe"));
+    }
+
+    #[test]
+    fn other_schemes_and_malformed_urls_are_refused() {
+        for url in [
+            "file:///C:/Windows/System32/calc.exe",
+            "ftp://example.com/setup.exe",
+            "javascript:alert(1)",
+            "example.com/setup.exe",
+            "",
+            "https://",
+            "https:///no-host",
+        ] {
+            assert!(
+                check_download_url(url).is_err(),
+                "should have been refused: {url:?}"
+            );
+        }
+    }
+
+    // ── Manifest compatibility ──────────────────────────────────────────────
+
+    /// A manifest written before signatures were recorded must still load, and
+    /// must read as `Unknown` rather than as anything reassuring.
+    #[test]
+    fn an_older_manifest_entry_loads_with_an_unknown_signature() {
+        let json = r#"{
+            "package_id": "Mozilla.Firefox",
+            "backend": "winget",
+            "version": "1.0.0",
+            "filename": "firefox.exe",
+            "sha256": "abc",
+            "size_bytes": 1,
+            "cached_at": "2024-01-01T00:00:00Z"
+        }"#;
+        let entry: CacheManifestEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.signature, CachedSignature::Unknown);
+    }
+
+    #[test]
+    fn a_signature_verdict_round_trips_through_the_manifest() {
+        for original in [
+            CachedSignature::Unknown,
+            CachedSignature::Unsigned,
+            CachedSignature::Valid {
+                subject: "CN=Mozilla Corporation".into(),
+            },
+            CachedSignature::Invalid {
+                detail: "chain broken".into(),
+            },
+        ] {
+            let text = serde_json::to_string(&original).unwrap();
+            let back: CachedSignature = serde_json::from_str(&text).unwrap();
+            assert_eq!(back, original);
+        }
+    }
+
     fn entry(package_id: &str, backend: &str, filename: &str, size: u64) -> CacheManifestEntry {
         CacheManifestEntry {
             package_id: package_id.to_string(),
@@ -480,6 +681,7 @@ mod tests {
             sha256: "abc123".to_string(),
             size_bytes: size,
             cached_at: "2024-01-01T00:00:00Z".to_string(),
+            signature: CachedSignature::Unknown,
         }
     }
 

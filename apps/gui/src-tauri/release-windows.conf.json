@@ -1,0 +1,10 @@
+{
+  "build": {
+    "beforeBuildCommand": "npm run build && cargo build --release -p odysync-cli"
+  },
+  "bundle": {
+    "resources": {
+      "../../../target/release/odysync.exe": "odysync.exe"
+    }
+  }
+}

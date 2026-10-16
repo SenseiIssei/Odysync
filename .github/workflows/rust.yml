@@ -57,6 +57,24 @@ jobs:
       - name: Build release (CLI only)
         run: cargo build --release -p odysync-cli
 
+      # The CLI against the real runner: every read-only command must run to
+      # completion on every platform. Nothing here changes the machine.
+      - name: CLI smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=target/release/odysync
+          [ "$RUNNER_OS" = "Windows" ] && bin=target/release/odysync.exe
+          "$bin" --version
+          "$bin" backends
+          "$bin" sysinfo
+          "$bin" startup
+          "$bin" clean
+          "$bin" components
+          "$bin" devices
+          "$bin" --json scan > scan.json
+          head -c 400 scan.json; echo
+
       # This job exists to verify the code, not to distribute it — release.yml
       # is what actually publishes binaries, and its uploads stay fatal.
       # GitHub's artifact service times out often enough that letting it fail
@@ -72,26 +90,37 @@ jobs:
             target/release/odysync.exe
           if-no-files-found: error
 
-  # The GUI is half the product but was never built outside a tagged release,
-  # so a frontend or Tauri-layer break only surfaced at release time.
+  # The GUI is half the product; it is built, tested and packaged on every
+  # platform it ships for, so a frontend or Tauri-layer break surfaces here
+  # rather than at release time.
   gui:
     name: gui (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            config: src-tauri/release-windows.conf.json
+          - os: ubuntu-22.04
+            config: src-tauri/release-unix.conf.json
+          - os: macos-latest
+            config: src-tauri/release-unix.conf.json
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Keyed by runner image: objects compiled against Ubuntu 24.04's glibc
+      # do not link on 22.04, and the default key does not tell them apart.
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: apps/gui/package-lock.json
 
@@ -100,17 +129,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev \
-            patchelf
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            patchelf libfuse2 file
 
       - name: Install frontend dependencies
         working-directory: apps/gui
         run: npm ci
+
+      # Rust dependencies are audited by the `audit` and `deny` jobs. Runs
+      # once, on Linux, because the advisory database does not vary by OS.
+      - name: Audit frontend dependencies
+        if: runner.os == 'Linux'
+        working-directory: apps/gui
+        run: npm audit --audit-level=moderate
 
       - name: Typecheck
         working-directory: apps/gui
@@ -120,33 +152,65 @@ jobs:
         working-directory: apps/gui
         run: npx oxlint
 
-      - name: Build frontend
+      - name: Frontend tests
         working-directory: apps/gui
-        run: npm run build
+        run: npm test
 
-      - name: Build Tauri app
+      # The same packaging the release uses: installer on Windows, .dmg on
+      # macOS, .deb/.rpm/AppImage on Linux, each with the CLI bundled in.
+      - name: Build and package the app
         working-directory: apps/gui
-        run: npx tauri build
+        run: npx tauri build --config ${{ matrix.config }}
 
-      # `tauri.conf.json` sets `bundle.targets` to `["nsis"]`, so a Linux build
-      # produces the binary but no package. Uploading the executable there
-      # still proves the GUI compiles and links on Linux, which is the point of
-      # this job; asking for an installer that the config never asks Tauri to
-      # build would fail forever.
-      - name: Upload installer (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: odysync-gui-${{ matrix.os }}
-          path: target/release/bundle/nsis/*.exe
-          if-no-files-found: error
-
-      - name: Upload binary (Linux)
+      # Building is not running. Start the real app and require it to still be
+      # alive after 20 seconds — long enough for the webview to load and the
+      # startup scan to begin. A crash, a missing library or a panic fails.
+      - name: Install a virtual display (Linux)
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        run: sudo apt-get install -y xvfb dbus-x11
+
+      - name: App smoke test
+        shell: bash
+        run: |
+          set -uo pipefail
+          case "$RUNNER_OS" in
+            Windows) app=target/release/odysync-gui.exe ;;
+            macOS)   app=target/release/odysync-gui ;;
+            Linux)   app=target/release/odysync-gui ;;
+          esac
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a dbus-launch --exit-with-session "$app" > app.log 2>&1 &
+          else
+            "$app" > app.log 2>&1 &
+          fi
+          pid=$!
+          sleep 20
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "the app is running after 20 s"
+            kill "$pid" 2>/dev/null || true
+            # On Linux the xvfb-run wrapper is the tracked process.
+            pkill -f odysync-gui 2>/dev/null || true
+          else
+            wait "$pid"; code=$?
+            echo "the app exited early with code $code"
+            cat app.log
+            exit 1
+          fi
+          tail -n 20 app.log || true
+
+      # This job exists to verify the code, not to distribute it — release.yml
+      # is what publishes packages. GitHub's artifact service times out often
+      # enough that letting it fail a green build is noise, not signal.
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
-          name: odysync-gui-${{ matrix.os }}
-          path: target/release/odysync-gui
+          name: odysync-app-${{ matrix.os }}
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
+            target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
   audit:

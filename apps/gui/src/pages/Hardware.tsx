@@ -1,126 +1,124 @@
-import { motion } from "framer-motion";
-import { Cpu, HardDrive, Info, Zap } from "lucide-react";
+import { Cpu, HardDrive, MemoryStick, Monitor, RefreshCw } from "lucide-react";
+import type { ReactNode } from "react";
 import { useStore } from "../store";
 import {
+  Button,
   Card,
   EmptyState,
+  Meter,
   PageHeader,
-  RefreshButton,
   ResourceView,
 } from "../components/ui";
+import { formatSize } from "../format";
 
 export default function Hardware() {
   const { hardware } = useStore();
   const info = hardware.data;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <>
       <PageHeader
-        title="Hardware Info"
-        subtitle="Detected CPU, memory, graphics and storage"
+        title="System info"
+        subtitle="What this machine is made of, read from the operating system's own sources."
         actions={
-          <RefreshButton onClick={() => void hardware.refresh()} spinning={hardware.loading} />
+          <Button
+            onClick={() => void hardware.refresh()}
+            busy={hardware.loading}
+            icon={<RefreshCw className="w-4 h-4" />}
+          >
+            Refresh
+          </Button>
         }
       />
 
-      <ResourceView resource={hardware} loadingLabel="Detecting hardware...">
+      <ResourceView resource={hardware} loadingLabel="Reading system information…">
         {info ? (
-          <div className="space-y-6">
+          <>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {[
-                {
-                  label: "CPU",
-                  value: info.cpu || "Unknown",
-                  sub: `${info.cpu_cores} logical cores`,
-                  icon: <Cpu className="w-5 h-5" />,
-                },
-                {
-                  label: "Memory",
-                  value:
-                    info.total_memory_gb > 0
-                      ? `${info.total_memory_gb.toFixed(1)} GB`
-                      : "Unknown",
-                  sub: "Total RAM",
-                  icon: <HardDrive className="w-5 h-5" />,
-                },
-                {
-                  label: "OS",
-                  value: info.os,
-                  sub: "Operating System",
-                  icon: <Info className="w-5 h-5" />,
-                },
-              ].map((c, i) => (
-                <motion.div
-                  key={c.label}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="p-4 rounded-xl bg-cyber-surface border border-cyber-border glow-cyan"
-                >
-                  <div className="text-accent mb-2">{c.icon}</div>
-                  <div className="text-sm font-bold truncate" title={c.value}>
-                    {c.value}
-                  </div>
-                  <div className="text-xs text-cyber-text-dim mt-0.5">{c.sub}</div>
-                  <div className="text-[10px] text-cyber-text-faint mt-1 uppercase tracking-wider">
-                    {c.label}
-                  </div>
-                </motion.div>
-              ))}
+              <Fact icon={<Monitor />} label="System" value={info.os} hint={info.machine ?? undefined} />
+              <Fact icon={<Cpu />} label="Processor" value={info.cpu} hint={`${info.cpu_threads} threads`} />
+              <Fact
+                icon={<MemoryStick />}
+                label="Memory"
+                value={info.memory_bytes > 0 ? formatSize(info.memory_bytes) : "Unknown"}
+              />
             </div>
 
-            {info.gpu.length > 0 && (
-              <Card title="Graphics Cards">
-                <div className="space-y-2">
-                  {info.gpu.map((g, i) => (
-                    <div
-                      key={`${g.name}-${i}`}
-                      className="flex items-center gap-3 p-3 rounded-lg bg-cyber-bg/50 border border-cyber-border text-xs"
-                    >
-                      <Zap className="w-4 h-4 text-purple-neon flex-shrink-0" />
+            {info.gpus.length > 0 && (
+              <Card title="Graphics" padded={false}>
+                <ul className="divide-y divide-line border-t border-line">
+                  {info.gpus.map((g, i) => (
+                    <li key={`${g.name}-${i}`} className="flex items-center gap-4 px-5 py-3">
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium text-cyber-text truncate">{g.name}</div>
-                        <div className="text-cyber-text-faint truncate">{g.vendor}</div>
+                        <div className="text-sm font-medium text-fg truncate">{g.name}</div>
+                        <div className="text-sm text-muted truncate">{g.vendor}</div>
                       </div>
-                      <span className="text-cyber-text-dim font-mono flex-shrink-0">
-                        Driver: {g.driver_version || "unknown"}
-                      </span>
-                    </div>
+                      {g.driver_version && (
+                        <span className="text-sm text-muted font-mono selectable">
+                          driver {g.driver_version}
+                        </span>
+                      )}
+                    </li>
                   ))}
-                </div>
+                </ul>
               </Card>
             )}
 
             {info.disks.length > 0 && (
-              <Card title="Disks">
-                <div className="space-y-2">
-                  {info.disks.map((d, i) => (
-                    <div
-                      key={`${d.name}-${i}`}
-                      className="flex items-center gap-3 p-3 rounded-lg bg-cyber-bg/50 border border-cyber-border text-xs"
-                    >
-                      <HardDrive className="w-4 h-4 text-success flex-shrink-0" />
-                      <span className="font-medium text-cyber-text flex-1 truncate">
-                        {d.name}
-                      </span>
-                      <span className="text-cyber-text-dim font-mono">
-                        {d.size_gb.toFixed(0)} GB
-                      </span>
-                      <span className="text-cyber-text-faint">{d.filesystem}</span>
-                    </div>
-                  ))}
-                </div>
+              <Card title="Storage" padded={false}>
+                <ul className="divide-y divide-line border-t border-line">
+                  {info.disks.map((d) => {
+                    const used = d.size_bytes > 0 ? 1 - d.free_bytes / d.size_bytes : 0;
+                    return (
+                      <li key={d.mount} className="px-5 py-3.5">
+                        <div className="flex items-center gap-3 mb-2">
+                          <HardDrive className="w-4 h-4 text-faint" />
+                          <span className="text-sm font-medium">
+                            {d.mount}
+                            {d.label && <span className="text-muted font-normal"> · {d.label}</span>}
+                          </span>
+                          <span className="text-xs text-faint">{d.filesystem}</span>
+                          <span className="ml-auto text-sm text-muted tabular-nums">
+                            {formatSize(d.free_bytes)} free of {formatSize(d.size_bytes)}
+                          </span>
+                        </div>
+                        <Meter value={used} tone={used > 0.9 ? "danger" : used > 0.8 ? "warning" : "accent"} />
+                      </li>
+                    );
+                  })}
+                </ul>
               </Card>
             )}
-          </div>
+          </>
         ) : (
-          <EmptyState
-            icon={<Cpu className="w-12 h-12" />}
-            title="No hardware information available."
-            hint="Hardware detection is currently implemented for Windows only."
-          />
+          <Card>
+            <EmptyState icon={<Cpu />} title="No system information yet" />
+          </Card>
         )}
       </ResourceView>
+    </>
+  );
+}
+
+function Fact({
+  icon,
+  label,
+  value,
+  hint,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-line bg-surface p-5">
+      <div className="flex items-center gap-2 text-sm text-muted [&>svg]:w-4 [&>svg]:h-4">
+        {icon}
+        {label}
+      </div>
+      <div className="mt-2 text-[15px] font-semibold text-fg leading-snug selectable">{value}</div>
+      {hint && <div className="text-sm text-muted mt-0.5 selectable">{hint}</div>}
     </div>
   );
 }
