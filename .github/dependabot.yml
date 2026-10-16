@@ -35,6 +35,13 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # The Node typings must describe the Node the build runs on (24, set in
+      # the workflows); a newer major would type-check APIs that do not exist
+      # there. Raise both together.
+      - dependency-name: "@types/node"
+        update-types:
+          - version-update:semver-major
     commit-message:
       prefix: "chore(deps)"
 
