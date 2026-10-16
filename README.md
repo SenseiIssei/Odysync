@@ -23,10 +23,12 @@ Free and open source, built around one rule: *never break a working machine.*
 <br>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tour-dark.gif">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/tour-light.gif">
-  <img src="docs/assets/tour-dark.gif" alt="A tour through Odysync: overview, updates, drivers, cleanup, startup, security and system info" width="900">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/care-dark.gif">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/care-light.gif">
+  <img src="docs/assets/care-dark.gif" alt="Smart Care: Odysync checks the machine, then installs the safe updates and clears junk files in one click" width="900">
 </picture>
+
+<sub>Smart Care in the browser demo: check everything, then <b>Fix everything</b> — safe updates and junk files in one click.</sub>
 
 </div>
 
@@ -98,6 +100,18 @@ Each source names who verified what it installs — *verified by Odysync*, *by t
 | **System info, schedules, profiles, update history** | ✅ | ✅ | ✅ |
 
 Everything in the app is also in the CLI.
+
+<details>
+<summary><b>Take the tour</b> — every page in a few seconds</summary>
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tour-dark.gif">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/tour-light.gif">
+  <img src="docs/assets/tour-dark.gif" alt="A tour through Odysync: home, updates, drivers, cleanup, security and system health" width="900">
+</picture>
+
+</details>
 
 <table>
 <tr>
