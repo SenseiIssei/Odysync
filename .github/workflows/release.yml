@@ -71,7 +71,7 @@ jobs:
       # signed binary rather than an unsigned one next to a signature.
       - name: Sign the CLI (Windows)
         if: runner.os == 'Windows' && vars.SIGNING_ENABLED == 'true'
-        uses: azure/trusted-signing-action@v0
+        uses: azure/trusted-signing-action@v2
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -183,7 +183,7 @@ jobs:
       # double-clicks this, not the CLI — so it matters more than the binaries.
       - name: Sign the installer (Windows)
         if: runner.os == 'Windows' && vars.SIGNING_ENABLED == 'true'
-        uses: azure/trusted-signing-action@v0
+        uses: azure/trusted-signing-action@v2
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
