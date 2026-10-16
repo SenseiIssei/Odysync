@@ -722,6 +722,43 @@ mod tests {
     use super::*;
     use catalog::Technology;
 
+    /// Every GitHub-sourced entry still resolves against the live API to a
+    /// stable version, an installer of that repository and a published
+    /// SHA-256 — the three things `lock_and_verify` will insist on. Run it
+    /// after editing the catalog: `cargo test -p odysync-backends -- --ignored
+    /// catalog_entries_resolve`.
+    #[tokio::test]
+    #[ignore = "asks the live GitHub API"]
+    async fn catalog_entries_resolve_against_github() {
+        let client = http::client(None, std::time::Duration::from_secs(30)).expect("http client");
+        let catalog = Catalog::embedded();
+        for entry in &catalog.apps {
+            if !matches!(entry.source, Source::Github { .. }) {
+                continue;
+            }
+            let app = InstalledApp {
+                display_name: entry.name.clone(),
+                display_version: Some("0".into()),
+                publisher: None,
+                scope: Scope::Machine,
+                arch: "x64",
+                technology: Technology::Other,
+                install_dir: None,
+            };
+            let release = resolve(&client, entry, &app)
+                .await
+                .unwrap_or_else(|e| panic!("{}: {e}", entry.id))
+                .unwrap_or_else(|| panic!("{}: no release or no x64 asset", entry.id));
+            assert!(
+                release.sha256.is_some(),
+                "{}: {} has no published SHA-256",
+                entry.id,
+                release.url
+            );
+            println!("{:<20} {:<14} {}", entry.id, release.version, release.url);
+        }
+    }
+
     #[test]
     fn native_ids_round_trip_with_their_scope() {
         let catalog = Catalog::embedded();

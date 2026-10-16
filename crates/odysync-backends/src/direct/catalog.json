@@ -205,6 +205,34 @@
       "source": { "type": "nodejs" },
       "installer": "msi",
       "signer": "OpenJS Foundation"
+    },
+    {
+      "id": "powershell",
+      "name": "PowerShell 7",
+      "homepage": "https://github.com/PowerShell/PowerShell",
+      "match": { "display_name": "^PowerShell 7-x64$", "publisher": "^Microsoft Corporation$" },
+      "source": {
+        "type": "github",
+        "repo": "PowerShell/PowerShell",
+        "tag": "^v(?P<v>\\d+\\.\\d+\\.\\d+)$",
+        "assets": { "x64": "^PowerShell-[\\d.]+-win-x64\\.msi$" }
+      },
+      "installer": "msi",
+      "signer": "Microsoft Corporation"
+    },
+    {
+      "id": "shotcut",
+      "name": "Shotcut",
+      "homepage": "https://shotcut.org/",
+      "match": { "display_name": "^Shotcut\\b", "publisher": "^Meltytech" },
+      "source": {
+        "type": "github",
+        "repo": "mltframework/shotcut",
+        "tag": "^v(?P<v>\\d+\\.\\d+\\.\\d+)$",
+        "assets": { "x64": "^shotcut-win64-[\\d.]+\\.exe$" }
+      },
+      "installer": "inno",
+      "signer": "Meltytech, LLC"
     }
   ]
 }
