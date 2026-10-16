@@ -203,20 +203,23 @@ CI runs all of this on Windows, macOS and Linux, builds and starts the CLI and t
 ## Architecture
 
 ```mermaid
-flowchart LR
-    cli["odysync-cli<br/><sub>the odysync command</sub>"]
-    gui["apps/gui<br/><sub>Tauri 2 · React 19 · Tailwind 4</sub>"]
-    backends["odysync-backends<br/><sub>update sources, cleanup, drivers,<br/>runtimes, startup, system info</sub>"]
-    verify["odysync-verify<br/><sub>SHA-256 · Authenticode · codesign</sub>"]
-    core["odysync-core<br/><sub>model, versions, safety policy,<br/>planner, runner</sub>"]
-    cli --> backends
-    gui --> backends
+flowchart TB
+    cli[odysync-cli] --> backends[odysync-backends]
+    gui[apps/gui] --> backends
+    backends --> verify[odysync-verify]
+    backends --> core[odysync-core]
+    verify --> core
     cli --> core
     gui --> core
-    backends --> verify
-    backends --> core
-    verify --> core
 ```
+
+| Crate | What it does |
+|---|---|
+| `odysync-core` | Domain model, version algebra, safety policy, planner, runner |
+| `odysync-verify` | SHA-256 and platform code-signature checks (Authenticode, `codesign`) |
+| `odysync-backends` | Every update source, cleanup, drivers, runtimes, startup, system info |
+| `odysync-cli` | The `odysync` command |
+| `apps/gui` | The desktop app: Tauri 2, React 19, TypeScript 7, Tailwind 4 |
 
 Every safety decision lives in `odysync-core`, which is pure, fully unit-tested and knows no package manager. The CLI and the app are thin shells over the same engine and cannot disagree about what is safe. Adding an update source means implementing one five-method trait. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -226,5 +229,5 @@ Every safety decision lives in `odysync-core`, which is pure, fully unit-tested 
 
 <div align="center">
 <br>
-<a href="https://ko-fi.com/senseiissei"><img src="https://ko-fi.com/img/githubbutton_2.svg" alt="Support on Ko-fi" height="34"></a>
+<a href="https://ko-fi.com/senseiissei"><img src="https://img.shields.io/badge/Support%20on-Ko--fi-ff5e5b?logo=kofi&logoColor=white&style=for-the-badge" alt="Support on Ko-fi"></a>
 </div>
