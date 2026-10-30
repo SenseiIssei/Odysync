@@ -85,7 +85,7 @@ impl Backend for WindowsDriverBackend {
             return Ok(Vec::new());
         }
 
-        let updates = session::search(CRITERIA_DRIVER).await?;
+        let updates = session::search_for_scan(CRITERIA_DRIVER).await?;
         Ok(updates.iter().map(to_candidate).collect())
     }
 
@@ -97,7 +97,7 @@ impl Backend for WindowsDriverBackend {
             });
         }
 
-        session::install(CRITERIA_DRIVER, candidate.id.native.clone()).await?;
+        session::install_and_forget(CRITERIA_DRIVER, candidate.id.native.clone()).await?;
         Ok(())
     }
 

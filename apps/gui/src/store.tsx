@@ -92,11 +92,48 @@ export interface Resource<T> {
   refresh: () => Promise<void>;
   /** Replace the data locally without a round-trip (optimistic updates). */
   set: (value: T) => void;
+  /**
+   * The data is what the previous session found, shown while the first load
+   * of this session is still running.
+   */
+  fromCache: boolean;
 }
 
 interface ResourceOptions {
   /** Route the loader through the shared concurrency queue. */
   heavy?: boolean;
+  /**
+   * Remember the last result across restarts, so a slow source (a full
+   * update scan takes a minute or more) shows what it found last time at once
+   * instead of an empty page, and is refreshed in the background.
+   */
+  persist?: boolean;
+}
+
+/** Bump when a persisted shape changes; older entries are then ignored. */
+const CACHE_VERSION = 1;
+/** Older than this, a remembered result says more about the past than now. */
+const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const cacheKey = (name: string) => `odysync.cache.${name}`;
+
+function readCache<T>(name: string): { at: number; data: T } | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(name));
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as { v: number; at: number; data: T };
+    if (entry.v !== CACHE_VERSION || Date.now() - entry.at > CACHE_MAX_AGE_MS) return null;
+    return { at: entry.at, data: entry.data };
+  } catch {
+    return null;
+  }
+}
+
+function writeCache<T>(name: string, data: T) {
+  try {
+    localStorage.setItem(cacheKey(name), JSON.stringify({ v: CACHE_VERSION, at: Date.now(), data }));
+  } catch {
+    // Storage full or blocked: the cache is a convenience, never a requirement.
+  }
 }
 
 function errorText(e: unknown): string {
@@ -115,10 +152,14 @@ function useResource<T>(
   initial: T,
   options: ResourceOptions = {},
 ): Resource<T> {
-  const [data, setData] = useState<T>(initial);
+  const persist = options.persist ?? false;
+  // Read once, on the first render.
+  const [cached] = useState(() => (persist ? readCache<T>(name) : null));
+  const [data, setData] = useState<T>(cached ? cached.data : initial);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadedAt, setLoadedAt] = useState<number | null>(null);
+  const [loadedAt, setLoadedAt] = useState<number | null>(cached ? cached.at : null);
+  const [fromCache, setFromCache] = useState(cached !== null);
 
   // Keep the latest loader without making `refresh` unstable.
   const loaderRef = useRef(loader);
@@ -150,6 +191,8 @@ function useResource<T>(
         setData(value);
         setError(null);
         setLoadedAt(Date.now());
+        setFromCache(false);
+        if (persist) writeCache(name, value);
       } catch (e) {
         if (!mounted.current) return;
         const text = errorText(e);
@@ -164,17 +207,22 @@ function useResource<T>(
     const promise = run();
     inFlight.current = promise;
     return promise;
-  }, [heavy, name]);
+  }, [heavy, name, persist]);
 
-  const set = useCallback((value: T) => {
-    setData(value);
-    setLoadedAt(Date.now());
-    setError(null);
-  }, []);
+  const set = useCallback(
+    (value: T) => {
+      setData(value);
+      setLoadedAt(Date.now());
+      setError(null);
+      setFromCache(false);
+      if (persist) writeCache(name, value);
+    },
+    [name, persist],
+  );
 
   return useMemo(
-    () => ({ data, loading, error, loadedAt, refresh, set }),
-    [data, loading, error, loadedAt, refresh, set],
+    () => ({ data, loading, error, loadedAt, refresh, set, fromCache }),
+    [data, loading, error, loadedAt, refresh, set, fromCache],
   );
 }
 
@@ -263,13 +311,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return result;
     },
     [],
-    { heavy: true },
+    { heavy: true, persist: true },
   );
 
   const config = useResource<Config | null>("config", () => api.getConfig(), null);
 
   const scan = useResource<ScanResult | null>("scan", () => api.scan(), null, {
     heavy: true,
+    persist: true,
   });
 
   const hardware = useResource<HardwareInfoDto | null>(
@@ -323,7 +372,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     "defender status",
     () => api.getDefenderStatus(),
     null,
-    { heavy: true },
+    { heavy: true, persist: true },
   );
 
   const autostart = useResource<AutostartConfig | null>(
@@ -336,7 +385,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     "security audit",
     () => api.securityScan(),
     null,
-    { heavy: true },
+    { heavy: true, persist: true },
   );
 
   const backup = useResource<BackupData>(
@@ -354,15 +403,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const cleanup = useResource<CleanupItemDto[]>("cleanup", () => api.cleanupScan(), [], {
     heavy: true,
+    persist: true,
   });
   const components = useResource<ComponentStatus[]>(
     "components",
     () => api.componentsStatus(),
     [],
-    { heavy: true },
+    { heavy: true, persist: true },
   );
   const devices = useResource<DeviceProblem[]>("devices", () => api.deviceProblems(), [], {
     heavy: true,
+    persist: true,
   });
   const driverBackups = useResource<DriverBackupDto[]>(
     "driverBackups",
@@ -373,7 +424,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     "hardware health",
     () => api.deviceHealth(),
     null,
-    { heavy: true },
+    { heavy: true, persist: true },
   );
 
   // Whether the security audit runs as part of the startup load. It is the
