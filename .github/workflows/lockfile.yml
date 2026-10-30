@@ -1,0 +1,69 @@
+name: Lockfile maintenance
+
+# Dependabot raises the dependencies named in Cargo.toml and package.json, but
+# not what they pull in. A security fix in a transitive crate — rustls-webpki
+# under reqwest, October 2026 — therefore sat unapplied while every pull
+# request failed the audit. Once a week this refreshes both lockfiles within
+# the ranges the manifests allow, runs the full CI on the result and merges it
+# only when everything is green.
+
+on:
+  schedule:
+    # An hour before the weekly CI run, so that run already sees the result.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Refresh the lockfiles
+        run: |
+          cargo update
+          cd apps/gui && npm update --package-lock-only
+
+      - name: Open a pull request and merge it once CI passes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "Both lockfiles are current."
+            exit 0
+          fi
+
+          branch="chore/lockfiles-$(date -u +%Y-%m-%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "chore(deps): refresh lockfiles"
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore(deps): refresh lockfiles" \
+            --body "Weekly refresh of Cargo.lock and package-lock.json within the ranges the manifests allow. Merged automatically when the full CI passes."
+
+          # A pull request opened with GITHUB_TOKEN starts no workflows, so the
+          # CI is dispatched on the branch explicitly and awaited here.
+          gh workflow run rust.yml --ref "$branch"
+          sleep 30
+          run_id=$(gh run list --workflow rust.yml --branch "$branch" --event workflow_dispatch -L 1 \
+                     --json databaseId --jq '.[0].databaseId')
+          if gh run watch "$run_id" --exit-status --interval 60 > /dev/null; then
+            gh pr merge "$branch" --squash --delete-branch
+            echo "Merged."
+          else
+            echo "CI failed on the refreshed lockfiles; the pull request stays open for a look."
+          fi
