@@ -267,7 +267,7 @@ export async function demoInvoke<T>(command: string, args?: Record<string, unkno
 
   switch (command) {
     case "get_system_info":
-      return answer({ os: "Windows", platform: "windows", elevated: false, version: "3.1.0", config_error: null });
+      return answer({ os: "Windows", platform: "windows", elevated: false, version: "3.1.1", config_error: null });
     case "scan":
       await wait(500);
       return answer({

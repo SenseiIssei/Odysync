@@ -147,7 +147,9 @@ impl Backend for WindowsUpdateBackend {
             return Ok(Vec::new());
         }
 
-        let all = session::search(CRITERIA_SOFTWARE).await?;
+        // Shared with the other backends over the same search; see
+        // `session::SHARED_SEARCH_TTL`.
+        let all = session::search_for_scan(CRITERIA_SOFTWARE).await?;
         Ok(all
             .iter()
             .filter(|u| self.owns(u))
@@ -187,7 +189,7 @@ impl Backend for WindowsUpdateBackend {
             });
         }
 
-        session::install(CRITERIA_SOFTWARE, candidate.id.native.clone()).await?;
+        session::install_and_forget(CRITERIA_SOFTWARE, candidate.id.native.clone()).await?;
         Ok(())
     }
 

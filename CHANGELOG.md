@@ -5,6 +5,32 @@ All notable changes to Odysync will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2026-10-30
+
+### Security
+- rustls-webpki 0.103.16 and webpki-root-certs 1.0.11: certificate checks
+  could accept distrusted intermediates (RUSTSEC-2026-0382, RUSTSEC-2026-0383).
+  Every download Odysync verifies goes through this TLS stack.
+
+### Changed
+- **Faster scans.** Security updates, Defender definitions and feature upgrades
+  share one Windows Update search instead of each running its own; the Update
+  Agent answered them one after another. A full scan on the test machine went
+  from 34 s to 12 s, and from several minutes to under one on a cold start.
+- The app shows what the last scan found as soon as it opens and refreshes it
+  in the background.
+
+### Fixed
+- PowerShell modules: the scan never found an update (it misread PowerShell's
+  output) and took 30 s doing so. It now compares the modules installed from
+  the PowerShell Gallery against the Gallery in one query, and installs exactly
+  the version it found.
+
+### Maintenance
+- A weekly workflow refreshes both lockfiles, so fixes in transitive
+  dependencies arrive without waiting for a release of the crate above them.
+- A failing weekly CI run on main now opens an issue.
+
 ## [3.1.0] - 2026-10-16
 
 ### Added

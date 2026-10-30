@@ -279,3 +279,31 @@ jobs:
           name: sbom
           path: "**/*.cdx.json"
           if-no-files-found: error
+
+  # A red scheduled run on main means something changed underneath the
+  # project — a new advisory, a new toolchain, a new runner image — and nobody
+  # pushed anything that would make them look. Say so where it is seen: one
+  # open issue, commented on for every further failure.
+  alert:
+    name: report a failing weekly run
+    needs: [test, gui, audit, deny, sbom]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Weekly CI is failing on main"
+          existing=$(gh issue list -R "$REPO" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          body="The scheduled run failed: $RUN"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" -R "$REPO" --body "$body"
+          else
+            gh issue create -R "$REPO" --title "$title" --body "$body"
+          fi

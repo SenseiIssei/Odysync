@@ -279,7 +279,10 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
           : `${assessment.issues.length === 1 ? "One thing needs" : `${assessment.issues.length} things need`} a look`;
 
   const info = sysInfo.data;
-  const lastChecked = scan.loadedAt ? new Date(scan.loadedAt).toLocaleTimeString() : null;
+  const lastChecked = scan.loadedAt
+    ? new Date(scan.loadedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+    : null;
+  const showingLastTime = scan.fromCache && lastChecked !== null;
   const platformName =
     info?.platform === "macos" ? "Mac" : info?.platform === "linux" ? "computer" : "PC";
 
@@ -311,8 +314,10 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
             <p className="mt-2 text-[15px] text-muted max-w-[52ch]">
               {fixing
                 ? "Installing safe updates, then clearing junk files. Drivers and firmware are left alone."
-                : busy
-                  ? "Updates, drivers, junk files, security and hardware health — all at once."
+                : busy && showingLastTime
+                  ? `Showing what Odysync found on ${lastChecked} while it checks again.`
+                  : busy
+                    ? "Updates, drivers, junk files, security and hardware health — all at once."
                   : assessment.fixable > 0
                     ? "Safe updates and junk files, in one go. Drivers and anything risky always wait for you."
                     : assessment.issues.length > 0

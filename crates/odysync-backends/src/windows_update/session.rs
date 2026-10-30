@@ -23,7 +23,9 @@
 //! update this is — lives in `odysync_core::windows_update` so it stays
 //! testable on every platform.
 
-use std::time::Duration;
+use std::future::Future;
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
 use odysync_core::error::{Error, Result};
 use odysync_core::windows_update::{UpdateClass, classify};
@@ -80,6 +82,96 @@ pub const CRITERIA_SOFTWARE: &str = "IsInstalled=0 and Type='Software' and IsHid
 
 /// Search criteria for driver updates.
 pub const CRITERIA_DRIVER: &str = "IsInstalled=0 and Type='Driver' and IsHidden=0";
+
+/// How long a scan may reuse a search another backend has just run.
+///
+/// Security updates, Defender definitions and feature upgrades are three
+/// backends over one search (`CRITERIA_SOFTWARE`), scanned in parallel. Each
+/// used to run that search itself, and the Update Agent answers them one after
+/// another: on a real machine the Defender backend alone took 81 s inside a
+/// full scan for a search that had already been answered. Short enough that a
+/// second "Scan again" a few minutes later asks Windows afresh.
+pub const SHARED_SEARCH_TTL: Duration = Duration::from_secs(60);
+
+/// One search result shared by every caller that asks within a time window.
+///
+/// Callers queue on the lock, so concurrent scans run the search once and the
+/// rest receive its result. Failures are not kept: the next caller tries
+/// again rather than inheriting someone else's error.
+pub struct SharedSearch<T: Clone> {
+    slot: tokio::sync::Mutex<Option<(Instant, T)>>,
+}
+
+impl<T: Clone> SharedSearch<T> {
+    pub fn new() -> Self {
+        Self {
+            slot: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// The cached result if it is younger than `ttl`, else a fresh one from `run`.
+    pub async fn get_or_run<F, Fut>(&self, ttl: Duration, run: F) -> Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        let mut slot = self.slot.lock().await;
+        if let Some((at, value)) = slot.as_ref()
+            && at.elapsed() < ttl
+        {
+            return Ok(value.clone());
+        }
+        let fresh = run().await?;
+        *slot = Some((Instant::now(), fresh.clone()));
+        Ok(fresh)
+    }
+
+    /// Drop the cached result, e.g. after an install changed what is pending.
+    pub async fn forget(&self) {
+        *self.slot.lock().await = None;
+    }
+}
+
+impl<T: Clone> Default for SharedSearch<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+static SOFTWARE_SEARCH: LazyLock<SharedSearch<Vec<WuaUpdate>>> = LazyLock::new(SharedSearch::new);
+static DRIVER_SEARCH: LazyLock<SharedSearch<Vec<WuaUpdate>>> = LazyLock::new(SharedSearch::new);
+
+fn shared_for(criteria: &'static str) -> Option<&'static SharedSearch<Vec<WuaUpdate>>> {
+    match criteria {
+        CRITERIA_SOFTWARE => Some(&SOFTWARE_SEARCH),
+        CRITERIA_DRIVER => Some(&DRIVER_SEARCH),
+        _ => None,
+    }
+}
+
+/// [`search`] for scanning: reuses a result another backend got moments ago.
+///
+/// Only for listing what is available. Installing, and checking afterwards
+/// that an install took, always ask Windows afresh through [`search`].
+pub async fn search_for_scan(criteria: &'static str) -> Result<Vec<WuaUpdate>> {
+    match shared_for(criteria) {
+        Some(shared) => {
+            shared
+                .get_or_run(SHARED_SEARCH_TTL, || search(criteria))
+                .await
+        }
+        None => search(criteria).await,
+    }
+}
+
+/// Install, then forget the shared result: what is pending has changed.
+pub async fn install_and_forget(criteria: &'static str, key: String) -> Result<InstallOutcome> {
+    let outcome = install(criteria, key).await;
+    if let Some(shared) = shared_for(criteria) {
+        shared.forget().await;
+    }
+    outcome
+}
 
 /// How long an install may run before we stop waiting on it.
 ///
@@ -523,6 +615,88 @@ mod tests {
             size_bytes: None,
             class: UpdateClass::Quality,
         }
+    }
+
+    #[tokio::test]
+    async fn concurrent_callers_share_one_search() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let shared = Arc::new(SharedSearch::<u32>::new());
+        let runs = Arc::new(AtomicUsize::new(0));
+        let call = |shared: Arc<SharedSearch<u32>>, runs: Arc<AtomicUsize>| async move {
+            shared
+                .get_or_run(Duration::from_secs(60), || async {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    Ok(7)
+                })
+                .await
+        };
+        let (a, b, c) = tokio::join!(
+            call(shared.clone(), runs.clone()),
+            call(shared.clone(), runs.clone()),
+            call(shared.clone(), runs.clone()),
+        );
+        assert_eq!((a.unwrap(), b.unwrap(), c.unwrap()), (7, 7, 7));
+        assert_eq!(
+            runs.load(Ordering::SeqCst),
+            1,
+            "the search ran more than once"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stale_or_forgotten_result_is_searched_again() {
+        let shared = SharedSearch::<u32>::new();
+        let mut n = 0;
+        let mut next = || {
+            n += 1;
+            let v = n;
+            async move { Ok(v) }
+        };
+        assert_eq!(
+            shared
+                .get_or_run(Duration::from_secs(60), &mut next)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            shared
+                .get_or_run(Duration::from_secs(60), &mut next)
+                .await
+                .unwrap(),
+            1
+        );
+        // A zero TTL means every result is already stale.
+        assert_eq!(
+            shared.get_or_run(Duration::ZERO, &mut next).await.unwrap(),
+            2
+        );
+        shared.forget().await;
+        assert_eq!(
+            shared
+                .get_or_run(Duration::from_secs(60), &mut next)
+                .await
+                .unwrap(),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_search_is_not_remembered() {
+        let shared = SharedSearch::<u32>::new();
+        let failed = shared
+            .get_or_run(Duration::from_secs(60), || async {
+                Err(Error::parse("test", "the service was busy"))
+            })
+            .await;
+        assert!(failed.is_err());
+        let ok = shared
+            .get_or_run(Duration::from_secs(60), || async { Ok(5) })
+            .await;
+        assert_eq!(ok.unwrap(), 5);
     }
 
     #[test]

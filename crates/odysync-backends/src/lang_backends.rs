@@ -763,24 +763,17 @@ impl Backend for PowerShellModuleBackend {
         } else {
             "powershell"
         };
-        let script = "Get-InstalledModule | Select-Object Name, Version | ConvertTo-Json";
-        let out = proc::run(pwsh, &["-NoProfile", "-Command", script], SCAN_TIMEOUT).await?;
-        let kind = self.kind();
-        let modules: Vec<PsModule> = serde_json::from_str(&out.stdout).unwrap_or_default();
-        Ok(modules
-            .into_iter()
-            .map(|m| {
-                let name = m.name.clone();
-                UpdateCandidate {
-                    id: PackageId::new(kind, m.name),
-                    name,
-                    installed: Version::parse(&m.version),
-                    available: Version::Unknown(String::new()),
-                    size_bytes: None,
-                    expected_sha256: None,
-                }
-            })
-            .collect())
+        // One PowerShell, one Gallery query for every module at once. Only
+        // modules that came from the PowerShell Gallery are compared against
+        // it: a module from a private repository must never be "updated" to a
+        // public one that happens to share its name.
+        let out = proc::run(
+            pwsh,
+            &["-NoProfile", "-Command", PS_MODULE_SCAN],
+            SCAN_TIMEOUT,
+        )
+        .await?;
+        Ok(parse_ps_modules(&out.stdout, self.kind()))
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
@@ -794,7 +787,7 @@ impl Backend for PowerShellModuleBackend {
             &[
                 "-NoProfile",
                 "-Command",
-                &format!("Update-Module -Name {} -Force", candidate.id.native),
+                &update_module_command(&candidate.id.native, candidate.available.raw())?,
             ],
             INSTALL_TIMEOUT,
         )
@@ -815,8 +808,12 @@ impl Backend for PowerShellModuleBackend {
         } else {
             "powershell"
         };
+        if !is_module_name(&candidate.id.native) {
+            return Ok(None);
+        }
         let script = format!(
-            "Get-InstalledModule -Name {} | Select-Object -ExpandProperty Version",
+            "Get-InstalledModule -Name '{}' -AllVersions | Sort-Object Version -Descending | \
+             Select-Object -First 1 -ExpandProperty Version",
             candidate.id.native
         );
         let out = proc::run(pwsh, &["-NoProfile", "-Command", &script], SCAN_TIMEOUT).await?;
@@ -825,10 +822,75 @@ impl Backend for PowerShellModuleBackend {
     }
 }
 
+/// Installed Gallery modules with the Gallery's newest version, as JSON.
+const PS_MODULE_SCAN: &str = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$installed = @(Get-InstalledModule | Where-Object Repository -eq 'PSGallery')
+$latest = @{}
+if ($installed.Count -gt 0) {
+  Find-Module -Name ($installed.Name) -Repository PSGallery | ForEach-Object { $latest[$_.Name] = [string]$_.Version }
+}
+ConvertTo-Json -Compress -InputObject @($installed | ForEach-Object {
+  [pscustomobject]@{ Name = $_.Name; Version = [string]$_.Version; Latest = $latest[$_.Name] }
+})
+"#;
+
+/// One row of [`PS_MODULE_SCAN`]. PowerShell writes PascalCase keys; reading
+/// them as lowercase made every scan parse to nothing.
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct PsModule {
     name: String,
     version: String,
+    latest: Option<String>,
+}
+
+/// Module names as the Gallery allows them. Anything else is not put into a
+/// PowerShell command line.
+fn is_module_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// The modules that have a newer version in the Gallery.
+fn parse_ps_modules(json: &str, kind: BackendKind) -> Vec<UpdateCandidate> {
+    let modules: Vec<PsModule> = serde_json::from_str(json.trim()).unwrap_or_default();
+    modules
+        .into_iter()
+        .filter(|m| is_module_name(&m.name))
+        .filter_map(|m| {
+            let latest = m.latest.filter(|l| !l.is_empty() && *l != m.version)?;
+            let name = m.name.clone();
+            Some(UpdateCandidate {
+                id: PackageId::new(kind, m.name),
+                name,
+                installed: Version::parse(&m.version),
+                available: Version::parse(&latest),
+                size_bytes: None,
+                expected_sha256: None,
+            })
+        })
+        .collect()
+}
+
+/// `Update-Module` to exactly the version that was approved, from the Gallery.
+fn update_module_command(name: &str, version: &str) -> Result<String> {
+    let version_ok = !version.is_empty()
+        && version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'));
+    if !is_module_name(name) || !version_ok {
+        return Err(Error::Verification {
+            package: name.to_string(),
+            detail: "refusing to build an Update-Module command from this name or version".into(),
+        });
+    }
+    Ok(format!(
+        "Update-Module -Name '{name}' -RequiredVersion '{version}' -Force -ErrorAction Stop"
+    ))
 }
 
 // ── JetBrains Plugins ────────────────────────────────────────────────────────
@@ -1208,6 +1270,39 @@ impl Backend for IntelDsaBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn powershell_modules_with_a_newer_gallery_version_become_candidates() {
+        let json = r#"[
+          {"Name":"PSReadLine","Version":"2.3.5","Latest":"2.4.1"},
+          {"Name":"Pester","Version":"5.7.1","Latest":"5.7.1"},
+          {"Name":"Az.Accounts","Version":"4.0.2","Latest":null}
+        ]"#;
+        let found = parse_ps_modules(json, BackendKind::PowerShellModule);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "PSReadLine");
+        assert_eq!(found[0].available.raw(), "2.4.1");
+        assert!(found[0].installed.is_upgrade_to(&found[0].available));
+    }
+
+    #[test]
+    fn a_single_module_and_garbage_both_parse() {
+        // ConvertTo-Json -InputObject @(...) always writes an array, but a
+        // broken PowerShell must not turn into a panic either.
+        assert!(parse_ps_modules("", BackendKind::PowerShellModule).is_empty());
+        assert!(parse_ps_modules("not json", BackendKind::PowerShellModule).is_empty());
+    }
+
+    #[test]
+    fn update_module_installs_the_exact_version_and_refuses_odd_input() {
+        assert_eq!(
+            update_module_command("PSReadLine", "2.4.1").unwrap(),
+            "Update-Module -Name 'PSReadLine' -RequiredVersion '2.4.1' -Force -ErrorAction Stop"
+        );
+        assert!(update_module_command("x'; Remove-Item C:\\", "1.0").is_err());
+        assert!(update_module_command("PSReadLine", "1.0; calc").is_err());
+        assert!(update_module_command("PSReadLine", "").is_err());
+    }
 
     #[test]
     fn pip_pins_the_version_in_one_argument() {
