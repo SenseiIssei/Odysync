@@ -93,6 +93,12 @@ enum Command {
         /// Create a system restore point before applying (Windows).
         #[arg(long)]
         restore_point: bool,
+
+        /// Leave out drivers, firmware, system upgrades and developer packages
+        /// (pip, npm, cargo ...), which need somebody in front of the machine.
+        /// Schedules use this.
+        #[arg(long)]
+        unattended: bool,
     },
 
     /// Everything Odysync can do safely without you deciding, in one pass:
@@ -444,6 +450,7 @@ async fn run(cli: Cli) -> Result<u8> {
     // The policy engine needs to know our privilege level to apply the
     // elevation rules; it is a runtime fact, never persisted.
     config.policy.elevated = platform::is_elevated();
+    odysync_backends::direct::http::set_proxy(config.proxy_url.as_deref());
 
     let style = Style::detect();
 
@@ -496,15 +503,17 @@ async fn run(cli: Cli) -> Result<u8> {
             backend,
         } => {
             let backends = select_backends(&config, &backend).await?;
-            let candidates = scan_all(&backends).await;
-            let plan = config.policy.plan(candidates);
+            let scan = scan_all(&config, &backends).await;
+            let plan = config.policy.plan(scan.candidates);
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             } else {
                 print!("{}", render::plan_table(&plan, &style, show_skipped));
             }
-            Ok(0)
+            // Nothing could be asked: whatever calls this must not read the
+            // empty list as "up to date".
+            Ok(if scan.nothing_answered { 2 } else { 0 })
         }
 
         Command::Apply {
@@ -516,9 +525,15 @@ async fn run(cli: Cli) -> Result<u8> {
             report: report_path,
             report_format,
             restore_point,
+            unattended,
         } => {
             let backends = select_backends(&config, &backend).await?;
-            let mut candidates = scan_all(&backends).await;
+            let scan = scan_all(&config, &backends).await;
+            let nothing_answered = scan.nothing_answered;
+            let mut candidates = scan.candidates;
+            if unattended {
+                candidates.retain(|c| c.id.backend.in_unattended_care());
+            }
 
             // Narrow before planning, so the summary reflects what the user
             // actually asked for rather than the whole machine.
@@ -535,7 +550,25 @@ async fn run(cli: Cli) -> Result<u8> {
             }
 
             if actionable == 0 {
-                return Ok(0);
+                if cli.json {
+                    // The same shape as after a run, so a script need not
+                    // treat "nothing to do" as a special case.
+                    let mut report = RunReport::new();
+                    for p in &plan {
+                        if let Some(reason) = &p.blocked_by {
+                            report.push(
+                                p.candidate.id.clone(),
+                                p.candidate.name.clone(),
+                                odysync_core::ApplyOutcome::Skipped {
+                                    reason: reason.clone(),
+                                },
+                            );
+                        }
+                    }
+                    report.finish();
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                }
+                return Ok(if nothing_answered { 2 } else { 0 });
             }
 
             #[cfg(windows)]
@@ -556,15 +589,12 @@ async fn run(cli: Cli) -> Result<u8> {
             }
 
             if !yes && !dry_run && !confirm(actionable)? {
-                println!("Cancelled.");
+                eprintln!("Cancelled.");
                 return Ok(0);
             }
 
-            let refs: Vec<&dyn Backend> = backends.iter().map(|b| b.as_ref()).collect();
-            let mut runner = Runner::new(refs, dry_run);
-            let mut report = RunReport::new();
             let restore = restore_point || config.restore_point;
-            runner.run(&plan, &mut report, restore).await;
+            let report = run_updates(&config, &backends, &plan, dry_run, restore).await?;
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -630,7 +660,8 @@ async fn run(cli: Cli) -> Result<u8> {
                 );
             };
 
-            let until = jiff::Timestamp::now() + jiff::SignedDuration::from_hours(24 * i64::from(days));
+            let until =
+                jiff::Timestamp::now() + jiff::SignedDuration::from_hours(24 * i64::from(days));
             config.pause_backend(kind, until, note);
             config.save(&config_path)?;
 
@@ -726,6 +757,7 @@ async fn run(cli: Cli) -> Result<u8> {
                     .await
                     .context("running maintenance action")?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
+                return Ok(u8::from(!result.success));
             } else {
                 println!("{}", style.bold(&format!("Running: {kind}\n")));
                 let result = odysync_backends::maintenance::run_maintenance(kind)
@@ -735,6 +767,7 @@ async fn run(cli: Cli) -> Result<u8> {
                     println!("  {} {}", style.green("ok"), result.summary);
                 } else {
                     println!("  {} {}", style.red("!!"), result.summary);
+                    return Ok(1);
                 }
             }
             Ok(0)
@@ -785,7 +818,9 @@ async fn run(cli: Cli) -> Result<u8> {
         Command::Unschedule { task_name } => {
             let existed = odysync_backends::scheduler::schedule_exists(&task_name).await;
             if existed {
-                let _ = odysync_backends::scheduler::remove_schedule(&task_name).await;
+                odysync_backends::scheduler::remove_schedule(&task_name)
+                    .await
+                    .context("removing the scheduled task")?;
             }
             if cli.json {
                 println!(
@@ -1017,7 +1052,9 @@ async fn run_care(
 
     // ── Look ──
     let backends = select_backends(config, &[]).await?;
-    let candidates = scan_all(&backends).await;
+    let scan = scan_all(config, &backends).await;
+    let nothing_answered = scan.nothing_answered;
+    let candidates = scan.candidates;
     // Drivers, firmware, OS upgrades and developer packages wait for a
     // person; see `BackendKind::in_unattended_care`.
     let (attended, plan): (Vec<_>, Vec<_>) = config
@@ -1071,14 +1108,27 @@ async fn run_care(
                     "reclaimed_bytes": 0,
                 }))?
             );
+        } else if nothing_answered {
+            println!("\nNo update source could be reached, so there may still be updates.");
         } else {
-            println!("\nNothing to do — this machine is up to date and tidy.");
+            println!("\nNothing to do: this machine is up to date and tidy.");
         }
-        return Ok(0);
+        return Ok(if nothing_answered { 2 } else { 0 });
     }
 
     if dry_run {
-        if !json {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "dry_run": true,
+                    "updates": plan,
+                    "cleanup": to_clean.iter().map(|c| c.id()).collect::<Vec<_>>(),
+                    "reclaimable_bytes": reclaimable,
+                    "left_for_you": attended,
+                }))?
+            );
+        } else {
             println!(
                 "\n{}",
                 style.dim("Dry run: nothing was installed or deleted.")
@@ -1088,12 +1138,11 @@ async fn run_care(
     }
 
     if !yes {
-        use std::io::{BufRead, Write};
-        print!(
+        use std::io::BufRead;
+        eprint!(
             "\nInstall {actionable} update(s) and clear {}? [y/N] ",
             render::human_bytes(reclaimable)
         );
-        std::io::stdout().flush()?;
         let mut line = String::new();
         // A closed stdin is never consent.
         if std::io::stdin().lock().read_line(&mut line)? == 0
@@ -1105,12 +1154,11 @@ async fn run_care(
     }
 
     // ── Updates ──
-    let mut report = RunReport::new();
-    if actionable > 0 {
-        let refs: Vec<&dyn Backend> = backends.iter().map(|b| b.as_ref()).collect();
-        let mut runner = Runner::new(refs, false);
-        runner.run(&plan, &mut report, config.restore_point).await;
-    }
+    let report = if actionable > 0 {
+        run_updates(config, &backends, &plan, false, config.restore_point).await?
+    } else {
+        RunReport::new()
+    };
 
     // ── Cleanup ──
     let results = if to_clean.is_empty() {
@@ -1161,11 +1209,10 @@ async fn run_clean(
 
     let findings = odysync_backends::cleanup::scan().await;
 
-    if json {
+    // One document per run: the findings, or after `--apply` the results.
+    if json && !apply {
         println!("{}", serde_json::to_string_pretty(&findings)?);
-        if !apply {
-            return Ok(0);
-        }
+        return Ok(0);
     }
 
     if !json {
@@ -1233,7 +1280,7 @@ async fn run_clean(
     };
 
     if selected.is_empty() {
-        println!("\nNothing to clean.");
+        println!("{}", if json { "[]" } else { "\nNothing to clean." });
         return Ok(0);
     }
 
@@ -1244,14 +1291,14 @@ async fn run_clean(
         .filter(|c| c.reversibility().needs_explicit_confirmation())
         .collect();
     if !destructive.is_empty() {
-        println!("\n{}", style.bold("This cannot be undone:"));
+        eprintln!("\n{}", style.bold("This cannot be undone:"));
         for c in &destructive {
-            println!("  {} — {}", c.label(), c.consequence());
+            eprintln!("  {}: {}", c.label(), c.consequence());
         }
     }
 
     if !yes && !confirm_clean(selected.len())? {
-        println!("Cancelled.");
+        eprintln!("Cancelled.");
         return Ok(0);
     }
 
@@ -1299,13 +1346,12 @@ async fn run_clean(
 
 /// Ask before deleting. A closed stdin is never consent.
 fn confirm_clean(count: usize) -> Result<bool> {
-    use std::io::{BufRead, Write};
+    use std::io::BufRead;
 
-    print!(
+    eprint!(
         "\nClean {count} categor{}? [y/N] ",
         if count == 1 { "y" } else { "ies" }
     );
-    std::io::stdout().flush()?;
 
     let mut line = String::new();
     if std::io::stdin().lock().read_line(&mut line)? == 0 {
@@ -1560,28 +1606,155 @@ async fn run_driver_action(action: DriverAction, json: bool, style: &Style) -> R
     }
 }
 
+/// What a scan of several sources came to.
+pub(crate) struct Scan {
+    pub candidates: Vec<UpdateCandidate>,
+    /// Sources were asked and not one of them answered.
+    pub nothing_answered: bool,
+}
+
 /// Scan every backend concurrently.
 ///
-/// A backend that errors is logged and contributes nothing rather than failing
-/// the whole run — one broken package manager must not hide updates available
-/// from the others.
-async fn scan_all(backends: &[Box<dyn Backend>]) -> Vec<UpdateCandidate> {
-    let results = futures::future::join_all(backends.iter().map(|b| async move {
-        match b.scan().await {
-            Ok(found) => {
-                tracing::info!(backend = %b.kind(), count = found.len(), "scan complete");
-                found
-            }
-            Err(e) => {
-                tracing::warn!(backend = %b.kind(), error = %e, "scan failed");
-                eprintln!("warning: {} scan failed: {e}", b.display_name());
-                Vec::new()
-            }
-        }
-    }))
-    .await;
+/// A backend that errors or takes too long is reported and contributes nothing
+/// rather than failing the whole run: one broken package manager must not hide
+/// updates available from the others.
+pub(crate) async fn scan_all(config: &Config, backends: &[Box<dyn Backend>]) -> Scan {
+    use odysync_backends::scan::{ScanCancel, scan_sources};
 
-    results.into_iter().flatten().collect()
+    let refs: Vec<&dyn Backend> = backends.iter().map(|b| b.as_ref()).collect();
+    let limit = std::time::Duration::from_secs(u64::from(config.backend_timeout_secs.max(10)));
+    let progress = Progress::new();
+    let results = scan_sources(&refs, limit, &ScanCancel::new(), &|p| progress.scan(&p)).await;
+    progress.clear();
+
+    let nothing_answered = !results.is_empty() && results.iter().all(|r| r.result.is_err());
+    let mut candidates = Vec::new();
+    for source in results {
+        match source.result {
+            Ok(found) => candidates.extend(found),
+            Err(e) => eprintln!("warning: {} could not be checked: {e}", source.name),
+        }
+    }
+    Scan {
+        candidates,
+        nothing_answered,
+    }
+}
+
+/// Install `plan`: one run at a time on this machine, recorded in the history,
+/// stopping after the current package on Ctrl-C.
+pub(crate) async fn run_updates(
+    config: &Config,
+    backends: &[Box<dyn Backend>],
+    plan: &[odysync_core::PlannedUpdate],
+    dry_run: bool,
+    restore_point: bool,
+) -> Result<RunReport> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let _lock = if dry_run {
+        None
+    } else {
+        Some(odysync_core::ApplyLock::acquire()?)
+    };
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&cancel);
+    let ctrl_c = tokio::spawn(async move {
+        while tokio::signal::ctrl_c().await.is_ok() {
+            if flag.swap(true, Ordering::Relaxed) {
+                // Asked twice: they mean it.
+                std::process::exit(130);
+            }
+            eprintln!(
+                "\nStopping after the package being installed. Press Ctrl-C again to quit now."
+            );
+        }
+    });
+
+    let refs: Vec<&dyn Backend> = backends.iter().map(|b| b.as_ref()).collect();
+    let mut runner = Runner::new(refs, dry_run)
+        .with_max_retries(config.max_retries)
+        .with_cancel(cancel);
+    if !dry_run {
+        runner = runner.with_history(odysync_core::UpdateHistory::load());
+    }
+    let mut report = RunReport::new();
+    let progress = Progress::new();
+    runner
+        .run_with_progress(plan, &mut report, restore_point, Some(&progress))
+        .await;
+    progress.clear();
+    ctrl_c.abort();
+    Ok(report)
+}
+
+/// One line on the terminal that says what is happening.
+///
+/// Goes to stderr, and only when that is a terminal, so neither `--json` nor a
+/// log file sees it.
+struct Progress {
+    enabled: bool,
+    waiting: std::sync::Mutex<Vec<String>>,
+}
+
+impl Progress {
+    fn new() -> Self {
+        use std::io::IsTerminal;
+        Self {
+            enabled: std::io::stderr().is_terminal(),
+            waiting: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn line(&self, text: &str) {
+        if self.enabled {
+            let text: String = text.chars().take(78).collect();
+            eprint!("\r{text:<79}\r");
+        }
+    }
+
+    fn clear(&self) {
+        self.line("");
+    }
+
+    fn scan(&self, p: &odysync_backends::scan::ScanProgress) {
+        use odysync_backends::scan::SourceState;
+        let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+        match p.state {
+            SourceState::Started => waiting.push(p.name.clone()),
+            SourceState::Done | SourceState::Failed => waiting.retain(|n| *n != p.name),
+        }
+        self.line(&scan_line(p.done, p.total, &waiting));
+    }
+}
+
+impl odysync_core::ProgressEmitter for Progress {
+    fn emit_progress(&self, event: odysync_core::ProgressEvent) {
+        if event.phase != "done" {
+            self.line(&format!(
+                "[{}/{}] {}",
+                (event.current + 1).min(event.total),
+                event.total,
+                event.package
+            ));
+        }
+    }
+}
+
+/// `Checked 12 of 21 sources, waiting for Python pip, Windows Update ...`
+fn scan_line(done: usize, total: usize, waiting: &[String]) -> String {
+    let mut text = format!("Checked {done} of {total} sources");
+    if !waiting.is_empty() && done > 0 {
+        let names: Vec<&str> = waiting.iter().take(2).map(String::as_str).collect();
+        text.push_str(", waiting for ");
+        text.push_str(&names.join(", "));
+        if waiting.len() > 2 {
+            text.push_str(" ...");
+        }
+    }
+    text
 }
 
 /// The backends a scan or apply should use.
@@ -1604,10 +1777,10 @@ async fn select_backends(config: &Config, named: &[String]) -> Result<Vec<Box<dy
             .iter()
             .any(|n| n.trim().eq_ignore_ascii_case(kind.id()))
     };
-    Ok(odysync_backends::probe_backends(config)
+    Ok(odysync_backends::probe_kinds(config, &wanted)
         .await
         .into_iter()
-        .filter(|p| p.available && wanted(p.backend.kind()))
+        .filter(|p| p.available)
         .filter(|p| {
             !config
                 .disabled_backends
@@ -1656,10 +1829,10 @@ fn matches_any(candidate: &UpdateCandidate, filters: &[String]) -> bool {
 
 /// Ask before changing the system.
 fn confirm(count: usize) -> Result<bool> {
-    use std::io::{BufRead, Write};
+    use std::io::BufRead;
 
-    print!("\nInstall {count} update(s)? [y/N] ");
-    std::io::stdout().flush()?;
+    // On stderr, so that `--json` on stdout stays a document.
+    eprint!("\nInstall {count} update(s)? [y/N] ");
 
     let mut line = String::new();
     // A closed stdin (a pipe, a service) must not be read as consent.
@@ -1675,6 +1848,56 @@ fn confirm(count: usize) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_command_line_is_consistent() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    /// What the scheduler registers must be something the command accepts.
+    #[test]
+    fn a_scheduled_command_parses() {
+        use odysync_backends::scheduler::{ScheduleFrequency, ScheduleSpec, ScheduledCommand};
+        for command in [ScheduledCommand::Apply, ScheduledCommand::Care] {
+            let spec = ScheduleSpec {
+                frequency: ScheduleFrequency::Daily,
+                time: "09:00".into(),
+                task_name: "Odysync".into(),
+                extra_args: Vec::new(),
+                program: None,
+                command,
+            };
+            let args = std::iter::once("odysync".to_string()).chain(spec.args());
+            let cli = Cli::try_parse_from(args).expect("parses");
+            assert!(matches!(
+                cli.command,
+                Command::Apply {
+                    yes: true,
+                    unattended: true,
+                    ..
+                } | Command::Care { yes: true, .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn the_scan_line_names_who_is_still_busy() {
+        let w = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            scan_line(0, 3, &w(&["a", "b", "c"])),
+            "Checked 0 of 3 sources"
+        );
+        assert_eq!(
+            scan_line(1, 3, &w(&["b", "c"])),
+            "Checked 1 of 3 sources, waiting for b, c"
+        );
+        assert_eq!(
+            scan_line(1, 4, &w(&["b", "c", "d"])),
+            "Checked 1 of 4 sources, waiting for b, c ..."
+        );
+        assert_eq!(scan_line(3, 3, &[]), "Checked 3 of 3 sources");
+    }
     use odysync_core::model::{BackendKind, PackageId};
     use odysync_core::version::Version;
 

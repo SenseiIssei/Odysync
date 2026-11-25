@@ -51,6 +51,10 @@ pub enum Error {
     #[error("health check failed: {check}: {detail}")]
     HealthCheckFailed { check: String, detail: String },
 
+    /// Stopped by the user before it was done.
+    #[error("cancelled")]
+    Cancelled,
+
     #[error("configuration error: {0}")]
     Config(String),
 

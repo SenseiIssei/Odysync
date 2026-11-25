@@ -39,6 +39,7 @@ pub mod notifications;
 pub mod oem;
 pub mod offline;
 pub mod pacman;
+pub mod scan;
 pub mod scheduler;
 pub mod scoop;
 pub mod security;
@@ -188,7 +189,22 @@ impl ProbedBackend {
 /// It is also the only place availability is probed: callers should probe once
 /// and cache, since a full sweep is roughly one process spawn per backend.
 pub async fn probe_backends(config: &Config) -> Vec<ProbedBackend> {
-    let candidates = all_backends();
+    probe_kinds(config, &|_| true).await
+}
+
+/// [`probe_backends`] for some of the sources only.
+///
+/// Asking one source should not start the thirty others just to find out that
+/// they are there.
+pub async fn probe_kinds(
+    config: &Config,
+    wanted: &dyn Fn(odysync_core::model::BackendKind) -> bool,
+) -> Vec<ProbedBackend> {
+    direct::http::set_proxy(config.proxy_url.as_deref());
+    let candidates: Vec<_> = all_backends()
+        .into_iter()
+        .filter(|b| wanted(b.kind()))
+        .collect();
     let results = futures::future::join_all(candidates.iter().map(|b| b.is_available())).await;
 
     candidates

@@ -3,16 +3,15 @@
 //! `odysync daemon` runs in the background and periodically checks for updates.
 //! When updates are found it emits a notification (via the OS notification
 //! system when run under the GUI, or a log line when headless). If `--apply`
-//! is set it installs them automatically; otherwise it just reports.
+//! is set it installs them automatically, except for what needs a person in
+//! front of the machine: drivers, firmware, system upgrades and developer
+//! packages. Otherwise it just reports.
 
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use odysync_core::Backend;
 use odysync_core::config::Config;
 use odysync_core::platform;
-use odysync_core::report::RunReport;
-use odysync_core::runner::Runner;
 
 /// Daemon options from the CLI.
 pub struct DaemonOpts {
@@ -68,7 +67,10 @@ pub async fn run(opts: &DaemonOpts, config_path: &std::path::Path) -> Result<u8>
         config.policy.elevated = platform::is_elevated();
 
         let backends = odysync_backends::detect_backends(&config).await;
-        let candidates = scan_all(&backends).await;
+        let mut candidates = crate::scan_all(&config, &backends).await.candidates;
+        if opts.auto_apply {
+            candidates.retain(|c| c.id.backend.in_unattended_care());
+        }
         let plan = config.policy.plan(candidates);
         let actionable = plan.iter().filter(|p| p.is_actionable()).count();
 
@@ -79,12 +81,21 @@ pub async fn run(opts: &DaemonOpts, config_path: &std::path::Path) -> Result<u8>
 
             if opts.auto_apply {
                 tracing::info!("auto-applying updates");
-                let refs: Vec<&dyn Backend> = backends.iter().map(|b| b.as_ref()).collect();
-                let mut runner = Runner::new(refs, false);
-                let mut report = RunReport::new();
                 let restore = opts.restore_point || config.restore_point;
-                runner.run(&plan, &mut report, restore).await;
-                report.finish();
+                // Someone installing by hand at this moment is no reason to
+                // stop watching; the next round tries again.
+                let report =
+                    match crate::run_updates(&config, &backends, &plan, false, restore).await {
+                        Ok(report) => report,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "could not install now");
+                            if opts.once {
+                                return Err(e);
+                            }
+                            tokio::time::sleep(interval).await;
+                            continue;
+                        }
+                    };
 
                 tracing::info!(
                     updated = report.updated(),
@@ -117,22 +128,4 @@ pub async fn run(opts: &DaemonOpts, config_path: &std::path::Path) -> Result<u8>
         tracing::debug!(secs = interval.as_secs(), "sleeping until next check");
         tokio::time::sleep(interval).await;
     }
-}
-
-async fn scan_all(backends: &[Box<dyn Backend>]) -> Vec<odysync_core::model::UpdateCandidate> {
-    let results = futures::future::join_all(backends.iter().map(|b| async move {
-        match b.scan().await {
-            Ok(found) => {
-                tracing::info!(backend = %b.kind(), count = found.len(), "scan complete");
-                found
-            }
-            Err(e) => {
-                tracing::warn!(backend = %b.kind(), error = %e, "scan failed");
-                Vec::new()
-            }
-        }
-    }))
-    .await;
-
-    results.into_iter().flatten().collect()
 }
