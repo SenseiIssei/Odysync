@@ -1,12 +1,17 @@
-//! Pacman backend for Arch Linux and derivatives.
+//! Pacman backend for Arch Linux and derivatives. It reports, but does not
+//! install.
 //!
-//! Pacman verifies package signatures via its Pacman-key infrastructure, so
-//! integrity is handled below us. Version pinning uses `pkg=version` syntax.
+//! Arch does not support updating one package: every package is built against
+//! the newest versions of all others, so a partial upgrade can break the
+//! system (<https://wiki.archlinux.org/title/System_maintenance#Partial_upgrades_are_unsupported>).
+//! It would not work anyway: `checkupdates` looks into a database of its own,
+//! and `pacman -S pkg=new` looks into the one from the last full upgrade, which
+//! does not know that version. Refreshing that one with `-Sy` is what creates
+//! the partial upgrade. So the user runs the full `pacman -Syu`.
 //!
 //! Commands used:
-//!   - `checkupdates` — list available updates (uses a temp sync DB)
-//!   - `pacman -S --noconfirm --needed pkg=version` — install a specific version
-//!   - `pacman -Q pkg` — read installed version
+//!   - `checkupdates`: list available updates (uses a temporary sync database)
+//!   - `pacman -Q pkg`: read the installed version
 
 use std::time::Duration;
 
@@ -16,9 +21,11 @@ use odysync_core::error::{Error, Result};
 use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::proc;
 use odysync_core::version::Version;
+use odysync_core::version_native::Scheme;
+
+use crate::guard;
 
 const SCAN_TIMEOUT: Duration = Duration::from_secs(300);
-const INSTALL_TIMEOUT: Duration = Duration::from_secs(45 * 60);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct PacmanBackend;
@@ -26,6 +33,17 @@ pub struct PacmanBackend;
 impl PacmanBackend {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Fallback scan using `pacman -Qu`, which knows only what the last full
+    /// upgrade saw.
+    async fn scan_via_pacman() -> Result<Vec<UpdateCandidate>> {
+        let out = proc::run("pacman", &["-Qu"], SCAN_TIMEOUT).await?;
+        // Exit 1 without a message means that nothing is out of date.
+        if !out.success() && !out.stderr.trim().is_empty() {
+            return Err(guard::failed("pacman -Qu", out));
+        }
+        Ok(parse_updates(&out.stdout))
     }
 }
 
@@ -52,118 +70,60 @@ impl Backend for PacmanBackend {
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
         // `checkupdates` uses a temporary sync database so it doesn't require
         // root or interfere with the system's pacman database.
-        let out = proc::run("checkupdates", &[] as &[&str], SCAN_TIMEOUT).await;
-
-        // checkupdates exits 0 with updates on stdout, or 2 when no updates.
-        let stdout = match out {
-            Ok(o) if o.code == 0 || o.code == 2 => o.stdout,
-            Ok(o) => {
-                return Err(Error::CommandFailed {
-                    command: "checkupdates".into(),
-                    code: o.code,
-                    stderr: o.stderr,
-                });
-            }
+        match proc::run("checkupdates", &[] as &[&str], SCAN_TIMEOUT).await {
+            // checkupdates exits 0 with updates on stdout, or 2 when there are
+            // none.
+            Ok(out) if out.code == 0 || out.code == 2 => Ok(parse_updates(&out.stdout)),
+            Ok(out) => Err(guard::failed("checkupdates", out)),
             Err(e) => {
-                // checkupdates may not be installed; fall back to pacman -Syu --print
+                // It comes with pacman-contrib, which may not be installed.
                 tracing::warn!(error = %e, "checkupdates not available, falling back to pacman");
-                return self.scan_via_pacman().await;
+                Self::scan_via_pacman().await
             }
-        };
-
-        Ok(parse_checkupdates(&stdout))
+        }
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
-        if !candidate.available.is_known() {
-            return Err(Error::Verification {
-                package: candidate.id.to_string(),
-                detail: "refusing to install without an exact target version".into(),
-            });
-        }
-
-        // Pin the exact version with pkg=version syntax.
-        let spec = format!("{}={}", candidate.id.native, candidate.available.raw());
-        let out = proc::run(
-            "pacman",
-            &["-S", "--noconfirm", "--needed", &spec],
-            INSTALL_TIMEOUT,
-        )
-        .await?;
-
-        if out.success() {
-            Ok(())
-        } else {
-            Err(Error::CommandFailed {
-                command: format!("pacman -S {spec}"),
-                code: out.code,
-                stderr: if out.stderr.trim().is_empty() {
-                    out.stdout
-                } else {
-                    out.stderr
-                },
-            })
-        }
+        guard::precheck(candidate)?;
+        Err(Error::unavailable(
+            "Pacman",
+            format!(
+                "Arch Linux does not support updating a single package ({}); run a full \
+                 upgrade with `sudo pacman -Syu`",
+                candidate.id.native
+            ),
+        ))
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        let out = proc::run("pacman", &["-Q", &candidate.id.native], QUERY_TIMEOUT).await?;
-
+        let out = proc::run("pacman", &["-Q", "--", &candidate.id.native], QUERY_TIMEOUT).await?;
         if !out.success() {
             return Ok(None);
         }
 
-        // Output: "name  version" (space-separated)
+        // Output: "name version"
         let line = out.stdout.lines().next().unwrap_or("").trim();
-        let version = line.split_whitespace().nth(1).unwrap_or("");
-        if version.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(version.to_string()))
-        }
+        Ok(line.split_whitespace().nth(1).map(str::to_string))
     }
 }
 
-impl PacmanBackend {
-    /// Fallback scan using `pacman -Qu` (less reliable than checkupdates).
-    async fn scan_via_pacman(&self) -> Result<Vec<UpdateCandidate>> {
-        let out = proc::run("pacman", &["-Qu"], SCAN_TIMEOUT).await?;
-
-        if !out.success() {
-            return Ok(Vec::new());
-        }
-
-        Ok(parse_pacman_qu(&out.stdout))
-    }
-}
-
-/// Parse `checkupdates` output.
+/// Parse `checkupdates` and `pacman -Qu`: `name old_version -> new_version`.
 ///
-/// Format: `package-name  old_version -> new_version`
-fn parse_checkupdates(stdout: &str) -> Vec<UpdateCandidate> {
+/// `pacman -Qu` marks a package from `IgnorePkg` with `[ignored]`; those are
+/// the user's holds.
+fn parse_updates(stdout: &str) -> Vec<UpdateCandidate> {
     stdout
         .lines()
         .filter_map(|line| {
-            let line = line.trim();
-            if line.is_empty() {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let [name, old, "->", new] = fields.as_slice() else {
                 return None;
-            }
-
-            // Format: "package  old_version -> new_version"
-            let mut parts = line.split_whitespace();
-            let name = parts.next()?;
-            let old_version = parts.next()?;
-            let arrow = parts.next()?;
-            if arrow != "->" {
-                return None;
-            }
-            let new_version = parts.next()?;
-
+            };
             Some(UpdateCandidate {
-                id: PackageId::new(BackendKind::Pacman, name),
+                id: PackageId::new(BackendKind::Pacman, *name),
                 name: name.to_string(),
-                installed: Version::parse(old_version),
-                available: Version::parse(new_version),
+                installed: Version::parse_as(old, Scheme::Pacman),
+                available: Version::parse_as(new, Scheme::Pacman),
                 size_bytes: None,
                 expected_sha256: None,
             })
@@ -171,67 +131,70 @@ fn parse_checkupdates(stdout: &str) -> Vec<UpdateCandidate> {
         .collect()
 }
 
-/// Parse `pacman -Qu` output (fallback).
-///
-/// Format: `package-name  old_version -> new_version` (same as checkupdates)
-fn parse_pacman_qu(stdout: &str) -> Vec<UpdateCandidate> {
-    parse_checkupdates(stdout)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang_backends::assert_refuses_bad_input;
 
     #[test]
     fn parses_checkupdates_output() {
+        // Format from https://man.archlinux.org/man/checkupdates.8 and
+        // https://man.archlinux.org/man/pacman.8 (-Qu).
         let output = "\
-firefox  140.0-1 -> 141.0-1
-linux  6.8.0-49 -> 6.8.0-50
+firefox 140.0-1 -> 141.0-1
+linux 6.8.9.arch1-1 -> 6.8.10.arch1-1
+ca-certificates-utils 20240203-1 -> 1:20240203-1
 ";
-        let candidates = parse_checkupdates(output);
-        assert_eq!(candidates.len(), 2);
-        assert_eq!(candidates[0].id.native, "firefox");
-        assert_eq!(candidates[0].installed.raw(), "140.0-1");
-        assert_eq!(candidates[0].available.raw(), "141.0-1");
-        assert_eq!(candidates[1].id.native, "linux");
+        for text in [output.to_string(), output.replace('\n', "\r\n")] {
+            let candidates = parse_updates(&text);
+            assert_eq!(candidates.len(), 3);
+            assert_eq!(candidates[0].id.native, "firefox");
+            assert_eq!(candidates[0].installed.raw(), "140.0-1");
+            assert_eq!(candidates[0].available.raw(), "141.0-1");
+            assert_eq!(candidates[1].id.native, "linux");
+            // Including the one where only the epoch moves.
+            assert!(
+                candidates
+                    .iter()
+                    .all(|c| c.installed.is_upgrade_to(&c.available))
+            );
+        }
     }
 
     #[test]
     fn empty_output_yields_empty_vec() {
-        assert!(parse_checkupdates("").is_empty());
+        assert!(parse_updates("").is_empty());
     }
 
     #[test]
-    fn skips_malformed_lines() {
-        let output = "firefox  140.0-1 -> 141.0-1\nbad line no arrow\n";
-        let candidates = parse_checkupdates(output);
+    fn skips_malformed_and_ignored_lines() {
+        let output = "firefox 140.0-1 -> 141.0-1\nbad line no arrow\n\
+                      linux 6.8-1 -> 6.9-1 [ignored]\n";
+        let candidates = parse_updates(output);
         assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].id.native, "firefox");
     }
 
     #[test]
     fn backend_kind_is_correct() {
         let b = PacmanBackend::new();
         assert_eq!(b.kind(), BackendKind::Pacman);
-    }
-
-    #[test]
-    fn display_name_is_non_empty() {
-        let b = PacmanBackend::new();
         assert!(!b.display_name().is_empty());
     }
 
     #[tokio::test]
-    async fn apply_refuses_unknown_target_version() {
-        let backend = PacmanBackend::new();
-        let candidate = UpdateCandidate {
-            id: PackageId::new(BackendKind::Pacman, "firefox"),
-            name: "Firefox".into(),
-            installed: Version::parse("140.0"),
-            available: Version::parse(""),
-            size_bytes: None,
-            expected_sha256: None,
-        };
-        let err = backend.apply(&candidate).await.unwrap_err();
-        assert!(matches!(err, Error::Verification { .. }));
+    async fn apply_sends_the_user_to_a_full_upgrade() {
+        let candidates = parse_updates("firefox 140.0-1 -> 141.0-1\n");
+        let err = PacmanBackend::new()
+            .apply(&candidates[0])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::BackendUnavailable { .. }));
+        assert!(err.to_string().contains("pacman -Syu"));
+    }
+
+    #[tokio::test]
+    async fn apply_refuses_options_and_unknown_targets() {
+        assert_refuses_bad_input(&PacmanBackend::new(), "firefox", Some(Scheme::Pacman)).await;
     }
 }

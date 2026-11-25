@@ -240,25 +240,29 @@ impl Backend for NvidiaGpuBackend {
                     detail: "refusing to install without an exact target version".into(),
                 });
             }
-            let adapter = nvidia_adapters().await.into_iter().next().ok_or_else(|| {
-                Error::unavailable("nvidia-gpu", "no NVIDIA GPU is present any more")
-            })?;
-            let driver = lookup(&adapter).await?.ok_or_else(|| {
-                Error::unavailable(
-                    "nvidia-gpu",
-                    "NVIDIA no longer offers a driver for this GPU",
-                )
-            })?;
-            if driver.version.trim() != candidate.available.raw().trim() {
+            // With two NVIDIA cards the scan shows the first that has an
+            // answer, which need not be the first card.
+            let mut offered = Vec::new();
+            for adapter in nvidia_adapters().await {
+                if let Some(driver) = lookup(&adapter).await? {
+                    offered.push(driver);
+                }
+            }
+            let approved = candidate.available.raw().trim();
+            let Some(driver) = offered.iter().find(|d| d.version.trim() == approved) else {
+                let now: Vec<&str> = offered.iter().map(|d| d.version.as_str()).collect();
                 return Err(Error::Verification {
                     package: candidate.name.clone(),
-                    detail: format!(
-                        "NVIDIA now offers {} instead of the approved {}; scan again",
-                        driver.version,
-                        candidate.available.raw()
-                    ),
+                    detail: if now.is_empty() {
+                        "NVIDIA no longer offers a driver for this GPU".into()
+                    } else {
+                        format!(
+                            "NVIDIA now offers {} instead of the approved {approved}; scan again",
+                            now.join(", ")
+                        )
+                    },
                 });
-            }
+            };
 
             let dir = crate::direct::http::DownloadDir::new(&format!("nvidia-{}", driver.version))?;
             let file = dir.path().join(crate::direct::http::file_name_for(

@@ -17,6 +17,10 @@ use tokio::sync::watch;
 /// machines that were off for a while, so it has a floor of its own.
 const WINDOWS_UPDATE_MIN: Duration = Duration::from_secs(5 * 60);
 
+/// Managers that fetch a package index, or ask one for every package, before
+/// they can answer. pip needs about 25 s for 60 packages on a fast line.
+const INDEX_MIN: Duration = Duration::from_secs(3 * 60);
+
 /// What one source answered.
 pub struct SourceScan {
     pub kind: BackendKind,
@@ -81,6 +85,16 @@ pub fn time_limit(kind: BackendKind, general: Duration) -> Duration {
         | BackendKind::WindowsDefenderUpdate
         | BackendKind::WindowsFeatureUpdate
         | BackendKind::WindowsDrivers => general.max(WINDOWS_UPDATE_MIN),
+        BackendKind::Pip
+        | BackendKind::Homebrew
+        | BackendKind::Nix
+        | BackendKind::Chocolatey
+        | BackendKind::Apt
+        | BackendKind::Dnf
+        | BackendKind::Zypper
+        | BackendKind::Pacman
+        | BackendKind::MacSoftwareUpdate
+        | BackendKind::MacFirmware => general.max(INDEX_MIN),
         _ => general,
     }
 }
@@ -200,7 +214,7 @@ mod tests {
     #[tokio::test]
     async fn one_hanging_source_does_not_hold_up_the_rest() {
         let all = [
-            Slow(BackendKind::Pip, 10 * MS),
+            Slow(BackendKind::Scoop, 10 * MS),
             Slow(BackendKind::Npm, 60_000 * MS),
         ];
         let started = Instant::now();
@@ -213,7 +227,7 @@ mod tests {
     #[tokio::test]
     async fn cancelling_keeps_what_was_already_answered() {
         let all = [
-            Slow(BackendKind::Pip, 10 * MS),
+            Slow(BackendKind::Scoop, 10 * MS),
             Slow(BackendKind::Npm, 60_000 * MS),
         ];
         let cancel = ScanCancel::new();
@@ -241,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn progress_names_every_source_and_counts_up_to_the_total() {
         let all = [
-            Slow(BackendKind::Pip, 5 * MS),
+            Slow(BackendKind::Scoop, 5 * MS),
             Slow(BackendKind::Npm, 30 * MS),
             Slow(BackendKind::Cargo, 60_000 * MS),
         ];
@@ -262,7 +276,8 @@ mod tests {
     #[test]
     fn windows_update_gets_the_time_it_needs() {
         let general = Duration::from_secs(120);
-        assert_eq!(time_limit(BackendKind::Pip, general), general);
+        assert_eq!(time_limit(BackendKind::Npm, general), general);
+        assert_eq!(time_limit(BackendKind::Pip, general), INDEX_MIN);
         assert_eq!(
             time_limit(BackendKind::WindowsUpdate, general),
             WINDOWS_UPDATE_MIN

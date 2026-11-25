@@ -1,14 +1,9 @@
 //! Shared infrastructure for GPU driver backends.
 //!
-//! All three GPU vendors (NVIDIA, AMD, Intel) need to enumerate display
-//! adapters and parse `pnputil` output.  This module centralises that logic so
-//! each vendor backend only has to implement scan/apply for its own update
-//! mechanism.
+//! Only NVIDIA publishes a driver feed a program can ask. AMD, Intel and
+//! Qualcomm drivers come through Windows Update.
 
-pub mod amd_gpu;
-pub mod intel_gpu;
 pub mod nvidia_gpu;
-pub mod qualcomm_gpu;
 
 use std::time::Duration;
 
@@ -62,9 +57,8 @@ pub struct GpuAdapter {
 
 /// The machine's display adapters, enumerated at most once per run.
 ///
-/// All four GPU backends call this during availability detection, and again
-/// during scan; the list does not change while the app runs, so it is
-/// memoized to a single query.
+/// Asked for during availability detection and again during scan; the list
+/// does not change while the app runs, so it is memoized to a single query.
 pub async fn enumerate_display_adapters() -> Vec<GpuAdapter> {
     static CACHE: tokio::sync::OnceCell<Vec<GpuAdapter>> = tokio::sync::OnceCell::const_new();
     CACHE
@@ -156,41 +150,6 @@ fn parse_hex_field(line: &str, prefix: &str) -> Option<u32> {
     let rest = &line[pos + prefix.len()..];
     let hex: String = rest.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
     u32::from_str_radix(&hex, 16).ok()
-}
-
-/// Read an installed driver version from the Windows registry.
-///
-/// GPU drivers store their version under vendor-specific registry keys:
-/// - NVIDIA: `HKLM\SYSTEM\CurrentControlSet\Services\nvlddmkm\Global\NVTweak`
-/// - AMD: `HKLM\SYSTEM\CurrentControlSet\Services\amdkmdag\Global`
-/// - Intel: `HKLM\SYSTEM\CurrentControlSet\Services\igfx\Global`
-/// - Qualcomm: `HKLM\SYSTEM\CurrentControlSet\Services\qcomdisp\Global`
-///
-/// The `registry_suffix` parameter selects the vendor-specific subkey path
-/// (e.g. `Global\NVTweak` for NVIDIA, `Global` for AMD/Intel).
-#[cfg(windows)]
-pub async fn read_driver_version_from_registry(
-    service_name: &str,
-    registry_suffix: &str,
-    value_name: &str,
-) -> Option<String> {
-    let script = format!(
-        r#"
-        $val = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\{}\{}' -Name '{}' -ErrorAction SilentlyContinue).{}
-        if ($val) {{ Write-Output $val }}
-        "#,
-        service_name, registry_suffix, value_name, value_name
-    );
-
-    let out = proc::powershell(&script, Duration::from_secs(10))
-        .await
-        .ok()?;
-    let version = out.stdout.trim().to_string();
-    if version.is_empty() {
-        None
-    } else {
-        Some(version)
-    }
 }
 
 #[cfg(test)]

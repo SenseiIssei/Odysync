@@ -458,7 +458,9 @@ async fn quarantine_file(path: &str) -> Result<String> {
         ));
     }
 
-    let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ").to_string();
+    let stamp = jiff::Timestamp::now()
+        .strftime("%Y%m%dT%H%M%SZ")
+        .to_string();
     let dest = quarantine_dir()?.join(quarantine_name(path, &stamp));
 
     let moved = move_file(&source, &dest)?;

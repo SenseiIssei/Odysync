@@ -52,32 +52,101 @@ impl Layout {
     /// width, so one CJK glyph occupies two columns while being a single char.
     /// Measuring in display width is the only unit that stays in step with the
     /// padding winget actually emits.
-    fn from_header(header: &str) -> Option<Layout> {
-        let mut starts = Vec::new();
+    ///
+    /// winget puts one space between columns, and no more when a label is the
+    /// widest thing in its column: `Version Available` is two columns. A label
+    /// can also contain a space (Korean writes "Available" in two words), and
+    /// then the same single space means nothing. Only the rows can tell, so
+    /// every reading is tried and the one that fits the most rows wins, and of
+    /// those the one with the most columns that hold something.
+    fn from_header(header: &str, rows: &[String]) -> Option<Layout> {
+        let mut sure = Vec::new();
+        let mut unsure = Vec::new();
         let mut col = 0usize;
-        let mut chars = header.chars().peekable();
-        let mut in_token = false;
-
-        while let Some(c) = chars.next() {
+        let mut spaces = usize::MAX;
+        for c in header.chars() {
             if c.is_whitespace() {
-                // A token ends only on two-or-more spaces, so header labels
-                // containing a single space (common in localised builds) stay
-                // one column.
-                if in_token && chars.peek().is_none_or(|n| n.is_whitespace()) {
-                    in_token = false;
+                spaces = spaces.saturating_add(1);
+            } else {
+                match spaces {
+                    0 => {}
+                    1 => unsure.push(col),
+                    _ => sure.push(col),
                 }
-            } else if !in_token {
-                in_token = true;
-                starts.push(col);
+                spaces = 0;
             }
             col += display_width(c);
         }
-
-        // Fewer than three columns is not a table we understand.
-        if starts.len() < 3 {
+        // Five columns have four gaps; with many more this is no table.
+        if unsure.len() > 8 {
             return None;
         }
-        Some(Layout { starts })
+
+        let mut best: Option<((usize, usize), Layout)> = None;
+        for choice in 0..(1u32 << unsure.len()) {
+            let chosen: Vec<usize> = unsure
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| choice & (1 << i) != 0)
+                .map(|(_, start)| *start)
+                .collect();
+            let mut starts = sure.clone();
+            starts.extend(&chosen);
+            starts.sort_unstable();
+            let layout = Layout { starts };
+            let Some(score) = layout.score(rows, &chosen) else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|(s, _)| score > *s) {
+                best = Some((score, layout));
+            }
+        }
+        best.map(|(_, layout)| layout)
+    }
+
+    /// How many of the first rows this layout can read, and how many columns
+    /// it has. `None` when it is no winget table, or when nothing speaks for a
+    /// column that only a single space sets off.
+    fn score(&self, rows: &[String], unsure: &[usize]) -> Option<(usize, usize)> {
+        // Fewer than three columns is not a table we understand.
+        if !(3..=5).contains(&self.starts.len()) {
+            return None;
+        }
+        let read: Vec<Vec<String>> = rows
+            .iter()
+            .take_while(|line| self.fits(line))
+            .map(|line| self.split(line))
+            .take_while(|cells| is_row(cells))
+            .collect();
+        // winget leaves a column out that no row fills, so an empty one means
+        // that a label was cut in two.
+        let filled = |i: usize| read.iter().any(|cells| !cells[i].is_empty());
+        let plausible = self
+            .starts
+            .iter()
+            .enumerate()
+            .all(|(i, start)| !unsure.contains(start) || filled(i));
+        (read.is_empty() || plausible).then_some((read.len(), self.starts.len()))
+    }
+
+    /// Whether a space precedes every column in this line, as it must.
+    fn fits(&self, line: &str) -> bool {
+        let mut col = 0usize;
+        let mut after_space = true;
+        for c in line.chars() {
+            // A wide glyph that straddles the boundary skips it, which is the
+            // same as text running into the next column.
+            let crosses = self
+                .starts
+                .iter()
+                .any(|s| (*s == col && !after_space) || (*s > col && *s < col + display_width(c)));
+            if crosses {
+                return false;
+            }
+            after_space = c.is_whitespace();
+            col += display_width(c);
+        }
+        true
     }
 
     /// Slice a data row into its columns at the header's display offsets.
@@ -148,6 +217,28 @@ fn looks_like_package_id(id: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
 }
 
+/// The character winget ends a cell with that did not fit.
+const ELLIPSIS: char = '\u{2026}';
+
+/// Whether winget cut this cell off. What is left of it is not a version and
+/// not an id.
+pub fn is_truncated(cell: &str) -> bool {
+    cell.ends_with(ELLIPSIS)
+}
+
+/// Is this the line of a package, even one whose id was cut off?
+fn is_row(cells: &[String]) -> bool {
+    let (Some(name), Some(id)) = (cells.first(), cells.get(1)) else {
+        return false;
+    };
+    // A cut can fall right behind a dot, which no whole id ends with.
+    let id = match id.strip_suffix(ELLIPSIS) {
+        Some(rest) => rest.trim_end_matches('.'),
+        None => id,
+    };
+    !name.is_empty() && looks_like_package_id(id)
+}
+
 /// True for the run of dashes winget prints under the header.
 fn is_separator(line: &str) -> bool {
     let t = line.trim();
@@ -186,23 +277,24 @@ fn parse_cells(output: &str) -> Vec<Vec<String>> {
         _ => return Vec::new(),
     };
 
-    let Some(layout) = Layout::from_header(&lines[sep_idx - 1]) else {
+    // A blank line ends the table. winget appends a *second* table for
+    // packages needing explicit targeting, and its header row would otherwise
+    // be parsed as a package named "Name" with id "Id".
+    let body = &lines[sep_idx + 1..];
+    let end = body
+        .iter()
+        .position(|l| l.trim().is_empty() || is_separator(l))
+        .unwrap_or(body.len());
+    let body = &body[..end];
+
+    let Some(layout) = Layout::from_header(&lines[sep_idx - 1], body) else {
         return Vec::new();
     };
 
     let mut rows = Vec::new();
 
-    for line in &lines[sep_idx + 1..] {
-        // A blank line ends the table. winget appends a *second* table for
-        // packages needing explicit targeting, and its header row would
-        // otherwise be parsed as a package named "Name" with id "Id".
-        if line.trim().is_empty() || is_separator(line) {
-            break;
-        }
-
+    for line in body {
         let cols = layout.split(line);
-        let name = cols.first().cloned().unwrap_or_default();
-        let id = cols.get(1).cloned().unwrap_or_default();
 
         // The table ends at the first line that is not a package row.
         //
@@ -215,8 +307,12 @@ fn parse_cells(output: &str) -> Vec<Vec<String>> {
         //
         // A winget PackageIdentifier has a narrow, ASCII-only shape, which is
         // what separates real rows from wrapped prose in any language.
-        if name.is_empty() || !looks_like_package_id(&id) {
+        if !is_row(&cols) {
             break;
+        }
+        // A row whose id was cut off cannot be acted on. The ones after it can.
+        if is_truncated(&cols[1]) {
+            continue;
         }
 
         rows.push(cols);
@@ -539,5 +635,87 @@ Mystery App          Vendor.Mystery          Unknown      3.0.0        winget
         let rows = parse(out);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].version, "Unknown");
+    }
+
+    #[test]
+    fn a_label_that_is_the_widest_thing_in_its_column_leaves_one_space() {
+        // Layout from winget's TableOutput.cpp: every column is as wide as its
+        // widest cell, label included, plus one space.
+        // https://github.com/microsoft/winget-cli/blob/master/src/AppInstallerCLICore/TableOutput.cpp
+        let out = "\
+Name  Id        Version Available Source
+----------------------------------------
+7-Zip 7zip.7zip 23.01   24.09     winget
+jq    jqlang.jq 1.6     1.7.1     winget
+2 upgrades available.
+";
+        for text in [out.to_string(), out.replace('\n', "\r\n")] {
+            let rows = parse(&text);
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0].name, "7-Zip");
+            assert_eq!(rows[0].id, "7zip.7zip");
+            assert_eq!(rows[0].version, "23.01");
+            assert_eq!(rows[0].available, "24.09");
+            assert_eq!(rows[0].source, "winget");
+            assert_eq!(rows[1].version, "1.6");
+            assert_eq!(rows[1].available, "1.7.1");
+        }
+    }
+
+    #[test]
+    fn a_label_of_two_words_stays_one_column() {
+        // Korean winget: "Id" and "Available" are two words each. Every glyph
+        // is two columns wide.
+        let out = "\
+\u{c774}\u{b984}            \u{c7a5}\u{ce58} ID         \u{bc84}\u{c804}  \u{c0ac}\u{c6a9} \u{ac00}\u{b2a5} \u{c6d0}\u{bcf8}
+-----------------------------------------------------
+Mozilla Firefox Mozilla.Firefox 140.0 141.0     winget
+7-Zip           7zip.7zip       23.01 24.9      winget
+";
+        for text in [out.to_string(), out.replace('\n', "\r\n")] {
+            let rows = parse(&text);
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0].id, "Mozilla.Firefox");
+            assert_eq!(rows[0].version, "140.0");
+            assert_eq!(rows[0].available, "141.0");
+            assert_eq!(rows[0].source, "winget");
+            assert_eq!(rows[1].available, "24.9");
+        }
+    }
+
+    #[test]
+    fn a_cut_off_id_skips_only_its_own_row() {
+        let out = "\
+Name                 Id                      Version      Available    Source
+-------------------------------------------------------------------------------
+7-Zip                7zip.7zip               23.01        24.09        winget
+Some long package    Vendor.AVeryLongPackag\u{2026} 1.0.0        1.1.0        winget
+Another one          Vendor.AnotherLong.Pa.\u{2026} 1.0.0        1.1.0        winget
+Mozilla Firefox      Mozilla.Firefox         140.0.1      141.0        winget
+4 upgrades available.
+";
+        for text in [out.to_string(), out.replace('\n', "\r\n")] {
+            let rows = parse(&text);
+            let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+            assert_eq!(ids, ["7zip.7zip", "Mozilla.Firefox"]);
+        }
+        assert!(is_truncated("1.2.3\u{2026}"));
+        assert!(!is_truncated("1.2.3"));
+    }
+
+    #[test]
+    fn a_cut_off_label_is_still_a_column() {
+        // winget shortens the widest column first, and the label with it.
+        let out = "\
+Name         Id             Ver\u{2026} Ava\u{2026} Source
+------------------------------------------
+Some App Na\u{2026} Vendor.SomeApp 1.0  1.1  winget
+";
+        let rows = parse(out);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "Vendor.SomeApp");
+        assert_eq!(rows[0].version, "1.0");
+        assert_eq!(rows[0].available, "1.1");
+        assert_eq!(rows[0].source, "winget");
     }
 }
