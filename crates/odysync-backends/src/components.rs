@@ -427,7 +427,7 @@ mod windows_impl {
             )
             .await?;
             let path = file.to_string_lossy().to_string();
-            let out = odysync_core::proc::run(&path, &args, INSTALL_TIMEOUT).await;
+            let out = odysync_core::proc::run_installer(&path, &args, INSTALL_TIMEOUT).await;
             drop(lock);
             let out = out?;
             // 1638: a newer version is already installed — for "install the

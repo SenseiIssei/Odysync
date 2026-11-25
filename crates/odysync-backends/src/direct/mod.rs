@@ -449,6 +449,7 @@ pub mod windows_apply {
     use sha2::{Digest, Sha256};
 
     use super::*;
+    use crate::guard;
 
     /// A digest the publisher published for a download.
     #[derive(Debug, Clone, Copy)]
@@ -585,6 +586,9 @@ pub mod windows_apply {
             });
         }
 
+        // The scan may be hours old, and many programs update themselves.
+        guard::still_older(candidate, app.display_version.as_deref())?;
+
         // Never replace files under a running program.
         refuse_if_running(&entry, &app).await?;
 
@@ -670,7 +674,7 @@ pub mod windows_apply {
         };
 
         tracing::info!(app = %entry.id, version = %release.version, "running installer");
-        let out = odysync_core::proc::run(&program, &args, INSTALL_TIMEOUT).await;
+        let out = odysync_core::proc::run_installer(&program, &args, INSTALL_TIMEOUT).await;
         drop(lock);
         let out = out?;
 

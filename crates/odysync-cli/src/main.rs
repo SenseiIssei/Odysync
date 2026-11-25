@@ -183,7 +183,8 @@ enum Command {
         /// Task name (for later removal).
         #[arg(long, default_value = odysync_backends::scheduler::DEFAULT_TASK_NAME)]
         task_name: String,
-        /// Extra arguments to pass to `odysync apply` (or `care`).
+        /// Extra arguments to pass to `odysync apply` (or `care`), one per
+        /// `--arg`: `--arg=--only --arg=vscode`.
         #[arg(long = "arg")]
         extra_args: Vec<String>,
 
@@ -904,6 +905,7 @@ async fn run(cli: Cli) -> Result<u8> {
                 Ok(0)
             }
             Some(ComponentAction::Install { id }) => {
+                let _lock = odysync_core::ApplyLock::acquire()?;
                 match odysync_backends::components::install(&id).await {
                     Ok(message) => {
                         println!("{message}");
@@ -1562,6 +1564,7 @@ async fn run_driver_action(action: DriverAction, json: bool, style: &Style) -> R
         }
 
         DriverAction::Rollback { to } => {
+            let _lock = odysync_core::ApplyLock::acquire()?;
             let report = driver_backup::restore(&to).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1654,7 +1657,7 @@ pub(crate) async fn run_updates(
     restore_point: bool,
 ) -> Result<RunReport> {
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
 
     let _lock = if dry_run {
         None
@@ -1663,18 +1666,7 @@ pub(crate) async fn run_updates(
     };
 
     let cancel = Arc::new(AtomicBool::new(false));
-    let flag = Arc::clone(&cancel);
-    let ctrl_c = tokio::spawn(async move {
-        while tokio::signal::ctrl_c().await.is_ok() {
-            if flag.swap(true, Ordering::Relaxed) {
-                // Asked twice: they mean it.
-                std::process::exit(130);
-            }
-            eprintln!(
-                "\nStopping after the package being installed. Press Ctrl-C again to quit now."
-            );
-        }
-    });
+    let _installing = interrupt::Installing::begin(Arc::clone(&cancel));
 
     let refs: Vec<&dyn Backend> = backends.iter().map(|b| b.as_ref()).collect();
     let mut runner = Runner::new(refs, dry_run)
@@ -1689,8 +1681,58 @@ pub(crate) async fn run_updates(
         .run_with_progress(plan, &mut report, restore_point, Some(&progress))
         .await;
     progress.clear();
-    ctrl_c.abort();
     Ok(report)
+}
+
+/// What Ctrl-C does.
+///
+/// Once anything in a process has asked for the signal, its default (end the
+/// process) is gone for good, so a listener that comes and goes with each
+/// install would leave a daemon that can no longer be stopped. There is one
+/// listener, and it ends the process whenever nothing is being installed.
+mod interrupt {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, Once};
+
+    static CURRENT: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+    static LISTENER: Once = Once::new();
+
+    /// While this lives, Ctrl-C stops after the current package.
+    pub struct Installing(());
+
+    impl Installing {
+        pub fn begin(cancel: Arc<AtomicBool>) -> Self {
+            *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(cancel);
+            LISTENER.call_once(|| {
+                tokio::spawn(async {
+                    while tokio::signal::ctrl_c().await.is_ok() {
+                        if should_exit() {
+                            std::process::exit(130);
+                        }
+                        eprintln!(
+                            "\nStopping after the package being installed. Press Ctrl-C again \
+                             to quit now."
+                        );
+                    }
+                });
+            });
+            Self(())
+        }
+    }
+
+    impl Drop for Installing {
+        fn drop(&mut self) {
+            *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+    }
+
+    /// Nothing is being installed, or it was asked for twice.
+    pub fn should_exit() -> bool {
+        match &*CURRENT.lock().unwrap_or_else(|e| e.into_inner()) {
+            None => true,
+            Some(cancel) => cancel.swap(true, Ordering::Relaxed),
+        }
+    }
 }
 
 /// One line on the terminal that says what is happening.
@@ -1856,6 +1898,27 @@ mod tests {
     fn the_command_line_is_consistent() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn ctrl_c_ends_the_process_unless_something_is_being_installed() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            assert!(interrupt::should_exit());
+            let flag = Arc::new(AtomicBool::new(false));
+            let installing = interrupt::Installing::begin(Arc::clone(&flag));
+            assert!(!interrupt::should_exit(), "the first one only asks");
+            assert!(flag.load(Ordering::Relaxed));
+            assert!(interrupt::should_exit(), "the second one means it");
+            drop(installing);
+            assert!(interrupt::should_exit());
+        });
     }
 
     /// What the scheduler registers must be something the command accepts.

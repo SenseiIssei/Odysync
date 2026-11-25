@@ -15,8 +15,9 @@ const SPACE_PER_DOWNLOADED_BYTE: u64 = 3;
 
 /// Why there is not enough room for a download of `size` bytes, if so.
 ///
-/// `None` as well when the free space cannot be read: that is no reason to
-/// keep updates away from a machine.
+/// `None` as well when the free space cannot be read, or says nothing (a
+/// read-only system image reports none at all): that is no reason to keep
+/// updates away from a machine.
 pub fn not_enough_space(size: Option<u64>) -> Option<String> {
     let drive = system_drive();
     shortage(free_space(&drive)?, size).map(|s| format!("{s} on {}", drive.display()))
@@ -42,7 +43,9 @@ fn system_drive() -> PathBuf {
         let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
         PathBuf::from(format!("{drive}\\"))
     } else {
-        PathBuf::from("/")
+        // Where packages are downloaded and unpacked. `/` itself is a
+        // read-only image on macOS and on immutable Linux systems.
+        PathBuf::from("/var")
     }
 }
 
@@ -54,7 +57,8 @@ fn free_space(path: &Path) -> Option<u64> {
         let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
         let mut buf = unsafe { std::mem::zeroed::<libc::statvfs>() };
         let ret = unsafe { libc::statvfs(c_path.as_ptr(), &mut buf) };
-        if ret == 0 {
+        let says_nothing = buf.f_blocks == 0 || (buf.f_flag & libc::ST_RDONLY) != 0;
+        if ret == 0 && !says_nothing {
             Some(buf.f_bavail as u64 * buf.f_frsize as u64)
         } else {
             None

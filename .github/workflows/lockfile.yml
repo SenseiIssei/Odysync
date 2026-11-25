@@ -96,9 +96,11 @@ jobs:
           fi
 
           if [ -n "$pr" ] && [ "$ci" = passed ]; then
-            gh pr merge "$pr" -R "$REPO" --squash --match-head-commit "$sha" --delete-branch
-            echo "Merged #$pr."
-            exit 0
+            if gh pr merge "$pr" -R "$REPO" --squash --match-head-commit "$sha" --delete-branch; then
+              echo "Merged #$pr."
+              exit 0
+            fi
+            ci="passed, but the merge was refused"
           fi
 
           # Someone has to look: say so where it is seen.

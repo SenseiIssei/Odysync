@@ -138,8 +138,12 @@ fn xml_text(text: &str) -> String {
 /// dropped for good, and a run in progress is **stopped** when a laptop is
 /// unplugged, in the middle of whatever installer was running.
 #[cfg(any(windows, test))]
-fn task_xml(spec: &ScheduleSpec, program: &str) -> Result<String> {
+fn task_xml(spec: &ScheduleSpec, program: &str, now: jiff::civil::DateTime) -> Result<String> {
+    // The next time this hour comes round. A start in the past would count as
+    // missed, and `StartWhenAvailable` would make up for it right away: whoever
+    // chose nine in the morning at three in the afternoon would see it install.
     let (h, m) = parse_time(&spec.time)?;
+    let start = next_start(now, h, m)?;
     let schedule = match spec.frequency {
         ScheduleFrequency::Daily => {
             "<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>".to_string()
@@ -154,7 +158,7 @@ fn task_xml(spec: &ScheduleSpec, program: &str) -> Result<String> {
   <RegistrationInfo><Description>Odysync scheduled run</Description></RegistrationInfo>
   <Triggers>
     <CalendarTrigger>
-      <StartBoundary>2026-01-05T{h:02}:{m:02}:00</StartBoundary>
+      <StartBoundary>{start}</StartBoundary>
       {schedule}
     </CalendarTrigger>
   </Triggers>
@@ -181,8 +185,83 @@ fn task_xml(spec: &ScheduleSpec, program: &str) -> Result<String> {
   </Actions>
 </Task>"#,
         command = xml_text(program),
-        arguments = xml_text(&spec.args().join(" ")),
+        arguments = xml_text(
+            &spec
+                .args()
+                .iter()
+                .map(|a| windows_quoted(a))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+        start = start.strftime("%Y-%m-%dT%H:%M:%S"),
     ))
+}
+
+/// The next `h:m` after `now`, in the same local time.
+#[cfg(any(windows, test))]
+fn next_start(now: jiff::civil::DateTime, h: i32, m: i32) -> Result<jiff::civil::DateTime> {
+    use jiff::ToSpan;
+    let bad = |e: jiff::Error| Error::Config(format!("could not work out the first run: {e}"));
+    let time = jiff::civil::Time::new(h as i8, m as i8, 0, 0).map_err(bad)?;
+    let today = now.date().to_datetime(time);
+    if today > now {
+        Ok(today)
+    } else {
+        today.checked_add(1.day()).map_err(bad)
+    }
+}
+
+/// Local time as Windows shows it.
+#[cfg(windows)]
+fn local_now() -> Result<jiff::civil::DateTime> {
+    // SAFETY: no arguments, returns a plain structure.
+    let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    jiff::civil::DateTime::new(
+        t.wYear as i16,
+        t.wMonth as i8,
+        t.wDay as i8,
+        t.wHour as i8,
+        t.wMinute as i8,
+        t.wSecond as i8,
+        0,
+    )
+    .map_err(|e| Error::Config(format!("the clock shows no valid time: {e}")))
+}
+
+/// One argument of a Windows command line, quoted if it has to be.
+#[cfg(any(windows, test))]
+fn windows_quoted(arg: &str) -> String {
+    if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+        return arg.to_string();
+    }
+    // Backslashes count double only in front of a quote.
+    let mut out = String::from("\"");
+    let mut backslashes = 0;
+    for c in arg.chars() {
+        match c {
+            '\\' => backslashes += 1,
+            '"' => {
+                out.push_str(&"\\".repeat(backslashes + 1));
+                backslashes = 0;
+            }
+            _ => backslashes = 0,
+        }
+        out.push(c);
+    }
+    out.push_str(&"\\".repeat(backslashes));
+    out.push('"');
+    out
+}
+
+/// One argument of a systemd command line.
+#[cfg(any(target_os = "linux", test))]
+fn systemd_quoted(arg: &str) -> String {
+    let escaped = arg
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('%', "%%")
+        .replace('$', "$$");
+    format!("\"{escaped}\"")
 }
 
 /// Resolve the path to the current executable, for the scheduler to launch.
@@ -197,7 +276,7 @@ fn current_exe() -> Result<String> {
 #[cfg(windows)]
 pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
     check_task_name(&spec.task_name)?;
-    let xml = task_xml(spec, &spec.program()?)?;
+    let xml = task_xml(spec, &spec.program()?, local_now()?)?;
 
     // schtasks reads the definition from a file, in the UTF-16 it declares.
     let dir = crate::direct::http::DownloadDir::new("schedule")?;
@@ -396,10 +475,9 @@ pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
     let service_name = format!("dev.odysync.{unit}.service");
     let timer_name = format!("dev.odysync.{unit}.timer");
 
-    // systemd splits on spaces and expands `%`; quoting covers the first.
     let exec_start = std::iter::once(&exe)
         .chain(args.iter())
-        .map(|a| format!("\"{}\"", a.replace('%', "%%").replace('"', "\\\"")))
+        .map(|a| systemd_quoted(a))
         .collect::<Vec<_>>()
         .join(" ");
 
@@ -601,8 +679,9 @@ mod tests {
     #[test]
     fn the_task_survives_a_missed_start_and_a_pulled_plug() {
         let mut spec = spec(ScheduledCommand::Care);
-        spec.extra_args = vec!["--config".into(), r#""C:\R&D <x>\c.json""#.into()];
-        let xml = task_xml(&spec, r"C:\Program Files\Odysync\odysync.exe").unwrap();
+        spec.extra_args = vec!["--config".into(), r"C:\R&D <x>\c.json".into()];
+        let now = jiff::civil::date(2026, 11, 25).at(15, 0, 0, 0);
+        let xml = task_xml(&spec, r"C:\Program Files\Odysync\odysync.exe", now).unwrap();
         let doc =
             roxmltree::Document::parse(xml.split_once("?>").expect("declaration").1.trim_start())
                 .expect("well-formed");
@@ -619,7 +698,8 @@ mod tests {
         assert_eq!(text("AllowHardTerminate"), "false");
         assert_eq!(text("MultipleInstancesPolicy"), "IgnoreNew");
         assert_eq!(text("RunLevel"), "LeastPrivilege");
-        assert_eq!(text("StartBoundary"), "2026-01-05T09:00:00");
+        // Chosen at three in the afternoon: tomorrow, not right now.
+        assert_eq!(text("StartBoundary"), "2026-11-26T09:00:00");
         assert_eq!(text("DaysInterval"), "1");
         assert_eq!(text("Command"), r"C:\Program Files\Odysync\odysync.exe");
         assert_eq!(
@@ -628,9 +708,28 @@ mod tests {
         );
 
         spec.frequency = ScheduleFrequency::Weekly;
-        assert!(task_xml(&spec, "x").unwrap().contains("<Monday />"));
+        assert!(task_xml(&spec, "x", now).unwrap().contains("<Monday />"));
+        spec.time = "15:01".into();
+        assert!(
+            task_xml(&spec, "x", now)
+                .unwrap()
+                .contains("2026-11-25T15:01:00")
+        );
         spec.time = "25:00".into();
-        assert!(task_xml(&spec, "x").is_err());
+        assert!(task_xml(&spec, "x", now).is_err());
+    }
+
+    #[test]
+    fn arguments_survive_the_schedulers_command_lines() {
+        assert_eq!(windows_quoted("--yes"), "--yes");
+        assert_eq!(windows_quoted("a b"), r#""a b""#);
+        assert_eq!(windows_quoted(r"C:\a b\"), r#""C:\a b\\""#);
+        assert_eq!(windows_quoted(r#"a"b"#), r#""a\"b""#);
+        assert_eq!(windows_quoted(r#"a\"b"#), r#""a\\\"b""#);
+        assert_eq!(windows_quoted(""), r#""""#);
+        assert_eq!(systemd_quoted("--yes"), r#""--yes""#);
+        assert_eq!(systemd_quoted("/home/x y/50%$A"), r#""/home/x y/50%%$$A""#);
+        assert_eq!(systemd_quoted(r#"a"b\c"#), r#""a\"b\\c""#);
     }
 
     #[test]

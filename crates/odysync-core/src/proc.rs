@@ -191,6 +191,17 @@ fn build<S: AsRef<OsStr>>(program: &str, args: &[S]) -> Command {
         }
     }
 
+    #[cfg(unix)]
+    // SAFETY: `setsid` is async-signal-safe and touches nothing of ours. It
+    // fails only for a process that already leads a group, which a freshly
+    // forked one does not.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+
     // Force machine-readable, untranslated output. Parsing localised package
     // manager text was a recurring source of bugs in the previous version.
     cmd.env("LC_ALL", "C").env("LANG", "C");
@@ -241,8 +252,8 @@ fn collected(buffer: &Mutex<Vec<u8>>) -> String {
 /// just a launcher (`npm.cmd` runs node, `choco` runs the installer), and what
 /// it started kept running after the timeout that was supposed to end it.
 ///
-/// The job carries no limits: whatever is still running when the program has
-/// exited on its own (an app an installer started) is left alone.
+/// Whatever is still running when the program has exited on its own (an app an
+/// installer started) is left alone, and may leave the job.
 #[cfg(windows)]
 struct ProcessTree {
     job: windows::Win32::Foundation::HANDLE,
@@ -259,13 +270,27 @@ unsafe impl Sync for ProcessTree {}
 impl ProcessTree {
     fn of(child: &tokio::process::Child) -> Option<Self> {
         use windows::Win32::Foundation::{CloseHandle, HANDLE};
-        use windows::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+        use windows::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
 
         let process = HANDLE(child.raw_handle()?);
         // SAFETY: the process handle belongs to `child`, which outlives this
         // call; the job handle is closed below or in `drop`.
         unsafe {
             let job = CreateJobObjectW(None, None).ok()?;
+            // Without this, a program that starts something outside its job
+            // (some launchers and updaters do) would be refused.
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+            let _ = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&limits).cast(),
+                size_of_val(&limits) as u32,
+            );
             if AssignProcessToJobObject(job, process).is_err() {
                 let _ = CloseHandle(job);
                 return None;
@@ -277,6 +302,69 @@ impl ProcessTree {
     /// The program exited on its own; leave what it started alone.
     fn release(&mut self) {
         self.armed = false;
+    }
+
+    /// How many of its processes are still running.
+    fn running(&self) -> u32 {
+        use windows::Win32::System::JobObjects::{
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation,
+            QueryInformationJobObject,
+        };
+        let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        // SAFETY: the structure is a live local of the size that is named.
+        let asked = unsafe {
+            QueryInformationJobObject(
+                Some(self.job),
+                JobObjectBasicAccountingInformation,
+                std::ptr::from_mut(&mut info).cast(),
+                size_of_val(&info) as u32,
+                None,
+            )
+        };
+        if asked.is_ok() {
+            info.ActiveProcesses
+        } else {
+            0
+        }
+    }
+}
+
+/// On Unix the program leads a session of its own, and its process group is
+/// what gets stopped.
+///
+/// Its own session also keeps Ctrl-C in the terminal from reaching it: that
+/// would end apt in the middle of unpacking while Odysync says it is waiting
+/// for it. The price is that nothing it runs can ask for a password on the
+/// terminal; it fails instead.
+#[cfg(unix)]
+struct ProcessTree {
+    group: i32,
+    armed: bool,
+}
+
+#[cfg(unix)]
+impl ProcessTree {
+    fn of(child: &tokio::process::Child) -> Option<Self> {
+        Some(Self {
+            group: i32::try_from(child.id()?).ok()?,
+            armed: true,
+        })
+    }
+
+    fn release(&mut self) {
+        self.armed = false;
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        if self.armed {
+            // SAFETY: a plain system call; the group is the child's own.
+            unsafe {
+                libc::killpg(self.group, libc::SIGKILL);
+            }
+        }
     }
 }
 
@@ -298,8 +386,34 @@ impl Drop for ProcessTree {
 /// Run `program` with `args`, capturing output, killed after `timeout`.
 ///
 /// On timeout, and when the future is dropped (a cancelled scan), the program
-/// is stopped; on Windows together with everything it started.
+/// is stopped together with everything it started.
 pub async fn run<S: AsRef<OsStr>>(program: &str, args: &[S], timeout: Duration) -> Result<Output> {
+    run_and_settle(program, args, timeout, Duration::ZERO).await
+}
+
+/// How long an installer's own children may go on after it exited.
+pub const INSTALLER_SETTLE: Duration = Duration::from_secs(3 * 60);
+
+/// [`run`] for an installer.
+///
+/// Some start the real setup and return at once. What the caller does next
+/// (read the version back, delete the download, start the next installer) must
+/// wait for that one too, so this waits for everything the installer started,
+/// for at most [`INSTALLER_SETTLE`]: an app that was launched stays open.
+pub async fn run_installer<S: AsRef<OsStr>>(
+    program: &str,
+    args: &[S],
+    timeout: Duration,
+) -> Result<Output> {
+    run_and_settle(program, args, timeout, INSTALLER_SETTLE).await
+}
+
+async fn run_and_settle<S: AsRef<OsStr>>(
+    program: &str,
+    args: &[S],
+    timeout: Duration,
+    settle: Duration,
+) -> Result<Output> {
     let mut cmd = build(program, args);
     cmd.kill_on_drop(true);
 
@@ -310,7 +424,7 @@ pub async fn run<S: AsRef<OsStr>>(program: &str, args: &[S], timeout: Duration) 
             Error::Io(e)
         }
     })?;
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     let mut tree = ProcessTree::of(&child);
 
     // Both pipes are drained while waiting. Reading them one after the other
@@ -339,10 +453,19 @@ pub async fn run<S: AsRef<OsStr>>(program: &str, args: &[S], timeout: Duration) 
             });
         }
     };
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     if let Some(tree) = &mut tree {
         tree.release();
     }
+    #[cfg(windows)]
+    if let Some(tree) = &tree {
+        let until = tokio::time::Instant::now() + settle;
+        while tree.running() > 0 && tokio::time::Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = settle;
 
     // Dropping the set ends readers that are still waiting on a pipe some
     // left-behind child holds open.
@@ -555,6 +678,60 @@ mod tests {
             "took {:?}",
             started.elapsed()
         );
+    }
+
+    /// An installer that hands over to its real setup and returns is not done
+    /// until that one is.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn an_installer_is_done_when_what_it_started_is_done() {
+        let dir = tempfile::tempdir().unwrap();
+        let done = dir.path().join("done.txt");
+        // Files, because quotes inside `cmd /c` arguments do not survive.
+        let setup = dir.path().join("setup.cmd");
+        std::fs::write(
+            &setup,
+            format!(
+                "@ping -n 4 127.0.0.1 >nul
+@echo x> \"{}\"
+",
+                done.display()
+            ),
+        )
+        .unwrap();
+        let stub = dir.path().join("stub.cmd");
+        std::fs::write(
+            &stub,
+            format!(
+                "@start /b cmd /c \"{}\"
+",
+                setup.display()
+            ),
+        )
+        .unwrap();
+        let stub = stub.to_string_lossy().into_owned();
+        let out = run_installer("cmd", &["/c", &stub], Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(out.success());
+        assert!(done.exists(), "returned before the real setup had finished");
+    }
+
+    /// Ctrl-C in the terminal goes to its foreground group; what Odysync runs
+    /// must not be in it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn programs_run_in_a_session_of_their_own() {
+        let out = run(
+            "sh",
+            &["-c", "ps -o pgid= -p $$; echo $$"],
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        let ids: Vec<&str> = out.stdout.split_whitespace().collect();
+        assert_eq!(ids.len(), 2, "{:?}", out.stdout);
+        assert_eq!(ids[0], ids[1], "the program leads its own group");
     }
 
     /// What a launcher started must not outlive the timeout that ended it.

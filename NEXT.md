@@ -55,11 +55,11 @@ reconstructable from the repository alone. The plan is in
   always as "could not be determined".
 - **Arch** is scan only. pacman has no supported way to update one package.
 - **winget** rows with `< 1.2.3` as the installed version are refused.
-- **Homebrew** cask versions with a comma (`1.2,9`) are refused as unreadable.
+- **Homebrew casks that install a system package** ask for a password, which
+  nothing Odysync starts can do any more: programs run in a session of their own
+  so that Ctrl-C does not reach them. They fail; `brew upgrade` by hand works.
 - **PowerShell modules** from an untrusted gallery may fail now that `-Force`
   is gone.
-- **Ctrl-C on Linux and macOS** also reaches the package manager that is
-  running, since both belong to the terminal's process group.
 - **The offline cache page** shows a cache nothing fills (A15).
 - **A console window** appears when a schedule runs on Windows (A9).
 

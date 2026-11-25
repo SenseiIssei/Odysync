@@ -55,8 +55,9 @@ backend cannot reach into a front-end, and `core` cannot reach into a backend.
 | Always install the approved version | `backends::*::apply` | `--version <exact>` / `pkg=version`; refuses to run without one |
 | Confirm the update landed | `core::runner` | Reads the version back; exit code 0 alone is not accepted as success |
 | No console windows | `core::proc` | `CREATE_NO_WINDOW`, no shell, `--disable-interactivity` |
-| Nothing hangs forever | `core::proc`, `backends::scan` | Every spawn is time-boxed; on Windows a job object ends everything it started; every source has its own scan limit; Windows Update runs on a thread that can be left behind |
-| An installer never runs twice | `core::runner`, `core::error` | A timeout is never retried; the installed version is read back instead |
+| Nothing hangs forever | `core::proc`, `backends::scan` | Every spawn is time-boxed and ends with everything it started (a job object on Windows, a session of its own on Unix); every source has its own scan limit; Windows Update runs on a thread that can be left behind |
+| An installer never runs twice | `core::runner`, `core::error`, `core::proc` | A timeout is never retried; the installed version is read back instead. `run_installer` waits for what the installer started |
+| Never over something newer | `backends::guard`, every `apply` | What is installed is read again and must still be older |
 | One run at a time | `core::apply_lock` | An operating-system lock held by app, terminal or schedule |
 | Room on the disk | `core::health`, `core::runner` | Checked before every install |
 | Windows' own tools are Windows' own | `core::proc` | Full path from `GetSystemDirectoryW`, not from `PATH` |

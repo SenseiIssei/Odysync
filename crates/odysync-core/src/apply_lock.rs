@@ -28,11 +28,22 @@ impl ApplyLock {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = File::options()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(path)?;
+        let mut create = File::options();
+        create.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // Readable for everyone, and never through a link somebody else
+            // put there: the directory is shared.
+            create.mode(0o644).custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = match create.open(path) {
+            Ok(file) => file,
+            // Somebody else's, from a run as root or as another user. A lock
+            // needs no more than reading.
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => File::open(path)?,
+            Err(e) => return Err(e.into()),
+        };
         match file.try_lock() {
             Ok(()) => Ok(Self { _file: file }),
             Err(TryLockError::WouldBlock) => Err(Error::unavailable(
@@ -44,10 +55,18 @@ impl ApplyLock {
     }
 }
 
+/// One place for every user of the machine: an elevated run and an ordinary
+/// one can belong to different accounts.
 fn default_path() -> Result<PathBuf> {
-    directories::ProjectDirs::from("dev", "SenseiIssei", "Odysync")
-        .map(|d| d.data_local_dir().join("apply.lock"))
-        .ok_or_else(|| Error::Config("could not resolve the user data directory".into()))
+    if cfg!(windows) {
+        std::env::var_os("ProgramData")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .map(|p| p.join("Odysync").join("apply.lock"))
+            .ok_or_else(|| Error::Config("ProgramData is not set".into()))
+    } else {
+        Ok(PathBuf::from("/tmp/odysync-apply.lock"))
+    }
 }
 
 #[cfg(test)]
@@ -63,5 +82,16 @@ mod tests {
         assert!(err.to_string().contains("another Odysync"), "{err}");
         drop(first);
         ApplyLock::acquire_at(&path).expect("free again");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_link_is_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("victim");
+        let link = dir.path().join("apply.lock");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(ApplyLock::acquire_at(&link).is_err());
+        assert!(!target.exists());
     }
 }

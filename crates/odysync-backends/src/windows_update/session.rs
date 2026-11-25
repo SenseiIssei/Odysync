@@ -26,6 +26,7 @@
 
 use std::future::Future;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use odysync_core::error::{Error, Result};
@@ -301,6 +302,21 @@ pub fn explain_hresult(hr: i32) -> String {
     format!("{detail} (0x{code:08X})")
 }
 
+/// Set while an install is running, also after we stopped waiting for it.
+static INSTALLING: AtomicBool = AtomicBool::new(false);
+
+/// What to say when Windows needs longer than [`INSTALL_TIMEOUT`].
+///
+/// Not a timeout like any other: nothing was stopped, because nothing can stop
+/// it. Windows finishes on its own.
+fn still_working() -> Error {
+    Error::unavailable(
+        "Windows Update",
+        "Windows is still installing an update and continues in the background; \
+         check again when it has finished",
+    )
+}
+
 #[cfg(windows)]
 mod imp {
     use super::*;
@@ -536,7 +552,20 @@ mod imp {
     /// across the call: COM interfaces are not `Send`, and an offering can be
     /// superseded between scan and apply — in which case refusing is correct.
     pub async fn install(criteria: &'static str, key: String) -> Result<InstallOutcome> {
-        with_com("install", INSTALL_TIMEOUT, move || {
+        if INSTALLING.swap(true, Ordering::AcqRel) {
+            return Err(still_working());
+        }
+        /// Cleared when the work ends, not when we stop waiting for it.
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                INSTALLING.store(false, Ordering::Release);
+            }
+        }
+        let done = Done;
+
+        let result = with_com("install", INSTALL_TIMEOUT, move || {
+            let _done = done;
             let session = create_session()?;
             let searcher = unsafe { session.CreateUpdateSearcher() }
                 .map_err(|e| wua_err("could not create IUpdateSearcher", e))?;
@@ -636,7 +665,11 @@ mod imp {
                     .unwrap_or(false),
             })
         })
-        .await
+        .await;
+        match result {
+            Err(Error::CommandTimeout { .. }) => Err(still_working()),
+            other => other,
+        }
     }
 }
 

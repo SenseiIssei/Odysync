@@ -19,7 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Is the program running?" is asked again after the download, also works for
   programs whose location is not recorded, and stops the install when it cannot
   be answered.
-- An installer that ran into its time limit is never started a second time.
+- An installer that ran into its time limit is never started a second time, and
+  what it started is waited for. What is installed is read again right before:
+  a program that updated itself since the scan is not reinstalled or downgraded.
+- `4.2.8-p15` to `4.2.8` and `7.1-full_build` to `7.1` counted as upgrades.
 - Package ids and versions that could be read as options are refused.
 - cookie, url and other transitive fixes (RUSTSEC-2026-0594,
   RUSTSEC-2026-0592); chrono, which is no longer maintained, is replaced by

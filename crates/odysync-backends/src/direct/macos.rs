@@ -263,11 +263,12 @@ pub mod imp {
         client: &reqwest::Client,
         app: &MacApp,
         os: &str,
+        purpose: http::Purpose,
     ) -> Result<Option<sparkle::AppcastRelease>> {
         let Some(feed) = &app.feed_url else {
             return Ok(None);
         };
-        let xml = http::get_text(client, feed).await?;
+        let xml = http::get_text_for(client, feed, purpose).await?;
         let releases = sparkle::parse_appcast(&xml);
         Ok(sparkle::newest_compatible(&releases, os).filter(|r| {
             let lower = r.url.to_ascii_lowercase();
@@ -281,9 +282,9 @@ pub mod imp {
         // rather than trying to take the string.
         let os = os.as_str();
         let apps = sparkle_apps().await;
-        let lookups = apps
-            .iter()
-            .map(|app| async move { (app, latest_for(client, app, os).await) });
+        let lookups = apps.iter().map(|app| async move {
+            (app, latest_for(client, app, os, http::Purpose::Scan).await)
+        });
         let mut out = Vec::new();
         for (app, result) in futures::future::join_all(lookups).await {
             match result {
@@ -454,10 +455,10 @@ pub mod imp {
 
         // 1. The approved release, and the app closed.
         let os = os_version().await;
-        let release = latest_for(client, &app, &os)
+        let release = latest_for(client, &app, &os, http::Purpose::Install)
             .await?
             .ok_or_else(|| Error::unavailable("direct", "the feed no longer offers an update"))?;
-        let (_, available) =
+        let (installed, available) =
             sparkle::comparable_versions(app.short_version.as_deref(), &app.build, &release);
         if available.trim() != candidate.available.raw().trim() {
             return Err(refuse(
@@ -468,6 +469,8 @@ pub mod imp {
                 ),
             ));
         }
+        // Many apps update themselves between the scan and now.
+        crate::guard::still_older(candidate, Some(&installed))?;
         let ps = proc::run("ps", &["-axo", "comm="], TOOL_TIMEOUT).await?;
         if is_running(&app.path, &ps.stdout) {
             return Err(Error::unavailable(
@@ -525,6 +528,17 @@ pub mod imp {
                 return Err(refuse(
                     &app.name,
                     format!("the update is a different app ({})", new_info.bundle_id),
+                ));
+            }
+            // The archive must hold the release it was announced as: an older
+            // one would carry the same signatures.
+            if new_info.build.trim() != release.build.trim() {
+                return Err(refuse(
+                    &app.name,
+                    format!(
+                        "the download contains build {} instead of {}",
+                        new_info.build, release.build
+                    ),
                 ));
             }
             let new_s = new_app.display().to_string();

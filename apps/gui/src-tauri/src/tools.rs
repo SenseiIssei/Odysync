@@ -123,7 +123,13 @@ pub async fn components_status()
 }
 
 #[tauri::command]
-pub async fn component_install(id: String) -> Result<String, String> {
+pub async fn component_install(
+    id: String,
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<String, String> {
+    // An installer like any other: one at a time, and quitting asks first.
+    let _claim = state.claim_apply()?;
+    let _lock = odysync_core::ApplyLock::acquire().map_err(|e| e.to_string())?;
     odysync_backends::components::install(&id)
         .await
         .map_err(|e| e.to_string())
@@ -212,9 +218,14 @@ pub struct DriverRestoreDto {
 }
 
 #[tauri::command]
-pub async fn driver_backup_restore(id: String) -> Result<DriverRestoreDto, String> {
+pub async fn driver_backup_restore(
+    id: String,
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<DriverRestoreDto, String> {
+    let _claim = state.claim_apply()?;
     #[cfg(windows)]
     {
+        let _lock = odysync_core::ApplyLock::acquire().map_err(|e| e.to_string())?;
         if !odysync_core::platform::is_elevated() {
             return Err("restoring drivers needs administrator rights — use Run as admin".into());
         }

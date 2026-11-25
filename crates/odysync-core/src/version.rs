@@ -75,7 +75,9 @@ const PRERELEASE_WORDS: &[&str] = &[
 ];
 
 /// Words that mark a later build of the same version.
-const PATCH_WORDS: &[&str] = &["post", "p", "pl", "patch", "sp", "r", "rev", "u", "update"];
+const PATCH_WORDS: &[&str] = &[
+    "post", "p", "pl", "patch", "sp", "r", "rev", "u", "update", "hotfix",
+];
 
 /// What a suffix such as the `rc1` in `0rc1` says about its version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -184,14 +186,42 @@ impl Segment {
         }
     }
 
-    /// Order two pre-release segments the way semver does, except that digits
-    /// inside a word count as numbers (`rc9` before `rc10`).
-    fn compare_pre(&self, other: &Segment) -> Ordering {
+    /// Order two segments after the hyphen, or `None` when their order has no
+    /// agreed meaning.
+    ///
+    /// Semver orders any two words by their letters. That makes one commit
+    /// hash "newer" than another and `x64` newer than `arm64`, so words only
+    /// compare when they are known markers or differ in nothing but a number.
+    fn compare_pre(&self, other: &Segment) -> Option<Ordering> {
         match (self, other) {
-            (Segment::Num(a), Segment::Num(b)) => a.cmp(b),
-            (Segment::Text(a), Segment::Text(b)) => natural_cmp(a, b),
-            (Segment::Num(_), Segment::Text(_)) => Ordering::Less,
-            (Segment::Text(_), Segment::Num(_)) => Ordering::Greater,
+            (Segment::Num(a), Segment::Num(b)) => Some(a.cmp(b)),
+            (Segment::Text(a), Segment::Text(b)) => {
+                if a == b {
+                    return Some(Ordering::Equal);
+                }
+                let word = |t: &str| {
+                    let n = t.bytes().take_while(u8::is_ascii_alphabetic).count();
+                    let (word, number) = t.split_at(n);
+                    (!word.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
+                        .then(|| word.to_string())
+                };
+                if word(a).is_some() && word(a) == word(b) {
+                    return Some(natural_cmp(a, b));
+                }
+                let kind = |t: &str| classify_suffix(split_leading_digits(t).1);
+                match (kind(a)?, kind(b)?) {
+                    (SuffixKind::Prerelease, SuffixKind::Prerelease) => Some(natural_cmp(a, b)),
+                    (x, y) if x != y => Some(x.cmp(&y)),
+                    _ => None,
+                }
+            }
+            // `rc.1` before `rc.x`: semver, and between two pre-releases only.
+            (Segment::Num(_), Segment::Text(t)) => Segment::Text(t.clone())
+                .marks_prerelease()
+                .then_some(Ordering::Less),
+            (Segment::Text(t), Segment::Num(_)) => Segment::Text(t.clone())
+                .marks_prerelease()
+                .then_some(Ordering::Greater),
         }
     }
 
@@ -205,6 +235,24 @@ impl Segment {
             }
         }
     }
+}
+
+/// What a whole suffix after the hyphen says: `rc.1`, `p15`, or nothing anyone
+/// agrees on (`4`, `x64`, `full_build`).
+fn classify_pre(pre: &[Segment]) -> Option<SuffixKind> {
+    let Some(first) = pre.first() else {
+        return Some(SuffixKind::None);
+    };
+    if pre.iter().any(Segment::marks_prerelease) {
+        return Some(SuffixKind::Prerelease);
+    }
+    let Segment::Text(text) = first else {
+        return None;
+    };
+    let n = text.bytes().take_while(u8::is_ascii_alphabetic).count();
+    let (word, number) = text.split_at(n);
+    (PATCH_WORDS.contains(&word) && number.bytes().all(|b| b.is_ascii_digit()))
+        .then_some(SuffixKind::Patch)
 }
 
 /// The pre-release marker in a vendor's commentary, if there is one: `Beta 2`
@@ -290,7 +338,8 @@ impl Version {
         };
 
         let release: Vec<Segment> = release_raw
-            .split(['.', '_'])
+            // Homebrew casks put a build number behind a comma: `4.31.0,157355`.
+            .split(['.', '_', ','])
             .filter(|s| !s.is_empty())
             .map(Segment::parse)
             .collect();
@@ -406,35 +455,28 @@ impl Version {
             }
         }
 
-        // Equal releases: absence of a pre-release wins (1.0.0 > 1.0.0-rc1).
-        // A suffix of only numbers is a pre-release to semver and a build
-        // revision to almost everyone else, so against a bare version its
-        // order is not knowable.
-        let only_numbers = |pre: &[Segment]| pre.iter().all(|s| matches!(s, Segment::Num(_)));
-        match (a_pre.is_empty(), b_pre.is_empty()) {
-            (true, true) => Some(Ordering::Equal),
-            (true, false) if only_numbers(b_pre) => None,
-            (false, true) if only_numbers(a_pre) => None,
-            (true, false) => Some(Ordering::Greater),
-            (false, true) => Some(Ordering::Less),
-            (false, false) => {
-                let len = a_pre.len().max(b_pre.len());
-                for i in 0..len {
-                    match (a_pre.get(i), b_pre.get(i)) {
-                        (Some(a), Some(b)) => match a.compare_pre(b) {
-                            Ordering::Equal => continue,
-                            non_eq => return Some(non_eq),
-                        },
-                        // A longer pre-release chain is the later one:
-                        // 1.0-rc.1 < 1.0-rc.1.2
-                        (Some(_), None) => return Some(Ordering::Greater),
-                        (None, Some(_)) => return Some(Ordering::Less),
-                        (None, None) => break,
-                    }
-                }
-                Some(Ordering::Equal)
+        // Equal releases. A pre-release comes before the bare version, a patch
+        // after it. Any other suffix against a bare version has no order
+        // everyone agrees on: `1.0.0-4` is a pre-release to semver and a build
+        // revision to almost everyone else.
+        if a_pre.is_empty() != b_pre.is_empty() {
+            return Some(classify_pre(a_pre)?.cmp(&classify_pre(b_pre)?));
+        }
+        let len = a_pre.len().max(b_pre.len());
+        for i in 0..len {
+            match (a_pre.get(i), b_pre.get(i)) {
+                (Some(a), Some(b)) => match a.compare_pre(b)? {
+                    Ordering::Equal => continue,
+                    non_eq => return Some(non_eq),
+                },
+                // A longer pre-release chain is the later one:
+                // 1.0-rc.1 < 1.0-rc.1.2
+                (Some(_), None) => return Some(Ordering::Greater),
+                (None, Some(_)) => return Some(Ordering::Less),
+                (None, None) => break,
             }
         }
+        Some(Ordering::Equal)
     }
 
     /// True when `candidate` is strictly newer than `self`.
@@ -599,6 +641,10 @@ mod tests {
             ("1.0", "1.0git1234"),
             ("1.0.x", "1.0.1"),
             ("2.1.0foo", "2.1.0bar"),
+            ("7.1-full_build", "7.1"),
+            ("7.1-full_build", "7.1-essentials_build"),
+            ("1.0-x64", "1.0-arm64"),
+            ("1.0.0-nightly.3fa9", "1.0.0-nightly.ab12"),
         ] {
             assert_eq!(v(a).compare(&v(b)), None, "{a} against {b}");
             assert!(!v(a).is_upgrade_to(&v(b)));
@@ -606,6 +652,25 @@ mod tests {
         }
         // Two revisions of the same thing are fine.
         assert!(v("1.0.0-4").is_upgrade_to(&v("1.0.0-5")));
+    }
+
+    /// `4.2.8-p15` to `4.2.8` was approved as an upgrade.
+    #[test]
+    fn a_patch_after_a_hyphen_is_later_than_the_bare_version() {
+        for (older, newer) in [
+            ("4.2.8", "4.2.8-p15"),
+            ("4.2.8-p9", "4.2.8-p15"),
+            ("1.0", "1.0-sp1"),
+            ("1.0", "1.0-hotfix1"),
+            ("1.0-rc1", "1.0-p1"),
+            ("1.0.0-alpha.1", "1.0.0-beta.1"),
+            ("1.0.0-beta.9", "1.0.0-beta.10"),
+            ("4.31.0,157355", "4.31.0,160616"),
+            ("4.31.0,157355", "4.32.0,1"),
+        ] {
+            assert!(v(older).is_upgrade_to(&v(newer)), "{older} to {newer}");
+            assert!(!v(newer).is_upgrade_to(&v(older)), "{newer} to {older}");
+        }
     }
 
     #[test]
