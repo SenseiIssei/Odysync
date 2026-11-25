@@ -482,13 +482,13 @@ pub mod imp {
             )
         })?;
 
-        let work = http::download_dir()?.join(format!(
-            "mac-{}-{}",
-            bundle_id.replace(|c: char| !c.is_ascii_alphanumeric(), "-"),
-            jiff::Timestamp::now().as_millisecond()
-        ));
-        std::fs::create_dir_all(&work)?;
-        let archive = work.join(http::file_name_for(&release.url, "update.zip"));
+        let work = http::DownloadDir::new(&format!(
+            "mac-{}",
+            bundle_id.replace(|c: char| !c.is_ascii_alphanumeric(), "-")
+        ))?;
+        let archive = work
+            .path()
+            .join(http::file_name_for(&release.url, "update.zip"));
 
         let result = async {
             // 2. Download, then the app's own EdDSA key.
@@ -510,7 +510,7 @@ pub mod imp {
             }
 
             // 3. Same app, same developer, accepted by Gatekeeper.
-            let extracted = work.join("extracted");
+            let extracted = work.path().join("extracted");
             std::fs::create_dir_all(&extracted)?;
             let expected_name = app
                 .path
@@ -578,7 +578,7 @@ pub mod imp {
         }
         .await;
 
-        let _ = std::fs::remove_dir_all(&work);
+        drop(work);
         result
     }
 }

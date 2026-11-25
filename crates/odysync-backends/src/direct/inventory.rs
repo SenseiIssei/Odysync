@@ -192,22 +192,41 @@ pub fn installed_apps() -> Vec<InstalledApp> {
 /// Used to refuse updating a program that is open: an installer that cannot
 /// replace a locked file either fails half-way or, worse, schedules the
 /// replacement for the next reboot and reports success now.
+///
+/// An error, not an empty list, when the question could not be answered:
+/// "nothing is running" is what lets an installer start.
 #[cfg(windows)]
-pub async fn running_executables() -> Vec<PathBuf> {
+pub async fn running_executables() -> odysync_core::error::Result<Vec<PathBuf>> {
     let script = "Get-Process | ForEach-Object { $_.Path } | Where-Object { $_ }";
-    match odysync_core::proc::powershell(script, std::time::Duration::from_secs(60)).await {
-        Ok(out) => out
-            .stdout
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(PathBuf::from)
-            .collect(),
-        Err(e) => {
-            tracing::warn!(error = %e, "could not list running processes");
-            Vec::new()
-        }
+    let out = odysync_core::proc::powershell(script, std::time::Duration::from_secs(60)).await?;
+    let running: Vec<PathBuf> = out
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    // PowerShell itself is always in its own list.
+    if running.is_empty() {
+        return Err(odysync_core::error::Error::unavailable(
+            "direct",
+            "could not tell which programs are running",
+        ));
     }
+    Ok(running)
+}
+
+/// The first running executable whose path ends in one of `suffixes`.
+///
+/// For programs whose uninstall entry does not say where they live, which is
+/// true of most Windows Installer packages.
+pub fn running_named<'a>(suffixes: &[String], running: &'a [PathBuf]) -> Option<&'a PathBuf> {
+    running.iter().find(|exe| {
+        let exe = exe.to_string_lossy().to_ascii_lowercase();
+        suffixes
+            .iter()
+            .any(|s| exe.ends_with(&format!("\\{}", s.to_ascii_lowercase())))
+    })
 }
 
 /// The first running executable inside `dir`, if any.
@@ -220,6 +239,27 @@ pub fn running_inside<'a>(dir: &Path, running: &'a [PathBuf]) -> Option<&'a Path
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_program_is_found_running_by_the_end_of_its_path() {
+        let running = vec![
+            PathBuf::from(r"C:\Program Files\Microsoft VS Code\node.exe"),
+            PathBuf::from(r"C:\Program Files\NodeJS\Node.exe"),
+            PathBuf::from(r"C:\tools\notgh.exe"),
+        ];
+        let hit = |s: &str| running_named(&[s.to_string()], &running).cloned();
+        assert_eq!(hit(r"nodejs\node.exe"), Some(running[1].clone()));
+        assert_eq!(hit("gh.exe"), None, "a longer name is another program");
+        assert_eq!(hit("notgh.exe"), Some(running[2].clone()));
+        assert_eq!(running_named(&[], &running), None);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn the_running_programs_can_be_listed() {
+        let running = running_executables().await.expect("list");
+        assert!(running.len() > 1);
+    }
 
     #[test]
     fn processor_architecture_is_mapped_to_catalog_names() {

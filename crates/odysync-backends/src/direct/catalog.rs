@@ -75,6 +75,10 @@ pub struct CatalogApp {
     pub extra_args: Vec<String>,
     /// Subject CN or O the installer's code signature must carry.
     pub signer: String,
+    /// How the path of the running program ends, for installs that do not
+    /// record where they live. Windows Installer packages usually do not.
+    #[serde(default)]
+    pub processes: Vec<String>,
 }
 
 impl CatalogApp {
@@ -340,6 +344,21 @@ mod tests {
             arch: "x64",
             technology,
             install_dir: None,
+        }
+    }
+
+    /// Without it, "is it running?" has no answer for these and the check
+    /// that protects an open program is skipped.
+    #[test]
+    fn every_windows_installer_entry_names_its_program() {
+        for app in Catalog::embedded().apps {
+            if app.installer == InstallerKind::Msi {
+                assert!(!app.processes.is_empty(), "{} names no program", app.id);
+            }
+            for p in &app.processes {
+                assert!(p.to_ascii_lowercase().ends_with(".exe"), "{p}");
+                assert!(!p.starts_with('\\'), "{p}");
+            }
         }
     }
 

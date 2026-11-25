@@ -44,7 +44,7 @@ hex = "0.4"
 directories = "6"
 async-trait = "0.1"
 zip = { version = "9", default-features = false, features = ["deflate"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "system-proxy"] }
 
 [profile.release]
 opt-level = "z"

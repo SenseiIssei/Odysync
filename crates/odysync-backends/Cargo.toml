@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "odysync-backends"
 version.workspace = true
 edition.workspace = true
@@ -47,6 +47,11 @@ windows = { version = "0.62", features = [
     # Walking `C:\$Recycle.Bin` instead would under-report (it is per-user and
     # permission-guarded) and is exactly the shape the root-safety rule refuses.
     "Win32_UI_Shell",
+    # `direct::private_dir`: a download directory only administrators can write
+    # to, for installers that run elevated.
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
 ] }
 
 [dev-dependencies]

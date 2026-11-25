@@ -33,6 +33,8 @@ pub mod catalog;
 pub mod http;
 pub mod inventory;
 pub mod macos;
+#[cfg(windows)]
+pub mod private_dir;
 pub mod signer;
 pub mod sparkle;
 
@@ -49,6 +51,7 @@ use odysync_core::model::{
 use odysync_core::version::Version;
 
 use catalog::{Catalog, CatalogApp, InstalledApp, Release, Scope, Source};
+use http::Purpose;
 
 /// How long one installer may run before it is presumed hung.
 #[cfg(windows)]
@@ -99,21 +102,51 @@ pub fn parse_native_id(native: &str) -> Option<(Scope, &str)> {
 }
 
 /// The installed programs the catalog knows, each with its entry.
+///
+/// One per app and scope. A second uninstall entry for the same app is a
+/// leftover of an older version, not a second install; the newest one is what
+/// is on disk. Taking the first instead offered the same update for ever.
 fn recognised(catalog: &Catalog, installed: Vec<InstalledApp>) -> Vec<(InstalledApp, CatalogApp)> {
     let mut out: Vec<(InstalledApp, CatalogApp)> = Vec::new();
     for app in installed {
-        if let Some(entry) = catalog.match_installed(&app) {
-            // One candidate per (app, scope). A second uninstall entry for the
-            // same app and scope is a leftover, not a second install.
-            if !out
-                .iter()
-                .any(|(a, e)| e.id == entry.id && a.scope == app.scope)
-            {
-                out.push((app, entry.clone()));
-            }
+        let Some(entry) = catalog.match_installed(&app) else {
+            continue;
+        };
+        match out
+            .iter_mut()
+            .find(|(a, e)| e.id == entry.id && a.scope == app.scope)
+        {
+            Some((known, _)) if is_newer_entry(known, &app) => *known = app,
+            Some(_) => {}
+            None => out.push((app, entry.clone())),
         }
     }
     out
+}
+
+/// Whether `other` records a newer version of the program than `known`.
+fn is_newer_entry(known: &InstalledApp, other: &InstalledApp) -> bool {
+    let version = |a: &InstalledApp| Version::parse(a.display_version.as_deref().unwrap_or(""));
+    let (known, other) = (version(known), version(other));
+    known.is_upgrade_to(&other) || (!known.is_known() && other.is_known())
+}
+
+/// The install of `entry` in `scope`, chosen the way a scan chooses it.
+fn find_install(
+    installed: Vec<InstalledApp>,
+    entry: &CatalogApp,
+    scope: Scope,
+) -> Option<InstalledApp> {
+    installed
+        .into_iter()
+        .filter(|a| a.scope == scope && entry.matches(a))
+        .reduce(|known, app| {
+            if is_newer_entry(&known, &app) {
+                app
+            } else {
+                known
+            }
+        })
 }
 
 /// Ask the entry's source for its latest release, for this install.
@@ -121,6 +154,7 @@ async fn resolve(
     client: &reqwest::Client,
     entry: &CatalogApp,
     app: &InstalledApp,
+    purpose: Purpose,
 ) -> Result<Option<Release>> {
     match &entry.source {
         Source::Github {
@@ -134,7 +168,7 @@ async fn resolve(
                 return Ok(None);
             };
             let url = format!("https://api.github.com/repos/{repo}/releases/latest");
-            let release = http::get_json(client, &url).await?;
+            let release = http::get_json_for(client, &url, purpose).await?;
             if release.get("draft").and_then(|v| v.as_bool()) == Some(true)
                 || release.get("prerelease").and_then(|v| v.as_bool()) == Some(true)
             {
@@ -193,7 +227,7 @@ async fn resolve(
             let Some(endpoint) = endpoints.get(&key) else {
                 return Ok(None);
             };
-            let body = http::get_json(client, endpoint).await?;
+            let body = http::get_json_for(client, endpoint, purpose).await?;
             let field = |name: &str| body.get(name).and_then(|v| v.as_str()).map(str::trim);
             let (Some(version), Some(url)) = (field(version_field), field(url_field)) else {
                 return Err(Error::parse(
@@ -224,13 +258,15 @@ async fn resolve(
             let Some(installed) = app.display_version.as_deref() else {
                 return Ok(None);
             };
-            let index = http::get_json(client, "https://nodejs.org/dist/index.json").await?;
+            let index =
+                http::get_json_for(client, "https://nodejs.org/dist/index.json", purpose).await?;
             let Some(version) = catalog::pick_nodejs_release(&index, installed) else {
                 return Ok(None);
             };
             let file = format!("node-v{version}-{}.msi", app.arch);
             let base = format!("https://nodejs.org/dist/v{version}/");
-            let shasums = http::get_text(client, &format!("{base}SHASUMS256.txt")).await?;
+            let shasums =
+                http::get_text_for(client, &format!("{base}SHASUMS256.txt"), purpose).await?;
             let Some(sha256) = catalog::sha256_from_shasums(&shasums, &file) else {
                 // No published hash means no installer for this arch in this
                 // release; not offering one is the honest answer.
@@ -243,6 +279,16 @@ async fn resolve(
                 size_bytes: None,
             }))
         }
+    }
+}
+
+/// Stands in for a release that could not be read; the policy refuses it.
+fn unreadable_release() -> Release {
+    Release {
+        version: String::new(),
+        url: String::new(),
+        sha256: None,
+        size_bytes: None,
     }
 }
 
@@ -290,19 +336,33 @@ impl Backend for DirectBackend {
 
         let lookups = found.iter().map(|(app, entry)| {
             let client = &client;
-            async move { (app, entry, resolve(client, entry, app).await) }
+            async move { (app, entry, resolve(client, entry, app, Purpose::Scan).await) }
         });
 
+        let results = futures::future::join_all(lookups).await;
+        let asked = results.len();
         let mut out = Vec::new();
-        for (app, entry, result) in futures::future::join_all(lookups).await {
+        let mut failures = Vec::new();
+        for (app, entry, result) in results {
             match result {
                 Ok(Some(release)) => out.push(candidate_for(app, entry, &release)),
                 Ok(None) => {}
-                // One publisher being unreachable must not hide the others.
+                // One publisher being unreachable must not hide the others,
+                // and must not make its app look up to date either: it is
+                // listed as one whose version could not be determined.
                 Err(e) => {
-                    tracing::warn!(app = %entry.id, error = %e, "could not read the latest release")
+                    tracing::warn!(app = %entry.id, error = %e, "could not read the latest release");
+                    out.push(candidate_for(app, entry, &unreadable_release()));
+                    failures.push(e);
                 }
             }
+        }
+        // No publisher answered: that is being offline, not being up to date.
+        if failures.len() == asked
+            && mac.is_empty()
+            && let Some(first) = failures.into_iter().next()
+        {
+            return Err(first);
         }
         out.extend(mac);
         Ok(out)
@@ -353,18 +413,7 @@ impl Backend for DirectBackend {
         let Some(entry) = catalog.find(id).cloned() else {
             return Ok(None);
         };
-        Ok(installed_apps()
-            .await
-            .into_iter()
-            .filter(|a| a.scope == scope && entry.matches(a))
-            .filter_map(|a| a.display_version)
-            // Several matching entries means a leftover next to the real
-            // install; the newest one is the one that was just written.
-            .max_by(|a, b| {
-                Version::parse(a)
-                    .compare(&Version::parse(b))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }))
+        Ok(find_install(installed_apps().await, &entry, scope).and_then(|a| a.display_version))
     }
 }
 
@@ -488,27 +537,26 @@ pub mod windows_apply {
         let installed = tokio::task::spawn_blocking(inventory::installed_apps)
             .await
             .unwrap_or_default();
-        let app = installed
-            .into_iter()
-            .find(|a| a.scope == scope && entry.matches(a))
-            .ok_or_else(|| {
-                Error::unavailable(
-                    "direct",
-                    format!("{} is no longer installed for this scope", entry.name),
-                )
-            })?;
+        let app = find_install(installed, &entry, scope).ok_or_else(|| {
+            Error::unavailable(
+                "direct",
+                format!("{} is no longer installed for this scope", entry.name),
+            )
+        })?;
 
         // 1. Exactly the version that was approved.
         let client = backend.client(Duration::from_secs(60))?;
-        let release = resolve(&client, &entry, &app).await?.ok_or_else(|| {
-            Error::unavailable(
-                "direct",
-                format!(
-                    "{} no longer offers an installer for this machine",
-                    entry.name
-                ),
-            )
-        })?;
+        let release = resolve(&client, &entry, &app, Purpose::Install)
+            .await?
+            .ok_or_else(|| {
+                Error::unavailable(
+                    "direct",
+                    format!(
+                        "{} no longer offers an installer for this machine",
+                        entry.name
+                    ),
+                )
+            })?;
         if release.version.trim() != candidate.available.raw().trim() {
             return Err(Error::Verification {
                 package: entry.name.clone(),
@@ -521,42 +569,43 @@ pub mod windows_apply {
         }
 
         // Never replace files under a running program.
-        if let Some(dir) = &app.install_dir {
-            let running = inventory::running_executables().await;
-            if let Some(exe) = inventory::running_inside(dir, &running) {
-                return Err(Error::unavailable(
-                    "direct",
-                    format!(
-                        "{} is running ({}); close it and try again",
-                        entry.name,
-                        exe.display()
-                    ),
-                ));
-            }
-        }
+        refuse_if_running(&entry, &app).await?;
 
         // A fresh directory per update, so nothing left from an earlier
         // attempt can be picked up by mistake.
-        let dir = http::download_dir()?.join(format!(
-            "{}-{}-{}",
-            entry.id,
-            release.version,
-            jiff::Timestamp::now().as_millisecond()
-        ));
-        tokio::fs::create_dir_all(&dir).await?;
-        let file = dir.join(http::file_name_for(&release.url, "installer.bin"));
+        let dir = http::DownloadDir::new(&format!("{}-{}", entry.id, release.version))?;
+        let file = dir
+            .path()
+            .join(http::file_name_for(&release.url, "installer.bin"));
 
-        let result = download_verify_install(
-            backend,
+        download_verify_install(
             &client_for_download(backend)?,
             &entry,
+            &app,
             &release,
             &file,
         )
-        .await;
+        .await
+    }
 
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        result
+    async fn refuse_if_running(entry: &CatalogApp, app: &InstalledApp) -> Result<()> {
+        let running = inventory::running_executables().await?;
+        let found = match &app.install_dir {
+            Some(dir) => inventory::running_inside(dir, &running),
+            None => None,
+        }
+        .or_else(|| inventory::running_named(&entry.processes, &running));
+        match found {
+            None => Ok(()),
+            Some(exe) => Err(Error::unavailable(
+                "direct",
+                format!(
+                    "{} is running ({}); close it and try again",
+                    entry.name,
+                    exe.display()
+                ),
+            )),
+        }
     }
 
     fn client_for_download(backend: &DirectBackend) -> Result<reqwest::Client> {
@@ -564,9 +613,9 @@ pub mod windows_apply {
     }
 
     async fn download_verify_install(
-        _backend: &DirectBackend,
         client: &reqwest::Client,
         entry: &CatalogApp,
+        app: &InstalledApp,
         release: &Release,
         file: &Path,
     ) -> Result<()> {
@@ -583,6 +632,9 @@ pub mod windows_apply {
             &entry.name,
         )
         .await?;
+
+        // The download took a while; the program may have been started since.
+        refuse_if_running(entry, app).await?;
 
         let file_arg = file.to_string_lossy().to_string();
         let (program, args): (String, Vec<String>) = match entry.installer {
@@ -745,7 +797,7 @@ mod tests {
                 technology: Technology::Other,
                 install_dir: None,
             };
-            let release = resolve(&client, entry, &app)
+            let release = resolve(&client, entry, &app, Purpose::Install)
                 .await
                 .unwrap_or_else(|e| panic!("{}: {e}", entry.id))
                 .unwrap_or_else(|| panic!("{}: no release or no x64 asset", entry.id));
@@ -820,5 +872,47 @@ mod tests {
         };
         let found = recognised(&catalog, vec![git("C:/a"), git("C:/b")]);
         assert_eq!(found.len(), 1);
+
+        // The newest entry is the real one, whatever order the OS lists them.
+        let mut newer = git("C:/b");
+        newer.display_version = Some("2.56.1".into());
+        let mut unreadable = git("C:/c");
+        unreadable.display_version = None;
+        for list in [
+            vec![git("C:/a"), newer.clone(), unreadable.clone()],
+            vec![unreadable, newer.clone(), git("C:/a")],
+        ] {
+            let found = recognised(&catalog, list.clone());
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].0.display_version.as_deref(), Some("2.56.1"));
+            let entry = catalog.find("git").unwrap();
+            let picked = find_install(list, entry, Scope::Machine).unwrap();
+            assert_eq!(picked.install_dir, newer.install_dir);
+        }
+    }
+
+    /// An app whose publisher could not be reached must not look up to date.
+    #[test]
+    fn an_unreachable_publisher_is_listed_and_held_back() {
+        let catalog = Catalog::embedded();
+        let entry = catalog.find("git").unwrap();
+        let app = InstalledApp {
+            display_name: "Git".into(),
+            display_version: Some("2.56.0".into()),
+            publisher: Some("The Git Development Community".into()),
+            scope: Scope::Machine,
+            arch: "x64",
+            technology: Technology::Inno,
+            install_dir: None,
+        };
+        let c = candidate_for(&app, entry, &unreadable_release());
+        let policy = odysync_core::Policy {
+            elevated: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            policy.evaluate(&c),
+            Some(odysync_core::SkipReason::UnknownAvailableVersion)
+        );
     }
 }
