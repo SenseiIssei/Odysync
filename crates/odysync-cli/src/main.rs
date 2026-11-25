@@ -600,6 +600,9 @@ async fn run(cli: Cli) -> Result<u8> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 print!("{}", render::summary(&report, &style));
+                if dry_run {
+                    println!("{}", style.dim("Dry run: nothing was installed."));
+                }
             }
 
             if let Some(path) = report_path {

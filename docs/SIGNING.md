@@ -32,21 +32,28 @@ it. Signing first, self-update second — not a preference, an ordering.
 
 ## Which certificate
 
-| Option | Cost | Lead time | SmartScreen |
+> Checked on 2026-11-25. This section used to recommend Azure Trusted Signing.
+> It is now called Artifact Signing, and for individuals it is open in the
+> [United States and Canada only](https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart);
+> organisations in the European Union qualify. An EV certificate no longer
+> skips SmartScreen either.
+
+| Option | Cost | Who can get it | Note |
 |---|---|---|---|
-| **Azure Trusted Signing** | ~10 USD/month | Days | Immediate reputation, inherits Microsoft's root |
-| OV certificate | 200–400 USD/year | Days | Builds reputation slowly; warns until it does |
-| EV certificate | 300–500 USD/year | 1–3 weeks, hardware token | Immediate |
+| **SignPath Foundation** | free | open-source projects that meet its [terms](https://signpath.org/terms) | the publisher shown is SignPath Foundation; manual approval per release, two-factor sign-in, a code-signing policy page, no tools that exploit vulnerabilities |
+| **Certum Open Source** | [49 euros](https://shop.certum.eu/open-source-code-signing-on-simplysign.html) | individuals | subject "Open Source Developer ..."; unattended signing in CI not confirmed |
+| **Azure Artifact Signing** | about 10 USD a month | organisations in the EU; individuals only in the US and Canada | the workflow is prepared for it |
+| OV certificate | 150 to 400 USD a year | individuals and organisations | reputation builds slowly |
 
-**Azure Trusted Signing is the right answer for an individual publisher.** It
-is an order of magnitude cheaper than an EV certificate, needs no hardware
-token to keep track of, and the signature carries Microsoft-rooted reputation
-from the first release. Its one requirement is the awkward part: the identity
-must have existed for **three years** for an individual subscriber. If that is
-not satisfiable, an OV certificate is the fallback, with the caveat that early
-releases will still warn.
+The order to try is SignPath, then Certum, then a registered business for the
+organisation route. The decision and the identity check are the owner's.
 
-### Setting it up
+Whichever it is, the program files inside the installer must be signed too, not
+only the finished installer. The steps below sign the CLI archive and the
+installer; for the parts, Tauri's `bundle.windows.signCommand` runs during the
+build and is still to be set.
+
+### Setting it up (Azure, for an organisation)
 
 1. Azure subscription → create a **Trusted Signing account** (it is region-bound;
    pick the one nearest your users).
@@ -100,8 +107,9 @@ In this order:
 1. Publish one signed release and confirm SmartScreen is quiet on a machine
    that has never seen Odysync.
 2. Submit the generated winget manifests (`release.yml` builds them into a
-   `winget-manifests` artifact) to `microsoft/winget-pkgs`. winget requires a
-   signed installer for a reason.
+   `winget-manifests` artifact) to `microsoft/winget-pkgs`. No signature is
+   required there, but an unsigned installer is more likely to be held up by an
+   antivirus flag.
 3. Only then revisit `self_update.rs`. `UpdateCheck::is_installable` is the
    single place the decision lives, and the signature check it needs already
    exists in `odysync-verify`. The test

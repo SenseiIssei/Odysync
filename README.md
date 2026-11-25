@@ -86,9 +86,9 @@ Each source names who verified what it installs — *verified by Odysync*, *by t
 | **Disk and battery health** — SMART/NVMe status, wear, temperature, battery capacity | ✅ | ✅ | ✅ (smartctl) |
 | **Programs, direct from the publisher** — signature-pinned installers from GitHub releases and vendor feeds | ✅ | ✅ Sparkle apps | — |
 | **System package managers** — Homebrew, apt, dnf, pacman, zypper, Flatpak, Snap, Nix, Chocolatey, Scoop | ✅ | ✅ | ✅ |
-| **Language ecosystems** — pip, npm, cargo, go, .NET tools, VS Code and JetBrains extensions | ✅ | ✅ | ✅ |
+| **Language ecosystems**: pip, npm, cargo and Go tools; PowerShell modules on Windows | ✅ | ✅ | ✅ |
 | **OS updates** — Windows Update (security, quality, Defender), `softwareupdate` | ✅ | ✅ | via package manager |
-| **Drivers** — Windows Update drivers, NVIDIA straight from NVIDIA, OEM tools (Dell, HP, Lenovo…), `fwupd` firmware | ✅ | firmware | ✅ `fwupd` |
+| **Drivers**: Windows Update drivers, NVIDIA straight from NVIDIA, `fwupd` firmware | ✅ | firmware | ✅ `fwupd` |
 | **Driver backup and restore** — export the driver store, roll back after a bad update | ✅ | — | — |
 | **Runtimes** — Visual C++, DirectX, .NET patches, from Microsoft's own installers | ✅ | — | — |
 | **Device problems** — Device Manager error codes explained in plain words | ✅ | — | — |
@@ -99,7 +99,7 @@ Each source names who verified what it installs — *verified by Odysync*, *by t
 | **Restore points, disk optimisation, system file repair** | ✅ | — | — |
 | **System info, schedules, profiles, update history** | ✅ | ✅ | ✅ |
 
-Everything in the app is also in the CLI.
+Updating, cleanup, care, drivers, runtimes, health, startup and schedules are in the app and in the CLI; the security audit, update history and restore-point list are in the app.
 
 <details>
 <summary><b>Take the tour</b> — every page in a few seconds</summary>
@@ -146,11 +146,13 @@ Home and four everyday pages — Updates, Drivers, Cleanup, Security — are all
 
 1. **Exact version.** The release is exactly the version you approved; if the publisher shipped another one in between, Odysync stops and asks for a new scan.
 2. **Publisher URL.** The download belongs to the publisher the catalog names (a GitHub asset must be a release of *that* repository), over HTTPS on every redirect.
-3. **Locked file.** The file is locked against writes and deletion, then re-hashed from disk — nothing can swap it between the check and the run, even when the installer runs elevated.
+3. **Locked file, protected directory.** The file is locked against writes and deletion, then re-hashed from disk, so nothing can swap it between the check and the run. An elevated installer runs from a directory only administrators can write to, so nothing can be planted next to it either.
 4. **SHA-256.** The hash matches whatever the source publishes (GitHub, VS Code and Node.js all publish one; .NET publishes SHA-512).
 5. **Pinned signer.** The Authenticode signature is valid **and** issued to the expected publisher — parsed from the certificate subject, so `GitHub, Inc. Evil` does not pass for `GitHub, Inc.`.
 
-Installers only run over an install of the same kind (MSI over MSI, Inno over Inno), never while the program is running. On macOS, an app update must carry a valid Ed25519 signature from the key *in the app you already have*, the same Apple Team ID, and Gatekeeper's approval; the old app is kept until the new one is in place.
+Installers only run over an install of the same kind (MSI over MSI, Inno over Inno), never while the program is running, never when the disk has no room for them, and never a second time: one that runs into its time limit is checked, not restarted. Only one Odysync installs at a time. On macOS, an app update must carry the same Apple Team ID as the app you already have, a valid Ed25519 signature from the key in it where it has one, and Gatekeeper's approval; the old app is kept until the new one is in place.
+
+Package managers are asked again right before installing: if the version on offer is no longer the one you approved, Odysync stops. Distribution packages are compared by the rules of dpkg, rpm and pacman, Python packages by PEP 440.
 
 ### What Odysync deliberately does not do
 
@@ -189,6 +191,7 @@ odysync health                       # disk and battery health
 odysync scan                         # what can be updated, and what is held back and why
 odysync apply                        # install everything that passes the safety rules
 odysync apply --only vscode --yes    # one package, no prompt
+odysync apply --yes --unattended     # for scripts: leaves drivers, firmware and pip/npm to you
 odysync scan --backend direct        # ask one source only (naming an opt-in source enables it for this run)
 
 odysync clean                        # measure reclaimable space; deletes nothing
@@ -206,7 +209,7 @@ odysync schedule --frequency daily --care   # automatic care
 odysync backends                     # every source, and who verifies what it installs
 ```
 
-`odysync --help` and `odysync <command> --help` list everything; `--json` gives machine-readable output.
+`odysync --help` and `odysync <command> --help` list everything; `--json` prints exactly one document on stdout. Exit codes: 0 fine, 1 something failed, 2 nothing could be checked or done. Ctrl-C during an install finishes the package in progress and skips the rest.
 
 ## Build from source
 
@@ -223,11 +226,11 @@ Tests and lints, as CI runs them:
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --lib
+cargo test --workspace --lib --bins
 cd apps/gui && npx tsc -b && npx oxlint && npm test
 ```
 
-CI runs all of this on Windows, macOS and Linux, builds and starts the CLI and the packaged app on all three, and adds `cargo audit`, `cargo deny`, `npm audit` and a CycloneDX SBOM.
+CI runs all of this on Windows, macOS and Linux, builds and starts the CLI and the packaged app on all three, and adds `cargo audit`, `cargo deny`, `npm audit` and a CycloneDX SBOM. Once a week it resolves every catalog entry against its publisher and builds with the oldest supported Rust.
 
 ## Architecture
 
@@ -244,13 +247,13 @@ flowchart TB
 
 | Crate | What it does |
 |---|---|
-| `odysync-core` | Domain model, version algebra, safety policy, planner, runner |
+| `odysync-core` | Domain model, version rules, safety policy, planner, runner |
 | `odysync-verify` | SHA-256 and platform code-signature checks (Authenticode, `codesign`) |
 | `odysync-backends` | Every update source, cleanup, drivers, runtimes, startup, system info |
 | `odysync-cli` | The `odysync` command |
 | `apps/gui` | The desktop app: Tauri 2, React 19, TypeScript 7, Tailwind 4 |
 
-Every safety decision lives in `odysync-core`, which is pure, fully unit-tested and knows no package manager. The CLI and the app are thin shells over the same engine and cannot disagree about what is safe. Adding an update source means implementing one five-method trait. See [ARCHITECTURE.md](ARCHITECTURE.md).
+Every safety decision lives in `odysync-core`, which is unit-tested on all three systems and knows no package manager. The CLI and the app are thin shells over the same engine and cannot disagree about what is safe. Adding an update source means implementing one five-method trait. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## License
 

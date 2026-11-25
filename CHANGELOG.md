@@ -5,6 +5,85 @@ All notable changes to Odysync will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+- **Elevated installers run from a protected directory.** The installer file was
+  locked, but another program of the same user could have put a library next to
+  it, which would have been loaded with administrator rights.
+- Windows' own tools, among them the one that checks every installer's
+  signature, are run by their full path instead of through `PATH`.
+- Pre-releases such as `1.0.0-rc1`, `2.0b3` and `5.0 Beta 2` were offered as
+  stable versions. `3.5a` to `3.5` counted as an upgrade.
+- Installing asks the publisher afresh and never uses an answer stored on disk.
+  "Is the program running?" is asked again after the download, also works for
+  programs whose location is not recorded, and stops the install when it cannot
+  be answered.
+- An installer that ran into its time limit is never started a second time.
+- Package ids and versions that could be read as options are refused.
+- cookie, url and other transitive fixes (RUSTSEC-2026-0594,
+  RUSTSEC-2026-0592); chrono, which is no longer maintained, is replaced by
+  jiff.
+
+### Fixed
+- **Windows Update and driver installs.** The result codes were off by two:
+  every successful install was reported as failed, and a real failure passed as
+  success. A search that fails is no longer "up to date", an update that waits
+  for a restart counts as installed, and a hung Windows Update service no longer
+  blocks Odysync.
+- **Linux security updates were held back.** Debian and Ubuntu revisions such as
+  `+deb12u5` to `+deb12u6` compared as equal, and versions with an epoch could
+  not be read. dpkg, rpm and pacman versions follow their own rules now.
+- Sources that could not find or install anything: dnf, snap, zypper, fwupd,
+  Scoop, Nix, Chocolatey 2, npm packages with a scope, Go tools, cargo, winget
+  lists with short columns.
+- KeePassXC and PowerShell had silently stopped being updated after their
+  publishers renamed or dropped files.
+- Being offline, or a source that fails, is shown as such instead of as
+  "everything is up to date" with a full score.
+- A leftover uninstall entry no longer offers the same update for ever.
+- The scan interval, notification, proxy and timeout settings had no effect. The
+  system proxy is used when none is set.
+- Automatic care and other runs from the command line appear in the history,
+  which is also written after every package and survives a damaged file.
+- The maximize button, the excluded-packages box and number fields in Settings.
+- `--json` prints exactly one document, also for dry runs and with nothing to do.
+
+### Added
+- Scans show which sources are still busy, have a time limit each, and can be
+  cancelled; installs can be cancelled between packages, with Ctrl-C too.
+- Only one Odysync installs at a time, across app, terminal and schedule.
+  Quitting during an install asks first.
+- An update is not started when the disk has no room for it.
+- Background scans at the interval set in Settings, not on battery, with a
+  notification.
+- `odysync apply --unattended`. Schedules and the daemon leave drivers,
+  firmware, system upgrades and developer packages to a person.
+- Holds can be set and released in the app.
+- Release files carry provenance attestations.
+
+### Changed
+- **Faster.** A full scan on the test machine went from 31 to 45 s to 11 to
+  24 s. Naming one source asks only that one.
+- Windows schedules make up for a missed run and are not stopped when a laptop
+  is unplugged. Create yours again to get this.
+- pip lists only packages nothing else depends on, and refuses an update that
+  would break the rest.
+- PowerShell and Node.js stay on the installed line.
+- Text and controls meet WCAG AA contrast in both themes; keyboard, focus and
+  screen reader support throughout the app.
+- macOS: no forced restarts, and a new major version is never an ordinary
+  update.
+
+### Removed
+- Sources that install a set instead of the approved item, or whose newest
+  version nobody publishes: Dell, HP, Lenovo and other maker tools, AMD, Intel
+  and Qualcomm graphics through winget, guest tools, VS Code and JetBrains
+  extensions, .NET tools, AppImage, Windows optional features. Pacman is scan
+  only.
+- The settings for parallel sources and automatic installation, which did
+  nothing. Automatic care does the second, safely.
+
 ## [3.1.1] - 2026-10-30
 
 ### Security

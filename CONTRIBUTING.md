@@ -22,7 +22,7 @@ CI runs exactly this on Windows, macOS and Linux:
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --lib
+cargo test --workspace --lib --bins
 cd apps/gui && npx tsc -b && npx oxlint && npm test
 ```
 
@@ -38,6 +38,15 @@ cd apps/gui && npx tsc -b && npx oxlint && npm test
 - **Adding an app to the direct-update catalog** (`crates/odysync-backends/src/direct/catalog.json`)
   needs the signer read from the real installer (`Get-AuthenticodeSignature`).
   Publishers who do not sign their installers are not added.
+- **Never write a system's constant from memory.** Import it, or assert in a
+  test that it equals the imported one. Windows Update's result codes were off
+  by two for four releases.
+- **`apply` asks again.** It installs exactly the approved version or refuses,
+  starts with `guard::precheck`, and never runs an installer a second time.
+- **A source that cannot work is not available.** "Found nothing" and "cannot
+  tell" must never look the same.
+- **Tests never touch the machine they run on.** One that has to (a scheduled
+  task, a real install) is `#[ignore]`d and refuses to run outside CI.
 - Comments explain *why*. The code already says what.
 
 ## Reporting a problem
