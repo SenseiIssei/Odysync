@@ -61,25 +61,26 @@ pub struct UpdateHistory {
 }
 
 impl UpdateHistory {
-    /// Load history from the default config directory, creating the file if
-    /// it does not exist.
+    /// Load history from the default config directory.
     pub fn load() -> Self {
-        let path = history_path();
-        let entries = match std::fs::read_to_string(&path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
-        Self {
-            entries,
-            path,
-            max_entries: 500,
-        }
+        Self::load_from(history_path())
     }
 
-    /// Load from a specific path (useful for testing).
+    /// Load from a specific path.
+    ///
+    /// A file that exists but cannot be read as a history is moved aside, not
+    /// treated as empty: the next save would replace it.
     pub fn load_from(path: PathBuf) -> Self {
         let entries = match std::fs::read_to_string(&path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+            Ok(contents) => match serde_json::from_str(&contents) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    let aside = path.with_extension("json.corrupt");
+                    let kept = std::fs::rename(&path, &aside).is_ok();
+                    tracing::warn!(error = %e, kept, "update history could not be read");
+                    Vec::new()
+                }
+            },
             Err(_) => Vec::new(),
         };
         Self {
@@ -122,7 +123,10 @@ impl UpdateHistory {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(&self.entries)?;
-        std::fs::write(&self.path, json)
+        // Write-then-rename, so an interrupted save cannot truncate it.
+        let tmp = self.path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, &self.path)
     }
 
     /// Return all history entries, most recent last.
@@ -160,6 +164,20 @@ fn history_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unreadable_history_is_kept_beside_the_new_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+        std::fs::write(&path, "{ not a history").unwrap();
+        let history = UpdateHistory::load_from(path.clone());
+        assert!(history.entries().is_empty());
+        history.save().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("json.corrupt")).unwrap(),
+            "{ not a history"
+        );
+    }
 
     /// Histories written before 3.2 carry the timestamps of another library,
     /// with nanoseconds and either spelling of UTC. They must keep loading:

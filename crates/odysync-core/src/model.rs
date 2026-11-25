@@ -356,6 +356,9 @@ impl BackendKind {
                 | BackendKind::MsiCenter
                 | BackendKind::Fwupd
                 | BackendKind::MacFirmware
+                | BackendKind::MacSoftwareUpdate
+                | BackendKind::VirtualizationGuest
+                | BackendKind::WindowsOptionalFeature
         )
     }
 
@@ -611,6 +614,8 @@ pub enum SkipReason {
     RequiresUnelevated,
     /// The backend needs privileges the current process does not have.
     RequiresElevation,
+    /// The run was cancelled before this update was started.
+    Cancelled,
 }
 
 impl fmt::Display for SkipReason {
@@ -633,6 +638,7 @@ impl fmt::Display for SkipReason {
                 f.write_str("Microsoft Store apps cannot be updated from an elevated process")
             }
             SkipReason::RequiresElevation => f.write_str("requires administrator privileges"),
+            SkipReason::Cancelled => f.write_str("cancelled before it was started"),
         }
     }
 }
