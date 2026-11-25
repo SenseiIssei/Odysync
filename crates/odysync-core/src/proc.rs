@@ -15,7 +15,9 @@ use std::ffi::OsStr;
 use std::process::Stdio;
 use std::time::Duration;
 
-use tokio::io::AsyncReadExt;
+use std::sync::{Arc, Mutex};
+
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
 use crate::error::{Error, Result};
@@ -25,6 +27,15 @@ use crate::error::{Error, Result};
 /// Prevents memory exhaustion from a misbehaving package manager that
 /// writes unbounded output (e.g. verbose debug logging to stderr).
 const MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
+
+/// How long to keep reading once the program itself has exited.
+///
+/// A pipe only ends when *every* holder of its write end is gone, and a
+/// program can leave a child behind that inherited it: an installer that
+/// starts the freshly installed app, a package manager that starts a daemon.
+/// Waiting for the pipe would then wait for that app to be closed, turn a
+/// finished install into a timeout, and report it as failed.
+const DRAIN_AFTER_EXIT: Duration = Duration::from_secs(2);
 
 /// Windows `CREATE_NO_WINDOW`: run without allocating a console.
 #[cfg(windows)]
@@ -149,10 +160,97 @@ fn is_windows_powershell(program: &str) -> bool {
     name == "powershell.exe" || name == "powershell"
 }
 
+/// Read `pipe` to its end into `into`, keeping at most [`MAX_OUTPUT_BYTES`].
+///
+/// What exceeds the limit is read and dropped: a child blocks on a full pipe
+/// that nobody empties.
+async fn drain<R: AsyncRead + Unpin>(pipe: Option<R>, into: Arc<Mutex<Vec<u8>>>, program: String) {
+    let Some(mut pipe) = pipe else { return };
+    let mut buf = vec![0u8; 16 * 1024];
+    let mut warned = false;
+    while let Ok(n) = pipe.read(&mut buf).await {
+        if n == 0 {
+            break;
+        }
+        let mut out = into.lock().unwrap_or_else(|p| p.into_inner());
+        let room = MAX_OUTPUT_BYTES.saturating_sub(out.len());
+        out.extend_from_slice(&buf[..n.min(room)]);
+        if n > room && !warned {
+            warned = true;
+            tracing::warn!(%program, max = MAX_OUTPUT_BYTES, "output truncated");
+        }
+    }
+}
+
+fn collected(buffer: &Mutex<Vec<u8>>) -> String {
+    let raw = buffer.lock().unwrap_or_else(|p| p.into_inner());
+    String::from_utf8_lossy(&raw).into_owned()
+}
+
+/// Everything a spawned program started, so that it can be stopped as one.
+///
+/// `kill_on_drop` ends the direct child only. On Windows that child is often
+/// just a launcher (`npm.cmd` runs node, `choco` runs the installer), and what
+/// it started kept running after the timeout that was supposed to end it.
+///
+/// The job carries no limits: whatever is still running when the program has
+/// exited on its own (an app an installer started) is left alone.
+#[cfg(windows)]
+struct ProcessTree {
+    job: windows::Win32::Foundation::HANDLE,
+    armed: bool,
+}
+
+// A job handle is a kernel object reference, usable from any thread.
+#[cfg(windows)]
+unsafe impl Send for ProcessTree {}
+#[cfg(windows)]
+unsafe impl Sync for ProcessTree {}
+
+#[cfg(windows)]
+impl ProcessTree {
+    fn of(child: &tokio::process::Child) -> Option<Self> {
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+
+        let process = HANDLE(child.raw_handle()?);
+        // SAFETY: the process handle belongs to `child`, which outlives this
+        // call; the job handle is closed below or in `drop`.
+        unsafe {
+            let job = CreateJobObjectW(None, None).ok()?;
+            if AssignProcessToJobObject(job, process).is_err() {
+                let _ = CloseHandle(job);
+                return None;
+            }
+            Some(Self { job, armed: true })
+        }
+    }
+
+    /// The program exited on its own; leave what it started alone.
+    fn release(&mut self) {
+        self.armed = false;
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::JobObjects::TerminateJobObject;
+        // SAFETY: the handle is ours and still open.
+        unsafe {
+            if self.armed {
+                let _ = TerminateJobObject(self.job, 1);
+            }
+            let _ = CloseHandle(self.job);
+        }
+    }
+}
+
 /// Run `program` with `args`, capturing output, killed after `timeout`.
 ///
-/// The child is killed on timeout; `kill_on_drop` ensures it also dies if the
-/// future is cancelled, so a cancelled scan cannot leave orphaned processes.
+/// On timeout, and when the future is dropped (a cancelled scan), the program
+/// is stopped; on Windows together with everything it started.
 pub async fn run<S: AsRef<OsStr>>(program: &str, args: &[S], timeout: Duration) -> Result<Output> {
     let mut cmd = build(program, args);
     cmd.kill_on_drop(true);
@@ -164,57 +262,52 @@ pub async fn run<S: AsRef<OsStr>>(program: &str, args: &[S], timeout: Duration) 
             Error::Io(e)
         }
     })?;
+    #[cfg(windows)]
+    let mut tree = ProcessTree::of(&child);
 
-    let mut stdout_pipe = child.stdout.take();
-    let mut stderr_pipe = child.stderr.take();
+    // Both pipes are drained while waiting. Reading them one after the other
+    // deadlocks as soon as a child fills the pipe that is not being read,
+    // which winget does on large upgrade lists.
+    let stdout = Arc::new(Mutex::new(Vec::new()));
+    let stderr = Arc::new(Mutex::new(Vec::new()));
+    let mut readers = tokio::task::JoinSet::new();
+    readers.spawn(drain(
+        child.stdout.take(),
+        Arc::clone(&stdout),
+        program.to_string(),
+    ));
+    readers.spawn(drain(
+        child.stderr.take(),
+        Arc::clone(&stderr),
+        program.to_string(),
+    ));
 
-    // Drain both pipes concurrently with the wait. Reading them sequentially
-    // deadlocks as soon as a child fills the pipe buffer it is not being read
-    // from, which winget does on large upgrade lists.
-    let collect = async {
-        let stdout_fut = async {
-            let mut stdout = String::new();
-            if let Some(p) = stdout_pipe.as_mut() {
-                let mut raw = Vec::new();
-                p.read_to_end(&mut raw).await?;
-                truncate_output(&mut raw, program);
-                stdout = String::from_utf8_lossy(&raw).into_owned();
-            }
-            Ok::<_, std::io::Error>(stdout)
-        };
-        let stderr_fut = async {
-            let mut stderr = String::new();
-            if let Some(p) = stderr_pipe.as_mut() {
-                let mut raw = Vec::new();
-                p.read_to_end(&mut raw).await?;
-                truncate_output(&mut raw, program);
-                stderr = String::from_utf8_lossy(&raw).into_owned();
-            }
-            Ok::<_, std::io::Error>(stderr)
-        };
-        let (stdout, stderr) = tokio::try_join!(stdout_fut, stderr_fut)?;
-        Ok::<_, std::io::Error>((stdout, stderr))
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(status) => status?,
+        Err(_) => {
+            return Err(Error::CommandTimeout {
+                command: program.to_string(),
+                seconds: timeout.as_secs(),
+            });
+        }
     };
+    #[cfg(windows)]
+    if let Some(tree) = &mut tree {
+        tree.release();
+    }
 
-    let status = tokio::time::timeout(timeout, async {
-        let (out, err) = collect.await?;
-        let status = child.wait().await?;
-        Ok::<_, std::io::Error>((status, out, err))
+    // Dropping the set ends readers that are still waiting on a pipe some
+    // left-behind child holds open.
+    let _ = tokio::time::timeout(DRAIN_AFTER_EXIT, async {
+        while readers.join_next().await.is_some() {}
     })
     .await;
 
-    match status {
-        Ok(Ok((status, stdout, stderr))) => Ok(Output {
-            code: status.code().unwrap_or(-1),
-            stdout,
-            stderr,
-        }),
-        Ok(Err(e)) => Err(Error::Io(e)),
-        Err(_) => Err(Error::CommandTimeout {
-            command: program.to_string(),
-            seconds: timeout.as_secs(),
-        }),
-    }
+    Ok(Output {
+        code: status.code().unwrap_or(-1),
+        stdout: collected(&stdout),
+        stderr: collected(&stderr),
+    })
 }
 
 /// True when `program` can be executed at all.
@@ -252,19 +345,6 @@ pub async fn powershell(script: &str, timeout: Duration) -> Result<Output> {
         timeout,
     )
     .await
-}
-
-/// Truncate output to `MAX_OUTPUT_BYTES`, logging a warning if truncation occurred.
-fn truncate_output(raw: &mut Vec<u8>, program: &str) {
-    if raw.len() > MAX_OUTPUT_BYTES {
-        tracing::warn!(
-            program = program,
-            original_len = raw.len(),
-            max = MAX_OUTPUT_BYTES,
-            "output truncated to prevent memory exhaustion"
-        );
-        raw.truncate(MAX_OUTPUT_BYTES);
-    }
 }
 
 #[cfg(test)]
@@ -371,17 +451,66 @@ mod tests {
         assert!(!exists("odysync-not-real-at-all", &["--version"]).await);
     }
 
-    #[test]
-    fn truncate_output_cuts_at_max() {
-        let mut raw = vec![b'a'; MAX_OUTPUT_BYTES + 100];
-        truncate_output(&mut raw, "test");
-        assert_eq!(raw.len(), MAX_OUTPUT_BYTES);
+    #[tokio::test]
+    async fn output_is_capped_while_it_is_read() {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let input = std::io::Cursor::new(vec![b'a'; MAX_OUTPUT_BYTES + 100_000]);
+        drain(Some(input), Arc::clone(&buffer), "test".into()).await;
+        assert_eq!(buffer.lock().unwrap().len(), MAX_OUTPUT_BYTES);
     }
 
-    #[test]
-    fn truncate_output_leaves_small_output_alone() {
-        let mut raw = vec![b'a'; 100];
-        truncate_output(&mut raw, "test");
-        assert_eq!(raw.len(), 100);
+    #[tokio::test]
+    async fn small_output_is_kept_whole() {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let input = std::io::Cursor::new(b"abc".to_vec());
+        drain(Some(input), Arc::clone(&buffer), "test".into()).await;
+        assert_eq!(collected(&buffer), "abc");
+    }
+
+    /// An installer that starts the app it installed leaves a child behind
+    /// that inherited its output pipe. The install is done when the installer
+    /// exits, not when that app is closed.
+    #[tokio::test]
+    async fn a_left_behind_child_does_not_hold_up_the_result() {
+        let started = std::time::Instant::now();
+        let (prog, args) = if cfg!(windows) {
+            (
+                "cmd",
+                vec!["/c", "echo done & start /b ping -n 20 127.0.0.1"],
+            )
+        } else {
+            ("sh", vec!["-c", "echo done; sleep 20 &"])
+        };
+        let out = run(prog, &args, Duration::from_secs(15)).await.unwrap();
+        assert!(out.success());
+        assert!(out.stdout.contains("done"));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// What a launcher started must not outlive the timeout that ended it.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_timeout_ends_what_the_program_started_too() {
+        // A distinctive ping target identifies the grandchild.
+        let marker = "127.77.31.99";
+        let err = run(
+            "cmd",
+            &["/c", "cmd /c ping -n 60 127.77.31.99"],
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, Error::CommandTimeout { .. }));
+
+        let query = format!(
+            "@(Get-CimInstance Win32_Process -Filter \"Name='PING.EXE'\" | \
+             Where-Object {{ $_.CommandLine -like '*{marker}*' }}).Count"
+        );
+        let out = powershell(&query, Duration::from_secs(60)).await.unwrap();
+        assert_eq!(out.stdout.trim(), "0", "the grandchild is still running");
     }
 }

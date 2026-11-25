@@ -33,6 +33,8 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_System_Threading",
+    # `proc::ProcessTree`: stop everything a timed-out program started.
+    "Win32_System_JobObjects",
     "Win32_System_Restore",
     # `platform::reboot_pending` reads the three registry locations Windows
     # itself uses to record "a restart is needed to finish servicing".
