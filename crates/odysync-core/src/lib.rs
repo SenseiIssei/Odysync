@@ -19,6 +19,7 @@ pub mod runner;
 pub mod scan_cache;
 pub mod verification;
 pub mod version;
+pub mod version_native;
 pub mod windows_update;
 
 pub use backend::{ApplyPhase, ApplyProgress, Backend};

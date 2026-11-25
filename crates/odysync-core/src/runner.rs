@@ -13,7 +13,6 @@ use crate::history::UpdateHistory;
 use crate::model::{ApplyOutcome, BackendKind, PlannedUpdate};
 use crate::report::RunReport;
 use crate::restore::RestorePointGuard;
-use crate::version::Version;
 
 /// Default number of retries when no explicit value is configured.
 pub const DEFAULT_MAX_RETRIES: u32 = 2;
@@ -280,7 +279,7 @@ impl<'a> Runner<'a> {
             }
         };
 
-        let actual = Version::parse(&actual_raw);
+        let actual = expected.parse_like(&actual_raw);
 
         // Accept "at least what we asked for": some installers normalise the
         // version string, and a package that jumped further ahead is still not

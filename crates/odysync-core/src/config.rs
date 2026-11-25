@@ -187,11 +187,7 @@ impl Config {
     /// [`backend_enabled`](Config::backend_enabled) as of a given moment.
     ///
     /// Split out so the pause logic is testable without waiting for a clock.
-    pub fn backend_enabled_at(
-        &self,
-        kind: BackendKind,
-        now: jiff::Timestamp,
-    ) -> bool {
+    pub fn backend_enabled_at(&self, kind: BackendKind, now: jiff::Timestamp) -> bool {
         if self
             .disabled_backends
             .iter()
@@ -220,11 +216,7 @@ impl Config {
         self.pause_for_at(kind, jiff::Timestamp::now())
     }
 
-    fn pause_for_at(
-        &self,
-        kind: BackendKind,
-        now: jiff::Timestamp,
-    ) -> Option<&PausedBackend> {
+    fn pause_for_at(&self, kind: BackendKind, now: jiff::Timestamp) -> Option<&PausedBackend> {
         self.paused_backends
             .iter()
             .find(|p| p.backend.eq_ignore_ascii_case(kind.id()) && p.is_active_at(now))
