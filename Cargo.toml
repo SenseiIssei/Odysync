@@ -1,5 +1,7 @@
 [workspace]
-resolver = "2"
+# 3 rather than 2: `cargo update` then prefers versions that still build with
+# the `rust-version` below, so the weekly lockfile refresh cannot break it.
+resolver = "3"
 members = [
     "crates/odysync-core",
     "crates/odysync-verify",

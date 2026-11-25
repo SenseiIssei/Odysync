@@ -56,8 +56,17 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets
 
+      # `--bins` as well: the command line is a binary without a library, and
+      # with `--lib` alone none of its tests ever ran here.
       - name: Test
-        run: cargo test --workspace --lib
+        run: cargo test --workspace --lib --bins
+
+      # Registers, finds and removes a real scheduled task. Only here, on a
+      # machine that is thrown away afterwards; the test refuses to run
+      # anywhere else.
+      - name: Scheduled task test (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test -p odysync-backends --lib -- --ignored a_real_task_can_be_created_found_and_removed
 
       - name: Build release (CLI only)
         run: cargo build --release -p odysync-cli
@@ -161,11 +170,34 @@ jobs:
         working-directory: apps/gui
         run: npm test
 
+      # NSIS, the AppImage tools and the like, which Tauri downloads from
+      # GitHub while packaging. A 504 from there failed the weekly run on two
+      # platforms; kept between runs, most builds need no download at all.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/tauri
+            ~/AppData/Local/tauri
+            ~/Library/Caches/tauri
+          key: tauri-tools-${{ matrix.os }}-${{ hashFiles('apps/gui/package-lock.json') }}
+          restore-keys: tauri-tools-${{ matrix.os }}-
+
       # The same packaging the release uses: installer on Windows, .dmg on
       # macOS, .deb/.rpm/AppImage on Linux, each with the CLI bundled in.
+      # Started again only when a download of a packaging tool failed; a
+      # compile error fails at once.
       - name: Build and package the app
         working-directory: apps/gui
-        run: npx tauri build --config ${{ matrix.config }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            npx tauri build --config ${{ matrix.config }} 2>&1 | tee build.log && exit 0
+            grep -qE 'failed to bundle project: .*(http status: 5[0-9][0-9]|timed out|connection)' build.log || exit 1
+            echo "::warning::a packaging tool could not be downloaded (attempt $attempt)"
+            sleep $((attempt * 30))
+          done
+          exit 1
 
       # Building is not running. Start the real app and require it to still be
       # alive after 20 seconds — long enough for the webview to load and the
@@ -280,13 +312,51 @@ jobs:
           path: "**/*.cdx.json"
           if-no-files-found: error
 
+  # Publishers rename and drop files. An entry that no longer matches makes its
+  # app look up to date from then on: KeePassXC did for months. Once a week
+  # every entry is resolved against its publisher.
+  catalog:
+    name: catalog
+    # Not on a manual run: the lockfile refresh starts one, and a publisher
+    # renaming a file is no reason to hold back dependency updates.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Resolve every catalog entry
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: cargo test -p odysync-backends --lib -- --ignored --nocapture catalog_entries_resolve
+
+  # The oldest Rust the project says it builds with.
+  msrv:
+    name: minimum Rust version
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read rust-version
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p odysync-cli --locked
+        env:
+          # Lints come and go between versions; here only building counts.
+          RUSTFLAGS: ""
+
   # A red scheduled run on main means something changed underneath the
   # project — a new advisory, a new toolchain, a new runner image — and nobody
   # pushed anything that would make them look. Say so where it is seen: one
   # open issue, commented on for every further failure.
   alert:
     name: report a failing weekly run
-    needs: [test, gui, audit, deny, sbom]
+    needs: [test, gui, audit, deny, sbom, catalog, msrv]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
