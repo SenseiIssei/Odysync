@@ -92,9 +92,21 @@ fn resolve_program(program: &str) -> std::path::PathBuf {
     use std::path::{Path, PathBuf};
 
     let raw = Path::new(program);
-    // An explicit path, or a name that already carries its extension, is
-    // something `CreateProcess` resolves correctly on its own.
-    if raw.components().count() > 1 || raw.extension().is_some() {
+    if raw.components().count() > 1 {
+        return raw.to_path_buf();
+    }
+
+    // Windows' own tools come from Windows' own directory, whatever PATH says.
+    // This includes the one that checks signatures: found through PATH, a
+    // `powershell.exe` put in front by any program of the same user would be
+    // run with Odysync's rights and could call every installer valid.
+    if let Some(path) = system_tool(program) {
+        return path;
+    }
+
+    // A name that already carries its extension is something `CreateProcess`
+    // resolves correctly on its own.
+    if raw.extension().is_some() {
         return raw.to_path_buf();
     }
 
@@ -114,6 +126,42 @@ fn resolve_program(program: &str) -> std::path::PathBuf {
     // Nothing matched. Hand the bare name over anyway so the caller still gets
     // the familiar "not found on PATH" error from the spawn.
     PathBuf::from(program)
+}
+
+/// `System32`, asked of Windows itself: `%SystemRoot%` is an environment
+/// variable like any other and can be set per user.
+#[cfg(windows)]
+pub fn system_directory() -> Option<std::path::PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
+
+    let mut buf = [0u16; 260];
+    // SAFETY: the buffer is a live local and its length goes with it.
+    let len = unsafe { GetSystemDirectoryW(Some(&mut buf)) } as usize;
+    if len == 0 || len > buf.len() {
+        return None;
+    }
+    Some(std::ffi::OsString::from_wide(&buf[..len]).into())
+}
+
+/// The full path of `program` if it is one of Windows' own tools.
+#[cfg(windows)]
+fn system_tool(program: &str) -> Option<std::path::PathBuf> {
+    let system = system_directory()?;
+    let lower = program.to_ascii_lowercase();
+    let file = if lower.ends_with(".exe") {
+        lower
+    } else if std::path::Path::new(program).extension().is_none() {
+        format!("{lower}.exe")
+    } else {
+        return None;
+    };
+    let path = if file == "powershell.exe" {
+        system.join(r"WindowsPowerShell\v1.0").join(&file)
+    } else {
+        system.join(&file)
+    };
+    path.is_file().then_some(path)
 }
 
 #[cfg(not(windows))]
@@ -369,12 +417,30 @@ mod tests {
         assert!(resolved.extension().is_some());
     }
 
+    /// The signature check must not go through whatever `powershell.exe` is
+    /// first in a PATH that any program of the same user can change.
+    #[cfg(windows)]
+    #[test]
+    fn windows_own_tools_are_used_by_their_full_path() {
+        let system = system_directory().expect("System32");
+        assert!(system.is_absolute());
+        for name in ["powershell.exe", "powershell", "PowerShell.exe"] {
+            let path = resolve_program(name);
+            assert!(path.starts_with(&system), "{name}: {path:?}");
+            assert!(is_windows_powershell(&path.to_string_lossy()));
+        }
+        for name in ["msiexec.exe", "schtasks", "pnputil"] {
+            let path = resolve_program(name);
+            assert!(path.starts_with(&system), "{name}: {path:?}");
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn an_explicit_extension_or_path_is_left_alone() {
         assert_eq!(
-            resolve_program("powershell.exe"),
-            std::path::Path::new("powershell.exe")
+            resolve_program("odysync-not-a-tool.exe"),
+            std::path::Path::new("odysync-not-a-tool.exe")
         );
         assert_eq!(
             resolve_program(r"C:\Windows\System32\cmd.exe"),

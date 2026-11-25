@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "odysync-core"
 version.workspace = true
 edition.workspace = true
@@ -35,6 +35,8 @@ windows = { version = "0.62", features = [
     "Win32_System_Threading",
     # `proc::ProcessTree`: stop everything a timed-out program started.
     "Win32_System_JobObjects",
+    # `proc::system_directory`: Windows' own tools by their full path.
+    "Win32_System_SystemInformation",
     "Win32_System_Restore",
     # `platform::reboot_pending` reads the three registry locations Windows
     # itself uses to record "a restart is needed to finish servicing".
