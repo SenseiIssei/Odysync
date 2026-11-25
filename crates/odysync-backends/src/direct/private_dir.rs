@@ -16,6 +16,8 @@ use windows::Win32::Security::Authorization::{
 };
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows::Win32::Storage::FileSystem::CreateDirectoryW;
+use windows::Win32::System::Com::CoTaskMemFree;
+use windows::Win32::UI::Shell::{FOLDERID_ProgramData, KNOWN_FOLDER_FLAG, SHGetKnownFolderPath};
 use windows::core::{HSTRING, PCWSTR};
 
 use odysync_core::error::{Error, Result};
@@ -28,12 +30,25 @@ const ADMINS_ONLY: &str = "D:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)";
 
 /// Create a fresh directory for `label` under ProgramData.
 pub fn create(label: &str) -> Result<PathBuf> {
-    let root = std::env::var_os("ProgramData")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .ok_or_else(|| Error::Config("ProgramData is not set".into()))?;
+    let root = program_data()?;
     super::http::remove_leftovers(&root, PREFIX);
     create_in(&root, label)
+}
+
+/// ProgramData as Windows knows it. Not `%ProgramData%`: an elevated process
+/// inherits the environment of the user who started it, and that user's
+/// programs can point the variable at a folder of their own.
+fn program_data() -> Result<PathBuf> {
+    // SAFETY: the string Windows allocates is copied before it is released.
+    unsafe {
+        let path = SHGetKnownFolderPath(&FOLDERID_ProgramData, KNOWN_FOLDER_FLAG(0), None)
+            .map_err(std::io::Error::from)?;
+        let copied = path.to_string();
+        CoTaskMemFree(Some(path.0 as *const _));
+        copied
+            .map(PathBuf::from)
+            .map_err(|_| Error::Config("ProgramData has no readable path".into()))
+    }
 }
 
 fn create_in(root: &Path, label: &str) -> Result<PathBuf> {
@@ -119,6 +134,12 @@ mod tests {
             let err = std::fs::write(dir.join("version.dll"), b"evil").expect_err("refused");
             assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
         }
+    }
+
+    #[test]
+    fn the_place_for_downloads_is_windows_own_answer() {
+        let root = program_data().expect("ProgramData");
+        assert!(root.is_absolute() && root.is_dir(), "{root:?}");
     }
 
     #[test]
