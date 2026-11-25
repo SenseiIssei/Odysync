@@ -118,6 +118,15 @@ fn to_candidate(kind: BackendKind, update: &WuaUpdate) -> UpdateCandidate {
     }
 }
 
+/// Whether a pending update is something to offer.
+///
+/// Not the ones that are installed and only wait for a restart, and not the
+/// optional previews: Windows itself never installs those unless somebody
+/// picks them on its own page, so neither does Odysync.
+fn is_offered(update: &WuaUpdate) -> bool {
+    !update.reboot_pending && !update.browse_only
+}
+
 #[async_trait]
 impl Backend for WindowsUpdateBackend {
     fn kind(&self) -> BackendKind {
@@ -151,8 +160,9 @@ impl Backend for WindowsUpdateBackend {
         // `session::SHARED_SEARCH_TTL`.
         let all = session::search_for_scan(CRITERIA_SOFTWARE).await?;
         Ok(all
+            .updates
             .iter()
-            .filter(|u| self.owns(u))
+            .filter(|u| self.owns(u) && is_offered(u))
             .map(|u| to_candidate(self.kind, u))
             .collect())
     }
@@ -170,7 +180,7 @@ impl Backend for WindowsUpdateBackend {
         // boundary between scan and apply in the GUI, and this backend must
         // never be the one that installs a feature upgrade.
         let all = session::search(CRITERIA_SOFTWARE).await?;
-        let Some(update) = all.iter().find(|u| u.key() == candidate.id.native) else {
+        let Some(update) = all.updates.iter().find(|u| u.key() == candidate.id.native) else {
             return Err(Error::Verification {
                 package: candidate.id.to_string(),
                 detail: "the update was offered during the scan but Windows no longer offers it"
@@ -199,13 +209,12 @@ impl Backend for WindowsUpdateBackend {
         }
 
         // Convergence for a Windows update means "Windows stopped offering
-        // it". An exit code of zero is not accepted as proof, per the runner's
-        // contract; this is the read-back that replaces it.
-        let remaining = session::search(CRITERIA_SOFTWARE).await?;
-        if remaining.iter().any(|u| u.key() == candidate.id.native) {
-            return Ok(None);
-        }
-        Ok(Some(candidate.available.raw().to_string()))
+        // it, or lists it only until the restart". An exit code of zero is not
+        // accepted as proof, per the runner's contract; this is the read-back
+        // that replaces it.
+        let after = session::search(CRITERIA_SOFTWARE).await?;
+        Ok(session::landed(&after, &candidate.id.native)?
+            .then(|| candidate.available.raw().to_string()))
     }
 }
 
@@ -223,8 +232,21 @@ mod tests {
             is_downloaded: false,
             eula_accepted: false,
             size_bytes: None,
+            reboot_pending: false,
+            browse_only: false,
             class,
         }
+    }
+
+    #[test]
+    fn previews_and_updates_waiting_for_a_restart_are_not_offered() {
+        let mut u = wua(UpdateClass::Quality, 1);
+        assert!(is_offered(&u));
+        u.browse_only = true;
+        assert!(!is_offered(&u));
+        u.browse_only = false;
+        u.reboot_pending = true;
+        assert!(!is_offered(&u));
     }
 
     #[test]

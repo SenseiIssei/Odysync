@@ -86,7 +86,12 @@ impl Backend for WindowsDriverBackend {
         }
 
         let updates = session::search_for_scan(CRITERIA_DRIVER).await?;
-        Ok(updates.iter().map(to_candidate).collect())
+        Ok(updates
+            .updates
+            .iter()
+            .filter(|u| !u.reboot_pending)
+            .map(to_candidate)
+            .collect())
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
@@ -102,17 +107,15 @@ impl Backend for WindowsDriverBackend {
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        // Convergence means Windows stopped offering the driver. Still listed
-        // is still pending; gone is installed.
+        // Convergence means Windows stopped offering the driver, or lists it
+        // only until the restart.
         if !cfg!(windows) {
             return Ok(None);
         }
 
-        let remaining = session::search(CRITERIA_DRIVER).await?;
-        if remaining.iter().any(|u| u.key() == candidate.id.native) {
-            return Ok(None);
-        }
-        Ok(Some(candidate.available.raw().to_string()))
+        let after = session::search(CRITERIA_DRIVER).await?;
+        Ok(session::landed(&after, &candidate.id.native)?
+            .then(|| candidate.available.raw().to_string()))
     }
 }
 
@@ -131,6 +134,8 @@ mod tests {
             is_downloaded: false,
             eula_accepted: false,
             size_bytes: None,
+            reboot_pending: false,
+            browse_only: false,
             class: UpdateClass::Driver,
         }
     }
