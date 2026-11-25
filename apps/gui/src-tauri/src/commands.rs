@@ -644,12 +644,32 @@ pub async fn hold(request: HoldRequest, state: State<'_, AppState>) -> Result<()
 #[tauri::command]
 pub async fn unhold(request: HoldRequest, state: State<'_, AppState>) -> Result<(), String> {
     let mut config = state.config();
-    let Some(kind) = backend_kind_from_str(&request.backend) else {
-        return Err(format!("unknown backend: {}", request.backend));
-    };
-    let id = PackageId::new(kind, request.id);
-    if config.policy.release(&id) == 0 {
-        return Err(format!("{id} is not held"));
+    // What the list in Settings shows is the text of the hold, and one written
+    // by hand may name no source.
+    let text = request.id.trim();
+    let before = config.policy.holds.len();
+    config
+        .policy
+        .holds
+        .retain(|h| !h.package.trim().eq_ignore_ascii_case(text));
+    let mut released = before - config.policy.holds.len();
+
+    if let Some(kind) = backend_kind_from_str(&request.backend) {
+        let mut id = PackageId::new(kind, text);
+        // A hold can also name the alias, which only the scan knows.
+        if let Some(alias) = state
+            .scan_cache()
+            .get(kind.id())
+            .and_then(|found| found.iter().find(|c| c.id == id))
+            .and_then(|c| c.id.alias.clone())
+        {
+            id = id.with_alias(alias);
+        }
+        released += config.policy.release(&id);
+    }
+
+    if released == 0 {
+        return Err(format!("{text} is not held"));
     }
     state.save_config(config).map_err(|e| e.to_string())
 }

@@ -307,32 +307,18 @@ export default function Settings() {
  * take effect at once.
  */
 function Holds({ holds }: { holds: Hold[] }) {
-  const { config, backends } = useStore();
+  const { config } = useStore();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [released, setReleased] = useState<string | null>(null);
 
-  /**
-   * `source:id` taken apart, or null for a hold written by hand with a bare
-   * name, which the release command cannot address.
-   */
-  const address = (pkg: string) => {
-    const at = pkg.indexOf(":");
-    if (at < 1) return null;
-    const backend = pkg.slice(0, at);
-    return backends.data.some((b) => b.kind === backend)
-      ? { backend, id: pkg.slice(at + 1) }
-      : null;
-  };
-
   const release = async (pkg: string) => {
-    const target = address(pkg);
-    if (!target) return;
     setBusy(pkg);
     setError(null);
     setReleased(null);
     try {
-      await api.unhold(target);
+      // The text of the hold is enough: one written by hand may name no source.
+      await api.unhold({ backend: "", id: pkg });
       await config.reload();
       setReleased(pkg);
     } catch (e) {
@@ -354,7 +340,6 @@ function Holds({ holds }: { holds: Hold[] }) {
       </p>
       <ul className="mt-2 divide-y divide-line">
         {holds.map((h) => {
-          const releasable = address(h.package) !== null;
           return (
             <li key={h.package} className="flex items-center gap-3 py-2">
               <span className="flex-1 min-w-0">
@@ -363,25 +348,18 @@ function Holds({ holds }: { holds: Hold[] }) {
                   {h.pin ? ` @ ${h.pin}` : ""}
                 </span>
                 {h.note && <span className="block text-xs text-muted">{h.note}</span>}
-                {!releasable && (
-                  <span className="block text-xs text-muted">
-                    Set in the config file without a known source. Release it there.
-                  </span>
-                )}
               </span>
-              {releasable && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  busy={busy === h.package}
-                  disabled={busy !== null}
-                  aria-label={`Release ${h.package}`}
-                  icon={<LockOpen className="w-3.5 h-3.5" />}
-                  onClick={() => void release(h.package)}
-                >
-                  Release
-                </Button>
-              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                busy={busy === h.package}
+                disabled={busy !== null}
+                aria-label={`Release ${h.package}`}
+                icon={<LockOpen className="w-3.5 h-3.5" />}
+                onClick={() => void release(h.package)}
+              >
+                Release
+              </Button>
             </li>
           );
         })}

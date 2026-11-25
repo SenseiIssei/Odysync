@@ -381,7 +381,7 @@ export async function demoInvoke<T>(command: string, args?: Record<string, unkno
     }
     case "unhold": {
       const request = args?.request as HoldRequest;
-      holds.delete(`${request.backend}:${request.id}`);
+      holds.delete(request.backend ? `${request.backend}:${request.id}` : request.id);
       return answer(undefined);
     }
     case "quit_app":

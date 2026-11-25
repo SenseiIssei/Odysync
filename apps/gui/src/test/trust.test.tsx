@@ -430,10 +430,15 @@ describe("settings", () => {
     withStore(<Settings />);
     fireEvent.click(await screen.findByRole("button", { name: "Release direct:user:vscode" }, slow));
     await waitFor(() =>
-      expect(api.unhold).toHaveBeenCalledWith({ backend: "direct", id: "user:vscode" }),
+      expect(api.unhold).toHaveBeenCalledWith({ backend: "", id: "direct:user:vscode" }),
     );
-    // Nothing the release command could address, so nothing to press.
-    expect(screen.queryByRole("button", { name: "Release bare-name" })).toBeNull();
+    // One written by hand, without a source, can be released as well.
+    const bare = await screen.findByRole("button", { name: "Release bare-name" }, slow);
+    await waitFor(() => expect((bare as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(bare);
+    await waitFor(() =>
+      expect(api.unhold).toHaveBeenCalledWith({ backend: "", id: "bare-name" }),
+    );
   });
 
   it("moves a choice with the arrow keys", async () => {
