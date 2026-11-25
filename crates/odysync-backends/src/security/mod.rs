@@ -242,7 +242,7 @@ pub async fn scan() -> ScanReport {
 }
 
 pub async fn scan_with_progress(progress: Option<ProgressSink<'_>>) -> ScanReport {
-    let scanned_at = chrono::Utc::now().to_rfc3339();
+    let scanned_at = jiff::Timestamp::now().to_string();
 
     let (defender, persistence, integrity, network, posture) = futures::join!(
         run_section("defender", defender::scan(), progress),

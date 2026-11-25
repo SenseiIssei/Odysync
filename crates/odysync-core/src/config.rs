@@ -96,9 +96,9 @@ impl PausedBackend {
     /// permanent. A typo in a hand-edited config must not silently stop
     /// security updates forever; failing open here means the worst case is an
     /// update the user wanted to defer, rather than one they never receive.
-    pub fn is_active_at(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
-        match chrono::DateTime::parse_from_rfc3339(self.until.trim()) {
-            Ok(until) => now < until.with_timezone(&chrono::Utc),
+    pub fn is_active_at(&self, now: jiff::Timestamp) -> bool {
+        match self.until.trim().parse::<jiff::Timestamp>() {
+            Ok(until) => now < until,
             Err(e) => {
                 tracing::warn!(
                     backend = %self.backend,
@@ -181,7 +181,7 @@ impl Config {
     /// An explicit disable always wins, so a user who turns something off does
     /// not have it turned back on by an opt-in list they edited earlier.
     pub fn backend_enabled(&self, kind: BackendKind) -> bool {
-        self.backend_enabled_at(kind, chrono::Utc::now())
+        self.backend_enabled_at(kind, jiff::Timestamp::now())
     }
 
     /// [`backend_enabled`](Config::backend_enabled) as of a given moment.
@@ -190,7 +190,7 @@ impl Config {
     pub fn backend_enabled_at(
         &self,
         kind: BackendKind,
-        now: chrono::DateTime<chrono::Utc>,
+        now: jiff::Timestamp,
     ) -> bool {
         if self
             .disabled_backends
@@ -217,13 +217,13 @@ impl Config {
     /// is missing and when it comes back — "paused until 3 August" is
     /// actionable, "no updates found" is misleading.
     pub fn pause_for(&self, kind: BackendKind) -> Option<&PausedBackend> {
-        self.pause_for_at(kind, chrono::Utc::now())
+        self.pause_for_at(kind, jiff::Timestamp::now())
     }
 
     fn pause_for_at(
         &self,
         kind: BackendKind,
-        now: chrono::DateTime<chrono::Utc>,
+        now: jiff::Timestamp,
     ) -> Option<&PausedBackend> {
         self.paused_backends
             .iter()
@@ -234,14 +234,14 @@ impl Config {
     pub fn pause_backend(
         &mut self,
         kind: BackendKind,
-        until: chrono::DateTime<chrono::Utc>,
+        until: jiff::Timestamp,
         note: Option<String>,
     ) {
         self.paused_backends
             .retain(|p| !p.backend.eq_ignore_ascii_case(kind.id()));
         self.paused_backends.push(PausedBackend {
             backend: kind.id().to_string(),
-            until: until.to_rfc3339(),
+            until: until.to_string(),
             note,
         });
     }
@@ -357,10 +357,8 @@ mod tests {
         }
     }
 
-    fn at(text: &str) -> chrono::DateTime<chrono::Utc> {
-        chrono::DateTime::parse_from_rfc3339(text)
-            .unwrap()
-            .with_timezone(&chrono::Utc)
+    fn at(text: &str) -> jiff::Timestamp {
+        text.parse().unwrap()
     }
 
     #[test]

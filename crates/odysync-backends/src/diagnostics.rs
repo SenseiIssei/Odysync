@@ -39,7 +39,7 @@ pub async fn create_diagnostics(
          Generated: {}\n",
         platform::os_label(),
         platform::is_elevated(),
-        chrono::Utc::now(),
+        jiff::Timestamp::now(),
     );
     zip.start_file("env.txt", options)
         .map_err(|e| odysync_core::error::Error::Io(std::io::Error::other(e.to_string())))?;

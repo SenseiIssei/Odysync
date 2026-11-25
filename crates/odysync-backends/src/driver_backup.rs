@@ -263,8 +263,8 @@ fn safe_backup_path(root: &Path, id: &str) -> Result<PathBuf> {
 }
 
 /// A timestamp usable as a directory name on Windows, where `:` is illegal.
-fn backup_id_for(now: chrono::DateTime<chrono::Utc>) -> String {
-    now.format("%Y-%m-%dT%H-%M-%SZ").to_string()
+fn backup_id_for(now: jiff::Timestamp) -> String {
+    now.strftime("%Y-%m-%dT%H-%M-%SZ").to_string()
 }
 
 // ── Enumerate ───────────────────────────────────────────────────────────────
@@ -297,7 +297,7 @@ pub async fn create_backup(reason: &str) -> Result<BackupManifest> {
 /// [`create_backup`] over a caller-supplied package list.
 pub async fn create_backup_of(reason: &str, packages: &[DriverPackage]) -> Result<BackupManifest> {
     let root = backup_root()?;
-    let id = backup_id_for(chrono::Utc::now());
+    let id = backup_id_for(jiff::Timestamp::now());
     let dir = safe_backup_path(&root, &id)?;
     std::fs::create_dir_all(&dir)?;
 
@@ -360,7 +360,7 @@ pub async fn create_backup_of(reason: &str, packages: &[DriverPackage]) -> Resul
 
     let manifest = BackupManifest {
         id: id.clone(),
-        created_at: chrono::Utc::now().to_rfc3339(),
+        created_at: jiff::Timestamp::now().to_string(),
         reason: reason.to_string(),
         packages: saved,
         failures,
@@ -688,9 +688,7 @@ mod tests {
 
     #[test]
     fn the_backup_id_is_a_legal_windows_directory_name() {
-        let ts = chrono::DateTime::parse_from_rfc3339("2026-07-27T14:05:33Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
+        let ts: jiff::Timestamp = "2026-07-27T14:05:33Z".parse().unwrap();
         let id = backup_id_for(ts);
         assert_eq!(id, "2026-07-27T14-05-33Z");
         // `:` is illegal in a Windows path component, which is the whole

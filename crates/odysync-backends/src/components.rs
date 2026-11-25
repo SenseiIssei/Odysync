@@ -411,7 +411,7 @@ mod windows_impl {
 
         let dir = http::download_dir()?.join(format!(
             "component-{id}-{}",
-            chrono::Utc::now().timestamp_millis()
+            jiff::Timestamp::now().as_millisecond()
         ));
         tokio::fs::create_dir_all(&dir).await?;
         let file = dir.join(http::file_name_for(&url, "installer.exe"));

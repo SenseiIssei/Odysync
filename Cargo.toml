@@ -38,7 +38,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "ti
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
-chrono = { version = "0.4", features = ["serde"] }
+jiff = { version = "1", default-features = false, features = ["std", "serde"] }
 sha2 = "0.11"
 hex = "0.4"
 directories = "6"

@@ -630,14 +630,14 @@ async fn run(cli: Cli) -> Result<u8> {
                 );
             };
 
-            let until = chrono::Utc::now() + chrono::Duration::days(days as i64);
+            let until = jiff::Timestamp::now() + jiff::SignedDuration::from_hours(24 * i64::from(days));
             config.pause_backend(kind, until, note);
             config.save(&config_path)?;
 
             println!(
                 "Paused {} for {days} day(s), until {}.",
                 kind.id(),
-                until.format("%Y-%m-%d %H:%M UTC")
+                until.strftime("%Y-%m-%d %H:%M UTC")
             );
             // Said out loud because a paused security backend is exactly the
             // state a user can forget they put the machine into.

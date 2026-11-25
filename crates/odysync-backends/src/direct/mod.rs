@@ -541,7 +541,7 @@ pub mod windows_apply {
             "{}-{}-{}",
             entry.id,
             release.version,
-            chrono::Utc::now().timestamp_millis()
+            jiff::Timestamp::now().as_millisecond()
         ));
         tokio::fs::create_dir_all(&dir).await?;
         let file = dir.join(http::file_name_for(&release.url, "installer.bin"));

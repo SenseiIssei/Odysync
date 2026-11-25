@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{ApplyOutcome, BackendKind, PackageId};
@@ -16,7 +16,7 @@ use crate::model::{ApplyOutcome, BackendKind, PackageId};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     /// When the apply was attempted.
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     /// Which package was being updated.
     pub package_id: String,
     /// Human-readable package name.
@@ -99,7 +99,7 @@ impl UpdateHistory {
         outcome: &ApplyOutcome,
     ) {
         let entry = HistoryEntry {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             package_id: package_id.to_string(),
             package_name: package_name.to_string(),
             backend: package_id.backend,
@@ -160,6 +160,21 @@ fn history_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Histories written before 3.2 carry the timestamps of another library,
+    /// with nanoseconds and either spelling of UTC. They must keep loading:
+    /// an unreadable entry would empty the whole page.
+    #[test]
+    fn older_history_timestamps_still_load() {
+        for ts in [
+            "2026-10-16T13:24:07.123456789Z",
+            "2026-10-16T13:24:07Z",
+            "2026-10-16T13:24:07.123456789+00:00",
+        ] {
+            let parsed: Timestamp = serde_json::from_str(&format!("{ts:?}")).expect(ts);
+            assert_eq!(parsed.as_second(), 1_792_157_047, "{ts}");
+        }
+    }
     use tempfile::tempdir;
 
     #[test]

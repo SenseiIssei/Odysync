@@ -382,7 +382,7 @@ if ($k) {{ [string]$k.GetValue({quoted_name}) }}"
         hive: normalized.clone(),
         name: name.to_string(),
         value: value.clone(),
-        removed_at: chrono::Utc::now().to_rfc3339(),
+        removed_at: jiff::Timestamp::now().to_string(),
     };
     let backup_path = append_run_key_backup(&backup)?;
 
@@ -458,7 +458,7 @@ async fn quarantine_file(path: &str) -> Result<String> {
         ));
     }
 
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ").to_string();
     let dest = quarantine_dir()?.join(quarantine_name(path, &stamp));
 
     let moved = move_file(&source, &dest)?;
@@ -523,7 +523,7 @@ async fn reset_hosts_file() -> Result<String> {
 
     let backup = restore_dir()?.join(format!(
         "hosts-{}.bak",
-        chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+        jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ")
     ));
     if hosts.is_file() {
         std::fs::copy(&hosts, &backup)?;

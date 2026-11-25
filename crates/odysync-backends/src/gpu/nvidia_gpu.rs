@@ -263,7 +263,7 @@ impl Backend for NvidiaGpuBackend {
             let dir = crate::direct::http::download_dir()?.join(format!(
                 "nvidia-{}-{}",
                 driver.version,
-                chrono::Utc::now().timestamp_millis()
+                jiff::Timestamp::now().as_millisecond()
             ));
             tokio::fs::create_dir_all(&dir).await?;
             let file = dir.join(crate::direct::http::file_name_for(

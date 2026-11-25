@@ -772,7 +772,7 @@ pub async fn get_update_history() -> Result<Vec<HistoryEntryDto>, String> {
         .iter()
         .rev()
         .map(|e| HistoryEntryDto {
-            timestamp: e.timestamp.to_rfc3339(),
+            timestamp: e.timestamp.to_string(),
             package: e.package_name.clone(),
             backend: e.backend.id().to_string(),
             from_version: e.from_version.clone(),

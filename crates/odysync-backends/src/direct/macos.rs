@@ -485,7 +485,7 @@ pub mod imp {
         let work = http::download_dir()?.join(format!(
             "mac-{}-{}",
             bundle_id.replace(|c: char| !c.is_ascii_alphanumeric(), "-"),
-            chrono::Utc::now().timestamp_millis()
+            jiff::Timestamp::now().as_millisecond()
         ));
         std::fs::create_dir_all(&work)?;
         let archive = work.join(http::file_name_for(&release.url, "update.zip"));
