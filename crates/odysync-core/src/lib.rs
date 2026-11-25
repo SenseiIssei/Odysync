@@ -2,6 +2,7 @@
 //! apply runner. This crate performs no I/O against package managers — that
 //! lives in `odysync-backends` — which keeps every safety rule unit-testable.
 
+pub mod apply_lock;
 pub mod backend;
 pub mod cleanup;
 pub mod config;
@@ -16,16 +17,16 @@ pub mod proc;
 pub mod report;
 pub mod restore;
 pub mod runner;
-pub mod scan_cache;
 pub mod verification;
 pub mod version;
+pub mod version_native;
 pub mod windows_update;
 
+pub use apply_lock::ApplyLock;
 pub use backend::{ApplyPhase, ApplyProgress, Backend};
 pub use cleanup::{CleanupCategory, CleanupFinding, CleanupOutcome, Reversibility};
 pub use config::Config;
 pub use error::{Error, Result};
-pub use health::{HealthCheckResult, all_passed, failure_reasons, run_health_checks};
 pub use history::{HistoryEntry, HistoryOutcome, UpdateHistory};
 pub use maintenance::{Maintenance, MaintenanceKind, MaintenanceResult};
 pub use model::{
@@ -36,7 +37,6 @@ pub use policy::{Hold, Policy};
 pub use report::RunReport;
 pub use restore::RestorePointGuard;
 pub use runner::{ProgressEmitter, ProgressEvent, Runner};
-pub use scan_cache::ScanCache;
 pub use verification::{Verification, verification_of};
 pub use version::Version;
 pub use windows_update::UpdateClass;

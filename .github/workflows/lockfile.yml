@@ -1,11 +1,18 @@
 name: Lockfile maintenance
 
 # Dependabot raises the dependencies named in Cargo.toml and package.json, but
-# not what they pull in. A security fix in a transitive crate — rustls-webpki
-# under reqwest, October 2026 — therefore sat unapplied while every pull
-# request failed the audit. Once a week this refreshes both lockfiles within
-# the ranges the manifests allow, runs the full CI on the result and merges it
-# only when everything is green.
+# not what they pull in. A security fix in a transitive crate (rustls-webpki
+# under reqwest, October 2026) therefore sat unapplied while every pull request
+# failed the audit. Once a week this refreshes both lockfiles within the ranges
+# the manifests allow, runs the full CI on the result and merges it only when
+# everything is green. It is also what raises Tauri, whose Rust and npm halves
+# must move together.
+#
+# Opening a pull request from a workflow needs one repository setting:
+# Settings > Actions > General > "Allow GitHub Actions to create and approve
+# pull requests". Without it the branch is still refreshed and checked, and an
+# issue with a link to open the pull request says so. It used to fail silently,
+# four weeks in a row.
 
 on:
   schedule:
@@ -17,6 +24,7 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
+  issues: write
 
 jobs:
   refresh:
@@ -35,9 +43,10 @@ jobs:
           cargo update
           cd apps/gui && npm update --package-lock-only
 
-      - name: Open a pull request and merge it once CI passes
+      - name: Check the refreshed lockfiles and merge them
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if git diff --quiet; then
@@ -45,25 +54,68 @@ jobs:
             exit 0
           fi
 
-          branch="chore/lockfiles-$(date -u +%Y-%m-%d)"
+          # One branch, replaced every week: dated ones piled up.
+          branch="chore/lockfiles"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
           git commit -am "chore(deps): refresh lockfiles"
-          git push -u origin "$branch"
-          gh pr create --base main --head "$branch" \
-            --title "chore(deps): refresh lockfiles" \
-            --body "Weekly refresh of Cargo.lock and package-lock.json within the ranges the manifests allow. Merged automatically when the full CI passes."
+          git push --force -u origin "$branch"
+          sha=$(git rev-parse HEAD)
+
+          title="chore(deps): refresh lockfiles"
+          pr=$(gh pr list -R "$REPO" --head "$branch" --base main --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            if gh pr create -R "$REPO" --base main --head "$branch" --title "$title" \
+                 --body "Weekly refresh of Cargo.lock and package-lock.json within the ranges the manifests allow. Merged automatically when the full CI passes." 2> pr.err; then
+              pr=$(gh pr list -R "$REPO" --head "$branch" --base main --state open --json number --jq '.[0].number')
+            else
+              cat pr.err
+            fi
+          fi
 
           # A pull request opened with GITHUB_TOKEN starts no workflows, so the
           # CI is dispatched on the branch explicitly and awaited here.
-          gh workflow run rust.yml --ref "$branch"
-          sleep 30
-          run_id=$(gh run list --workflow rust.yml --branch "$branch" --event workflow_dispatch -L 1 \
-                     --json databaseId --jq '.[0].databaseId')
-          if gh run watch "$run_id" --exit-status --interval 60 > /dev/null; then
-            gh pr merge "$branch" --squash --delete-branch
-            echo "Merged."
-          else
-            echo "CI failed on the refreshed lockfiles; the pull request stays open for a look."
+          gh workflow run rust.yml -R "$REPO" --ref "$branch"
+          run_id=""
+          for _ in 1 2 3 4 5 6; do
+            sleep 20
+            run_id=$(gh run list -R "$REPO" --workflow rust.yml --branch "$branch" --event workflow_dispatch -L 5 \
+                       --json databaseId,headSha --jq ".[] | select(.headSha == \"$sha\") | .databaseId" | head -n1)
+            [ -n "$run_id" ] && break
+          done
+          if [ -z "$run_id" ]; then
+            echo "The CI run on $branch did not start."
+            exit 1
           fi
+
+          if gh run watch "$run_id" -R "$REPO" --exit-status --interval 60 > /dev/null; then
+            ci=passed
+          else
+            ci=failed
+          fi
+
+          if [ -n "$pr" ] && [ "$ci" = passed ]; then
+            if gh pr merge "$pr" -R "$REPO" --squash --match-head-commit "$sha" --delete-branch; then
+              echo "Merged #$pr."
+              exit 0
+            fi
+            ci="passed, but the merge was refused"
+          fi
+
+          # Someone has to look: say so where it is seen.
+          issue_title="The weekly lockfile refresh needs a look"
+          body="CI on \`$branch\` $ci: ${{ github.server_url }}/$REPO/actions/runs/$run_id"
+          if [ -z "$pr" ]; then
+            body="$body
+
+          This workflow may not open pull requests. Either open it here: ${{ github.server_url }}/$REPO/compare/main...$branch?expand=1
+          or allow it in Settings > Actions > General > Allow GitHub Actions to create and approve pull requests."
+          fi
+          existing=$(gh issue list -R "$REPO" --state open --search "\"$issue_title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" -R "$REPO" --body "$body"
+          else
+            gh issue create -R "$REPO" --title "$issue_title" --body "$body"
+          fi
+          exit 1

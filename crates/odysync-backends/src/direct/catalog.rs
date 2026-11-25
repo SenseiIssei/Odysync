@@ -25,6 +25,7 @@
 
 use std::collections::BTreeMap;
 
+use odysync_core::version::Version;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -75,6 +76,10 @@ pub struct CatalogApp {
     pub extra_args: Vec<String>,
     /// Subject CN or O the installer's code signature must carry.
     pub signer: String,
+    /// How the path of the running program ends, for installs that do not
+    /// record where they live. Windows Installer packages usually do not.
+    #[serde(default)]
+    pub processes: Vec<String>,
 }
 
 impl CatalogApp {
@@ -129,6 +134,13 @@ pub enum Source {
         /// per-user installer. Falls back to `assets`.
         #[serde(default)]
         user_assets: BTreeMap<String, String>,
+        /// Stay on the installed line: how many leading version numbers must
+        /// not change. For publishers who keep several lines alive and where
+        /// the newest one is not simply the next update. PowerShell 7.7 no
+        /// longer ships a Windows Installer package, 7.6 still does and still
+        /// gets security fixes.
+        #[serde(default)]
+        same_line: Option<usize>,
     },
     /// A vendor JSON endpoint per `<scope>-<arch>`, returning one object.
     Json {
@@ -259,6 +271,47 @@ pub fn version_from_tag(pattern: &str, tag: &str) -> Option<String> {
     }
 }
 
+/// The newest stable release on the same line as `installed`.
+///
+/// `parts` is how many leading numbers make a line: 2 keeps 7.6.x on 7.6.
+pub fn pick_github_release<'a>(
+    releases: &'a serde_json::Value,
+    tag_pattern: &str,
+    installed: &str,
+    parts: usize,
+) -> Option<&'a serde_json::Value> {
+    let line = |v: &str| -> Option<Vec<u64>> {
+        let numbers: Vec<u64> = v
+            .trim()
+            .split('.')
+            .take(parts)
+            .map(str::parse)
+            .collect::<Result<_, _>>()
+            .ok()?;
+        (numbers.len() == parts).then_some(numbers)
+    };
+    let wanted = line(installed)?;
+    let flag = |r: &serde_json::Value, name: &str| {
+        r.get(name).and_then(serde_json::Value::as_bool) == Some(true)
+    };
+    releases
+        .as_array()?
+        .iter()
+        .filter(|r| !flag(r, "draft") && !flag(r, "prerelease"))
+        .filter_map(|r| {
+            let version = version_from_tag(tag_pattern, r.get("tag_name")?.as_str()?)?;
+            (line(&version)? == wanted).then(|| (Version::parse(&version), r))
+        })
+        .reduce(|best, next| {
+            if best.0.is_upgrade_to(&next.0) {
+                next
+            } else {
+                best
+            }
+        })
+        .map(|(_, r)| r)
+}
+
 /// The asset-name pattern for this scope and architecture.
 pub fn asset_pattern<'a>(
     assets: &'a BTreeMap<String, String>,
@@ -343,6 +396,44 @@ mod tests {
         }
     }
 
+    /// PowerShell's real list in November 2026: the newest release has no
+    /// installer Odysync can use, the installed line still gets fixes.
+    #[test]
+    fn a_line_is_kept_when_the_publisher_moves_on() {
+        let releases = serde_json::json!([
+            { "tag_name": "v7.7.0", "draft": false, "prerelease": false },
+            { "tag_name": "v7.6.9", "draft": false, "prerelease": false },
+            { "tag_name": "v7.6.10", "draft": false, "prerelease": false },
+            { "tag_name": "v7.6.11", "draft": true, "prerelease": false },
+            { "tag_name": "v7.7.0-rc.1", "draft": false, "prerelease": true },
+            { "tag_name": "v7.4.22", "draft": false, "prerelease": false },
+        ]);
+        let tag = r"^v(?P<v>\d+\.\d+\.\d+)$";
+        let pick = |installed: &str| {
+            pick_github_release(&releases, tag, installed, 2).and_then(|r| r["tag_name"].as_str())
+        };
+        assert_eq!(pick("7.6.8.0"), Some("v7.6.10"));
+        assert_eq!(pick("7.4.1"), Some("v7.4.22"));
+        assert_eq!(pick("7.5.0"), None, "a line nobody maintains any more");
+        assert_eq!(pick("unknown"), None);
+        assert_eq!(pick("7"), None);
+    }
+
+    /// Without it, "is it running?" has no answer for these and the check
+    /// that protects an open program is skipped.
+    #[test]
+    fn every_windows_installer_entry_names_its_program() {
+        for app in Catalog::embedded().apps {
+            if app.installer == InstallerKind::Msi {
+                assert!(!app.processes.is_empty(), "{} names no program", app.id);
+            }
+            for p in &app.processes {
+                assert!(p.to_ascii_lowercase().ends_with(".exe"), "{p}");
+                assert!(!p.starts_with('\\'), "{p}");
+            }
+        }
+    }
+
     #[test]
     fn the_embedded_catalog_parses_and_every_entry_is_complete() {
         let catalog = Catalog::embedded();
@@ -381,6 +472,7 @@ mod tests {
                     tag,
                     assets,
                     user_assets,
+                    ..
                 } => {
                     assert_eq!(repo.split('/').count(), 2, "{}: repo", entry.id);
                     let re = Regex::new(tag).expect("tag regex");

@@ -6,15 +6,18 @@
 //! * **HTTPS on every hop.** The redirect policy refuses a redirect to
 //!   `http://`, so a download that starts on `https://github.com` cannot be
 //!   bounced onto plaintext where it could be swapped in transit.
-//! * **Conditional requests for metadata.** GitHub allows 60 unauthenticated
-//!   API calls an hour. A scan touches one release per installed catalog app,
-//!   and a `304 Not Modified` answer to an `If-None-Match` request does not
-//!   count against that limit — so repeated scans are effectively free.
+//! * **A short memory for metadata.** GitHub allows 60 unauthenticated API
+//!   calls an hour, and a scan makes one per installed catalog app. A
+//!   `304 Not Modified` counts against that limit unless the request carries a
+//!   token (measured: three of them, three calls gone), so a scan reuses an
+//!   answer that is a few minutes old instead of asking again. Installing
+//!   always asks afresh and never falls back to what is on disk.
 //! * **A hard size cap on downloads**, checked while streaming, so a hostile or
 //!   broken server cannot fill the disk.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::RwLock;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -47,8 +50,42 @@ fn other(msg: impl Into<String>) -> Error {
     }
 }
 
+/// How old an answer a scan may reuse without asking again.
+const SCAN_MAX_AGE: Duration = Duration::from_secs(10 * 60);
+
+/// How old an answer may stand in for one that cannot be had at all. Older
+/// than this it says too little about what the publisher offers today.
+const STALE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// The proxy from the settings, for every client that is not given its own.
+static PROXY: RwLock<Option<String>> = RwLock::new(None);
+
+/// Use `proxy_url` for all downloads and lookups from here on.
+///
+/// The backends are built without a configuration; the setting used to be
+/// shown, saved, and never reach any of them.
+pub fn set_proxy(proxy_url: Option<&str>) {
+    let value = proxy_url
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string);
+    *PROXY.write().unwrap_or_else(|p| p.into_inner()) = value;
+}
+
+/// What a request is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    /// Listing what is available: a recent answer is good enough, and an older
+    /// one better than none.
+    Scan,
+    /// Deciding what to install: only what the publisher says right now.
+    Install,
+}
+
 /// A client that will only ever speak HTTPS, including across redirects.
 pub fn client(proxy_url: Option<&str>, timeout: Duration) -> Result<reqwest::Client> {
+    let configured = PROXY.read().unwrap_or_else(|p| p.into_inner()).clone();
+    let proxy_url = proxy_url.or(configured.as_deref());
     let policy = reqwest::redirect::Policy::custom(|attempt| {
         if attempt.previous().len() > 10 {
             attempt.error("too many redirects")
@@ -83,11 +120,67 @@ fn cache_root() -> Result<PathBuf> {
     Ok(dirs.cache_dir().join("direct"))
 }
 
-/// The directory installers are downloaded into before they are verified.
-pub fn download_dir() -> Result<PathBuf> {
-    let dir = cache_root()?.join("downloads");
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
+/// A fresh, empty directory for one download, removed again when dropped.
+///
+/// The installer runs from here. When Odysync is elevated the directory is
+/// one that only administrators can write to: locking the installer file stops
+/// anyone from swapping *it*, but a program looks for its libraries next to
+/// itself first, and an unprivileged process could put a `version.dll` beside
+/// an installer that is about to run with administrator rights.
+pub struct DownloadDir(PathBuf);
+
+impl DownloadDir {
+    pub fn new(label: &str) -> Result<Self> {
+        #[cfg(windows)]
+        if odysync_core::platform::is_elevated() {
+            return super::private_dir::create(label).map(Self);
+        }
+
+        let root = cache_root()?.join("downloads");
+        std::fs::create_dir_all(&root)?;
+        remove_leftovers(&root, "");
+        let dir = root.join(format!(
+            "{label}-{}",
+            jiff::Timestamp::now().as_millisecond()
+        ));
+        // Not `create_dir_all`: a directory that is already there is not ours.
+        std::fs::create_dir(&dir)?;
+        Ok(Self(dir))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for DownloadDir {
+    fn drop(&mut self) {
+        if let Err(e) = std::fs::remove_dir_all(&self.0) {
+            tracing::debug!(dir = %self.0.display(), error = %e, "download not removed yet");
+        }
+    }
+}
+
+/// Remove what an interrupted update left behind: directories in `root` that
+/// start with `prefix` and have not been touched for a day.
+pub(super) fn remove_leftovers(root: &Path, prefix: &str) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .is_some_and(|age| age > STALE_MAX_AGE);
+        if old
+            && entry.file_name().to_string_lossy().starts_with(prefix)
+            && entry.file_type().is_ok_and(|t| t.is_dir())
+        {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -102,12 +195,30 @@ fn cache_file_for(url: &str) -> Result<PathBuf> {
     Ok(cache_root()?.join("http").join(format!("{key}.json")))
 }
 
-/// GET `url` as text, revalidating a cached copy instead of re-downloading it.
-///
-/// A network failure with a cached copy on disk returns the cached copy: a
-/// stale "latest version" is still a correct one to compare against, and the
-/// download it leads to is verified independently anyway.
+/// The stored answer for `url` and how old it is.
+fn read_cached(path: &Path) -> Option<(CachedResponse, Duration)> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    let age = SystemTime::now()
+        .duration_since(modified)
+        // Written "in the future": the clock was changed, so its age is
+        // unknown and it counts as old.
+        .unwrap_or(Duration::MAX);
+    Some((serde_json::from_str(&text).ok()?, age))
+}
+
+/// GET `url` as text for listing what is available.
 pub async fn get_text(client: &reqwest::Client, url: &str) -> Result<String> {
+    get_text_for(client, url, Purpose::Scan).await
+}
+
+/// GET `url` as text.
+///
+/// For [`Purpose::Scan`] an answer from the last few minutes is reused, an
+/// older one is revalidated, and one from the last day stands in when the
+/// network fails: a slightly stale "latest version" is still a version to
+/// compare against. For [`Purpose::Install`] nothing on disk is consulted.
+pub async fn get_text_for(client: &reqwest::Client, url: &str, purpose: Purpose) -> Result<String> {
     if !url.starts_with("https://") {
         return Err(Error::security(
             "direct",
@@ -115,10 +226,22 @@ pub async fn get_text(client: &reqwest::Client, url: &str) -> Result<String> {
         ));
     }
     let cache_path = cache_file_for(url).ok();
-    let cached: Option<CachedResponse> = cache_path
-        .as_ref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|t| serde_json::from_str(&t).ok());
+    let cached = match purpose {
+        Purpose::Scan => cache_path.as_deref().and_then(read_cached),
+        Purpose::Install => None,
+    };
+    if let Some((c, age)) = &cached
+        && *age < SCAN_MAX_AGE
+    {
+        return Ok(c.body.clone());
+    }
+    let fallback = |why: String| match &cached {
+        Some((c, age)) if *age < STALE_MAX_AGE => {
+            tracing::info!(url, why, "using the last known answer");
+            Ok(c.body.clone())
+        }
+        _ => Err(other(why)),
+    };
 
     let mut request = client.get(url).timeout(METADATA_TIMEOUT);
     if url.starts_with("https://api.github.com/") {
@@ -133,7 +256,7 @@ pub async fn get_text(client: &reqwest::Client, url: &str) -> Result<String> {
             request = request.bearer_auth(token.trim());
         }
     }
-    if let Some(c) = &cached {
+    if let Some((c, _)) = &cached {
         if let Some(etag) = &c.etag {
             request = request.header("If-None-Match", etag);
         }
@@ -144,50 +267,38 @@ pub async fn get_text(client: &reqwest::Client, url: &str) -> Result<String> {
 
     let response = match request.send().await {
         Ok(r) => r,
-        Err(e) => {
-            return match cached {
-                Some(c) => {
-                    tracing::debug!(url, error = %e, "network error; using the cached response");
-                    Ok(c.body)
-                }
-                None => Err(other(format!("could not fetch {url}: {e}"))),
-            };
-        }
+        Err(e) => return fallback(format!("could not fetch {url}: {e}")),
     };
 
     let status = response.status();
-    if status == reqwest::StatusCode::NOT_MODIFIED
-        && let Some(c) = cached
+    let (etag, last_modified, body) = if status == reqwest::StatusCode::NOT_MODIFIED
+        && let Some((c, _)) = cached
     {
-        return Ok(c.body);
-    }
-    if !status.is_success() {
-        if let Some(c) = cached {
-            tracing::debug!(url, %status, "server error; using the cached response");
-            return Ok(c.body);
-        }
+        (c.etag, c.last_modified, c.body)
+    } else if status.is_success() {
+        let header = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        let (etag, last_modified) = (header("etag"), header("last-modified"));
+        let body = response
+            .text()
+            .await
+            .map_err(|e| other(format!("could not read {url}: {e}")))?;
+        (etag, last_modified, body)
+    } else {
         let hint = if status == reqwest::StatusCode::FORBIDDEN && url.contains("api.github.com") {
             " (GitHub's hourly limit for anonymous requests; set GITHUB_TOKEN to raise it)"
         } else {
             ""
         };
-        return Err(other(format!("{url} answered {status}{hint}")));
-    }
-
-    let header = |name: &str| {
-        response
-            .headers()
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string)
+        return fallback(format!("{url} answered {status}{hint}"));
     };
-    let etag = header("etag");
-    let last_modified = header("last-modified");
-    let body = response
-        .text()
-        .await
-        .map_err(|e| other(format!("could not read {url}: {e}")))?;
 
+    // Written after a 304 as well, so that the answer counts as fresh again.
     if let Some(path) = cache_path {
         let entry = CachedResponse {
             etag,
@@ -205,9 +316,18 @@ pub async fn get_text(client: &reqwest::Client, url: &str) -> Result<String> {
     Ok(body)
 }
 
-/// GET `url` and parse it as JSON.
+/// GET `url` and parse it as JSON, for listing what is available.
 pub async fn get_json(client: &reqwest::Client, url: &str) -> Result<serde_json::Value> {
-    let text = get_text(client, url).await?;
+    get_json_for(client, url, Purpose::Scan).await
+}
+
+/// GET `url` and parse it as JSON.
+pub async fn get_json_for(
+    client: &reqwest::Client,
+    url: &str,
+    purpose: Purpose,
+) -> Result<serde_json::Value> {
+    let text = get_text_for(client, url, purpose).await?;
     serde_json::from_str(&text).map_err(|e| other(format!("{url} did not return JSON: {e}")))
 }
 
@@ -321,6 +441,59 @@ mod tests {
             file_name_for("https://h/...", "fallback.bin"),
             "fallback.bin"
         );
+    }
+
+    #[test]
+    fn a_stored_answer_knows_its_age() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.json");
+        assert!(read_cached(&path).is_none());
+        std::fs::write(&path, r#"{"etag":null,"last_modified":null,"body":"hi"}"#).unwrap();
+        let (c, age) = read_cached(&path).expect("stored");
+        assert_eq!(c.body, "hi");
+        assert!(age < SCAN_MAX_AGE);
+
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let (_, age) = read_cached(&path).expect("stored");
+        assert!(age > SCAN_MAX_AGE && age < STALE_MAX_AGE);
+
+        // A clock that was set back must not make an answer fresh for ever.
+        let future = SystemTime::now() + Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(future)
+            .unwrap();
+        assert_eq!(read_cached(&path).expect("stored").1, Duration::MAX);
+    }
+
+    #[test]
+    fn a_download_directory_is_new_empty_and_gone_afterwards() {
+        let dir = DownloadDir::new("unit-test").expect("create");
+        let path = dir.path().to_path_buf();
+        assert!(path.is_dir());
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+        std::fs::write(path.join("installer.exe"), b"x").unwrap();
+        drop(dir);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn only_old_leftovers_with_the_prefix_are_removed() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["mine-new", "theirs"] {
+            std::fs::create_dir(root.path().join(name)).unwrap();
+        }
+        remove_leftovers(root.path(), "mine-");
+        assert!(root.path().join("mine-new").exists(), "still in use");
+        assert!(root.path().join("theirs").exists(), "not ours");
     }
 
     #[test]

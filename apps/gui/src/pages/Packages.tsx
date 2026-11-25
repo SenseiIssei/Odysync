@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Layers, RefreshCw } from "lucide-react";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import {
   Badge,
   Button,
@@ -56,7 +56,7 @@ export default function Packages() {
             value={source}
             onChange={(e) => setSource(e.target.value)}
             aria-label="Source"
-            className="h-9 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:border-accent"
+            className="h-9 px-3 rounded-lg border border-control bg-canvas text-sm outline-none focus:border-accent"
           >
             <option value="">All sources</option>
             {sources.map((b) => (
@@ -77,7 +77,9 @@ export default function Packages() {
               packages.loading && packages.loadedAt === null
                 ? "Asking every source what is installed…"
                 : all.length === 0
-                  ? "Nothing found"
+                  ? packages.error
+                    ? "The installed packages could not be read"
+                    : "Nothing found"
                   : "No package matches the filter"
             }
           />

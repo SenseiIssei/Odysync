@@ -1,4 +1,4 @@
-﻿//! APT backend for Debian, Ubuntu and derivatives.
+//! APT backend for Debian, Ubuntu and derivatives.
 //!
 //! APT is the safest of the three platforms by construction: packages are
 //! signed at the repository level and `apt-get` verifies those signatures
@@ -6,14 +6,18 @@
 //! pinning (`apt-get install pkg=version`), which keeps the install identical
 //! to what the user approved in the plan even if the mirror moves underneath.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use odysync_core::backend::Backend;
-use odysync_core::error::{Error, Result};
+use odysync_core::error::Result;
 use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::proc;
 use odysync_core::version::Version;
+use odysync_core::version_native::Scheme;
+
+use crate::guard;
 
 const SCAN_TIMEOUT: Duration = Duration::from_secs(300);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(45 * 60);
@@ -24,6 +28,15 @@ pub struct AptBackend;
 impl AptBackend {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Packages the user told APT to leave alone.
+    async fn holds() -> Result<HashSet<String>> {
+        let out = proc::run("apt-mark", &["showhold"], QUERY_TIMEOUT).await?;
+        if !out.success() {
+            return Err(guard::failed("apt-mark showhold", out));
+        }
+        Ok(parse_holds(&out.stdout))
     }
 }
 
@@ -51,117 +64,149 @@ impl Backend for AptBackend {
         // Refreshing the index needs root; without it we still scan, just
         // against whatever the last `apt update` left behind.
         if odysync_core::platform::is_elevated() {
-            let _ = proc::run("apt-get", &["update", "-qq"], SCAN_TIMEOUT).await;
+            let _ = proc::run(
+                "apt-get",
+                &["update", "-qq", "-o", "DPkg::Lock::Timeout=60"],
+                SCAN_TIMEOUT,
+            )
+            .await;
         }
 
         let out = proc::run("apt", &["list", "--upgradable"], SCAN_TIMEOUT).await?;
         if !out.success() {
-            return Err(Error::CommandFailed {
-                command: "apt list --upgradable".into(),
-                code: out.code,
-                stderr: out.stderr,
-            });
+            return Err(guard::failed("apt list --upgradable", out));
         }
 
-        Ok(parse_upgradable(&out.stdout))
+        let holds = Self::holds().await?;
+        Ok(parse_upgradable(&out.stdout)
+            .into_iter()
+            .filter(|c| !is_held(&holds, &c.id.native))
+            .collect())
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
-        if !candidate.available.is_known() {
-            return Err(Error::Verification {
-                package: candidate.id.to_string(),
-                detail: "refusing to install without an exact target version".into(),
-            });
+        guard::precheck(candidate)?;
+        let id = candidate.id.native.as_str();
+
+        if is_held(&Self::holds().await?, id) {
+            return Err(guard::refused(candidate, "the package is on hold in APT"));
         }
+        let policy = proc::run("apt-cache", &["policy", "--", id], QUERY_TIMEOUT).await?;
+        if !policy.success() {
+            return Err(guard::failed(format!("apt-cache policy {id}"), policy));
+        }
+        guard::same_target(candidate, parse_policy_candidate(&policy.stdout).as_deref())?;
+        guard::still_older(
+            candidate,
+            self.installed_version(candidate).await?.as_deref(),
+        )?;
 
-        // Pin the exact version, and refuse anything that would remove other
-        // packages to satisfy the upgrade. `--no-remove` turns a destructive
-        // dependency resolution into a clean failure.
-        let spec = format!("{}={}", candidate.id.native, candidate.available.raw());
-        let out = proc::run(
-            "apt-get",
-            &[
-                "install",
-                "--only-upgrade",
-                "--no-remove",
-                "-y",
-                "-o",
-                "Dpkg::Options::=--force-confold",
-                &spec,
-            ],
-            INSTALL_TIMEOUT,
-        )
-        .await?;
-
+        let args = install_args(id, candidate.available.raw());
+        let out = proc::run("env", &args, INSTALL_TIMEOUT).await?;
         if out.success() {
             Ok(())
         } else {
-            Err(Error::CommandFailed {
-                command: format!("apt-get install {spec}"),
-                code: out.code,
-                stderr: if out.stderr.trim().is_empty() {
-                    out.stdout
-                } else {
-                    out.stderr
-                },
-            })
+            Err(guard::failed(
+                format!("apt-get install {id}={}", candidate.available.raw()),
+                out,
+            ))
         }
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
         let out = proc::run(
             "dpkg-query",
-            &["-W", "-f=${Version}", &candidate.id.native],
+            &[
+                "-W",
+                // dpkg-query expands the escape itself.
+                "-f=${db:Status-Status} ${Version}\\n",
+                "--",
+                &candidate.id.native,
+            ],
             QUERY_TIMEOUT,
         )
         .await?;
 
-        if !out.success() || out.stdout.trim().is_empty() {
+        if !out.success() {
             return Ok(None);
         }
-        Ok(Some(out.stdout.trim().to_string()))
+        Ok(parse_installed(&out.stdout))
     }
+}
+
+/// The command line of one update, run through `env`.
+///
+/// `proc` sets no environment of its own, and without a frontend setting
+/// debconf waits for an answer on a terminal nobody has.
+fn install_args(id: &str, version: &str) -> Vec<String> {
+    // Pin the exact version, and refuse anything that would remove other
+    // packages to satisfy the upgrade. `--no-remove` turns a destructive
+    // dependency resolution into a clean failure.
+    [
+        "DEBIAN_FRONTEND=noninteractive",
+        "apt-get",
+        "install",
+        "--only-upgrade",
+        "--no-remove",
+        "-y",
+        // Wait for another apt instead of failing on its lock.
+        "-o",
+        "DPkg::Lock::Timeout=60",
+        "-o",
+        "Dpkg::Options::=--force-confold",
+        "--",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .chain([format!("{id}={version}")])
+    .collect()
 }
 
 /// Parse `apt list --upgradable`.
 ///
 /// Each line looks like:
 /// `firefox/noble-updates 141.0+build1 amd64 [upgradable from: 140.0+build2]`
+///
+/// The same package can be installed for two architectures, so the id carries
+/// the architecture (`libc6:i386`). A package of architecture `all` exists
+/// once, and APT knows it by its bare name.
 fn parse_upgradable(stdout: &str) -> Vec<UpdateCandidate> {
     let mut out = Vec::new();
 
     for line in stdout.lines() {
         let line = line.trim();
         // The first line is "Listing..." and there may be warnings.
-        if line.is_empty() || !line.contains('/') || !line.contains("upgradable from:") {
-            continue;
-        }
-
-        let Some((name_part, rest)) = line.split_once('/') else {
+        let Some((head, tail)) = line.split_once("[upgradable from:") else {
             continue;
         };
-        let name = name_part.trim();
-        if name.is_empty() {
+        let installed = tail.trim().trim_end_matches(']').trim();
+        let Some((name, rest)) = head.split_once('/') else {
             continue;
-        }
-
-        // rest: "noble-updates 141.0+build1 amd64 [upgradable from: 140.0+build2]"
+        };
+        let name = name.trim();
+        // rest: "noble-updates 141.0+build1 amd64"
         let mut fields = rest.split_whitespace();
-        let _suite = fields.next();
-        let Some(available) = fields.next() else {
+        let (Some(_suite), Some(available), Some(arch)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
             continue;
         };
+        if name.is_empty() || name.contains(char::is_whitespace) {
+            continue;
+        }
 
-        let installed = line
-            .split_once("upgradable from:")
-            .map(|(_, tail)| tail.trim().trim_end_matches(']').trim())
-            .unwrap_or("");
-
+        let native = if arch == "all" {
+            name.to_string()
+        } else {
+            format!("{name}:{arch}")
+        };
         out.push(UpdateCandidate {
-            id: PackageId::new(BackendKind::Apt, name),
+            // The bare name stays an alias, so that a hold on "firefox" keeps
+            // working.
+            id: PackageId::new(BackendKind::Apt, native).with_alias(name),
             name: name.to_string(),
-            installed: Version::parse(installed),
-            available: Version::parse(available),
+            installed: Version::parse_as(installed, Scheme::Dpkg),
+            available: Version::parse_as(available, Scheme::Dpkg),
             size_bytes: None,
             expected_sha256: None,
         });
@@ -170,24 +215,82 @@ fn parse_upgradable(stdout: &str) -> Vec<UpdateCandidate> {
     out
 }
 
+/// Parse `apt-mark showhold`: one name per line, with the architecture when it
+/// is not the machine's own.
+fn parse_holds(stdout: &str) -> HashSet<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// A bare name holds the package on every architecture: which one is the
+/// machine's own is not known here, and holding too much is the safe side.
+fn is_held(holds: &HashSet<String>, id: &str) -> bool {
+    let bare = id.split_once(':').map_or(id, |(name, _)| name);
+    holds.contains(id) || holds.contains(bare)
+}
+
+/// The version APT would install, from `apt-cache policy`.
+fn parse_policy_candidate(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Candidate:"))
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && *v != "(none)")
+        .map(str::to_string)
+}
+
+/// Read `<status> <version>` lines.
+///
+/// A removed package keeps its version in dpkg's database as long as its
+/// configuration files exist, so only the status `installed` counts. A bare
+/// name can match two architectures; when they differ there is no single
+/// answer.
+fn parse_installed(stdout: &str) -> Option<String> {
+    let mut versions: Vec<&str> = stdout
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("installed "))
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .collect();
+    versions.dedup();
+    match versions.as_slice() {
+        [one] => Some((*one).to_string()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang_backends::assert_refuses_bad_input;
+
+    fn crlf(text: &str) -> String {
+        text.replace('\n', "\r\n")
+    }
 
     #[test]
     fn parses_a_standard_upgradable_line() {
         let out = "Listing...\n\
 firefox/noble-updates 141.0+build1 amd64 [upgradable from: 140.0+build2]\n";
-        let rows = parse_upgradable(out);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id.native, "firefox");
-        assert_eq!(rows[0].available.raw(), "141.0+build1");
-        assert_eq!(rows[0].installed.raw(), "140.0+build2");
+        for text in [out.to_string(), crlf(out)] {
+            let rows = parse_upgradable(&text);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].id.native, "firefox:amd64");
+            assert_eq!(rows[0].id.alias.as_deref(), Some("firefox"));
+            assert_eq!(rows[0].name, "firefox");
+            assert_eq!(rows[0].available.raw(), "141.0+build1");
+            assert_eq!(rows[0].installed.raw(), "140.0+build2");
+        }
     }
 
     #[test]
     fn the_listing_header_and_blank_lines_are_ignored() {
         assert!(parse_upgradable("Listing...\n\n").is_empty());
+        assert!(parse_upgradable("").is_empty());
     }
 
     #[test]
@@ -198,13 +301,18 @@ firefox/noble-updates 141.0+build1 amd64 [upgradable from: 140.0+build2]\n";
     }
 
     #[test]
-    fn parses_several_packages() {
+    fn two_architectures_of_a_package_are_two_packages() {
         let out = "Listing...\n\
-curl/noble-updates 8.5.0-2 amd64 [upgradable from: 8.4.0-1]\n\
-vim/noble-updates 9.1.0-1 amd64 [upgradable from: 9.0.2-1]\n";
-        let rows = parse_upgradable(out);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[1].id.native, "vim");
+libc6/bookworm-security 2.36-9+deb12u9 amd64 [upgradable from: 2.36-9+deb12u8]\n\
+libc6/bookworm-security 2.36-9+deb12u9 i386 [upgradable from: 2.36-9+deb12u8]\n\
+tzdata/bookworm-updates,bookworm-security 2025a-0+deb12u1 all [upgradable from: 2024b-0+deb12u1]\n";
+        for text in [out.to_string(), crlf(out)] {
+            let rows = parse_upgradable(&text);
+            let ids: Vec<&str> = rows.iter().map(|r| r.id.native.as_str()).collect();
+            assert_eq!(ids, ["libc6:amd64", "libc6:i386", "tzdata"]);
+            // A security update is an upgrade by dpkg's rules.
+            assert!(rows.iter().all(|r| r.installed.is_upgrade_to(&r.available)));
+        }
     }
 
     #[test]
@@ -215,21 +323,98 @@ tzdata/noble 2:2024a-1 all [upgradable from: 2:2023d-1]\n";
         let rows = parse_upgradable(out);
         assert_eq!(rows[0].available.raw(), "2:2024a-1");
         assert_eq!(rows[0].installed.raw(), "2:2023d-1");
+        assert!(rows[0].installed.is_upgrade_to(&rows[0].available));
+    }
+
+    #[test]
+    fn holds_cover_the_package_they_name() {
+        for text in ["docker-ce\nlibc6:i386\n", "docker-ce\r\nlibc6:i386\r\n"] {
+            let holds = parse_holds(text);
+            assert_eq!(holds.len(), 2);
+            assert!(is_held(&holds, "docker-ce:amd64"));
+            assert!(is_held(&holds, "docker-ce"));
+            assert!(is_held(&holds, "libc6:i386"));
+            assert!(!is_held(&holds, "libc6:amd64"));
+        }
+        assert!(parse_holds("\n").is_empty());
+    }
+
+    #[test]
+    fn the_candidate_is_read_from_apt_cache_policy() {
+        // https://manpages.debian.org/apt-cache, format of `policy`.
+        let out = "\
+openssl:
+  Installed: 3.0.14-1~deb12u2
+  Candidate: 3.0.15-1~deb12u1
+  Version table:
+     3.0.15-1~deb12u1 500
+        500 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages
+ *** 3.0.14-1~deb12u2 100
+        100 /var/lib/dpkg/status
+";
+        for text in [out.to_string(), crlf(out)] {
+            assert_eq!(
+                parse_policy_candidate(&text).as_deref(),
+                Some("3.0.15-1~deb12u1")
+            );
+        }
+        assert_eq!(
+            parse_policy_candidate("x:\n  Installed: (none)\n  Candidate: (none)\n"),
+            None
+        );
+        assert_eq!(parse_policy_candidate(""), None);
+    }
+
+    #[test]
+    fn a_moved_candidate_is_refused() {
+        let rows = parse_upgradable(
+            "openssl/x 3.0.15-1~deb12u1 amd64 [upgradable from: 3.0.14-1~deb12u2]",
+        );
+        assert!(guard::same_target(&rows[0], Some("3.0.15-1~deb12u1")).is_ok());
+        assert!(guard::same_target(&rows[0], Some("3.0.16-1~deb12u1")).is_err());
+        assert!(guard::same_target(&rows[0], None).is_err());
+    }
+
+    #[test]
+    fn a_removed_package_is_not_installed() {
+        assert_eq!(
+            parse_installed("installed 3.0.15-1~deb12u1\n").as_deref(),
+            Some("3.0.15-1~deb12u1")
+        );
+        assert_eq!(
+            parse_installed("installed 3.0.15-1~deb12u1\r\n").as_deref(),
+            Some("3.0.15-1~deb12u1")
+        );
+        assert_eq!(parse_installed("config-files 3.0.15-1~deb12u1\n"), None);
+        assert_eq!(
+            parse_installed("installed 1.0\ninstalled 1.0\n").as_deref(),
+            Some("1.0")
+        );
+        assert_eq!(parse_installed("installed 1.0\ninstalled 1.1\n"), None);
+        assert_eq!(parse_installed(""), None);
+    }
+
+    #[test]
+    fn the_install_pins_waits_for_the_lock_and_asks_nothing() {
+        let args = install_args("libc6:i386", "2.36-9+deb12u9");
+        assert_eq!(args[0], "DEBIAN_FRONTEND=noninteractive");
+        assert_eq!(args[1], "apt-get");
+        assert!(args.iter().any(|a| a == "--only-upgrade"));
+        assert!(args.iter().any(|a| a == "--no-remove"));
+        assert!(args.iter().any(|a| a == "DPkg::Lock::Timeout=60"));
+        assert_eq!(
+            args[args.len() - 2..],
+            ["--".to_string(), "libc6:i386=2.36-9+deb12u9".to_string()]
+        );
+        assert!(
+            !args
+                .iter()
+                .any(|a| a == "--force-yes" || a.starts_with("--allow-"))
+        );
     }
 
     #[tokio::test]
-    async fn apply_refuses_without_an_exact_target_version() {
-        let candidate = UpdateCandidate {
-            id: PackageId::new(BackendKind::Apt, "firefox"),
-            name: "firefox".into(),
-            installed: Version::parse("1.0"),
-            available: Version::parse(""),
-            size_bytes: None,
-            expected_sha256: None,
-        };
-        assert!(matches!(
-            AptBackend::new().apply(&candidate).await.unwrap_err(),
-            Error::Verification { .. }
-        ));
+    async fn apply_refuses_options_and_unknown_targets() {
+        assert_refuses_bad_input(&AptBackend::new(), "firefox:amd64", Some(Scheme::Dpkg)).await;
     }
 }

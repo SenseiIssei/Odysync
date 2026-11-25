@@ -4,11 +4,22 @@
 //! When the window is closed, the app continues running in the tray
 //! so scheduled background scans can still notify the user.
 
+use crate::state::AppState;
+
 use tauri::{
     AppHandle, Emitter, Manager,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
 };
+
+/// Bring the window back, also when it is minimised.
+fn show_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show Odysync", true, None::<&str>)?;
@@ -23,20 +34,20 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_window(app);
             }
             "scan" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    let _ = window.emit("tray-scan", ());
-                }
+                show_window(app);
+                let _ = app.emit("tray-scan", ());
             }
             "quit" => {
-                app.exit(0);
+                // While something is being installed the window asks first.
+                if app.state::<AppState>().is_applying() {
+                    show_window(app);
+                    let _ = app.emit("tray-quit", ());
+                } else {
+                    app.exit(0);
+                }
             }
             _ => {}
         })

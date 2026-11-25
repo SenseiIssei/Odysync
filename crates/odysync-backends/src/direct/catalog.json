@@ -53,6 +53,7 @@
         }
       },
       "installer": "msi",
+      "processes": ["GitHub CLI\\gh.exe"],
       "signer": "GitHub, Inc."
     },
     {
@@ -82,9 +83,10 @@
         "type": "github",
         "repo": "keepassxreboot/keepassxc",
         "tag": "^(?P<v>\\d+\\.\\d+\\.\\d+)$",
-        "assets": { "x64": "^KeePassXC-[\\d.]+-Win64\\.msi$" }
+        "assets": { "x64": "^KeePassXC-[\\d.]+-(?:x64|Win64)\\.msi$" }
       },
       "installer": "msi",
+      "processes": ["KeePassXC.exe", "keepassxc-proxy.exe"],
       "signer": "DroidMonkey Apps, LLC"
     },
     {
@@ -113,6 +115,7 @@
         "assets": { "x64": "^audacity-win-[\\d.]+-x86_64\\.msi$" }
       },
       "installer": "msi",
+      "processes": ["Audacity.exe"],
       "signer": "MUSECY SM LTD"
     },
     {
@@ -173,6 +176,7 @@
         "assets": { "x64": "^rustdesk-[\\d.]+-x86_64\\.msi$" }
       },
       "installer": "msi",
+      "processes": ["RustDesk.exe"],
       "signer": "PURSLANE"
     },
     {
@@ -204,6 +208,7 @@
       "match": { "display_name": "^Node\\.js$" },
       "source": { "type": "nodejs" },
       "installer": "msi",
+      "processes": ["nodejs\\node.exe"],
       "signer": "OpenJS Foundation"
     },
     {
@@ -214,10 +219,12 @@
       "source": {
         "type": "github",
         "repo": "PowerShell/PowerShell",
+        "same_line": 2,
         "tag": "^v(?P<v>\\d+\\.\\d+\\.\\d+)$",
         "assets": { "x64": "^PowerShell-[\\d.]+-win-x64\\.msi$" }
       },
       "installer": "msi",
+      "processes": ["PowerShell\\7\\pwsh.exe"],
       "signer": "Microsoft Corporation"
     },
     {

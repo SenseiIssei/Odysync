@@ -1,53 +1,100 @@
 # What is left, and what is known
 
-State after 3.0.0 (2026-10-16). Everything here is reconstructable from the
-repository alone.
+State of 2026-11-25, after the care round that follows 3.1.1. Everything here is
+reconstructable from the repository alone. The plan is in
+[ROADMAP.md](ROADMAP.md), Part A; this file says where things stand.
 
 ---
 
-## 1. Code signing — still the one thing gating the rest
+## 1. The next five
 
-Fully documented in [`docs/SIGNING.md`](docs/SIGNING.md). The release workflow
-signs the CLI and the Windows installer as soon as the `SIGNING_ENABLED`
-repository variable and the Trusted Signing secrets exist; nothing else has to
-change. Until then SmartScreen warns on every install, and **self-update stays
-check-only** (`UpdateCheck::is_installable`, and the test
-`odysync_refuses_to_install_its_own_updates_while_releases_are_unsigned`, which
-will fail on purpose the day signing lands).
+1. **Exercise every install path on throw-away machines** (A1). Nothing else
+   pays back as much; see section 5 for what not doing it cost.
+2. **Signing** (A2). The route this project had planned is closed to individuals
+   in Germany; [docs/SIGNING.md](docs/SIGNING.md) has the two that are open.
+   Needs the owner.
+3. **The catalogue from 15 to 150** (A3), drafted by a bot, pinned by a check.
+4. **Undo for an update** (A4).
+5. **Exploited holes first, a waiting period for the rest** (A5).
 
-macOS needs a Developer ID certificate and notarisation before the `.dmg`
-opens without the right-click workaround the README describes.
+## 2. Waiting for the owner
 
-## 2. Verified where, and how
+- Allow Actions to open pull requests, or merge the weekly lockfile refresh by
+  hand from the issue it opens. The workflow is ready for both.
+- The signing route, and whether it may cost anything.
+- The elevated helper (A6): per batch, as recommended, or a service.
+- Submitting to winget-pkgs; an own Scoop bucket and Homebrew tap.
+- Deleting old branches on GitHub: `chore/lockfiles-2026-*` (four), `dev/*`,
+  `feat/smart-care`, `backup/*`. `dev/ms3` has three commits no tag contains;
+  tag it (`archive/ms3`) first.
+
+## 3. Verified where, and how
 
 | Path | How it was verified |
 |---|---|
-| `direct`, per-user install | End to end on a real machine: VS Code 1.140.0 → 1.142.0 downloaded, hash and signature checked, installed silently, version read back. |
-| `direct`, verification chain | Unit tests against real Windows files: right signer passes; another publisher, a changed byte and a wrong SHA-256/SHA-512 are refused; the locked file cannot be written or deleted. |
-| `direct`, machine-wide installs (MSI/NSIS/Inno) | Scan verified (Notepad++, Git, GitHub CLI, Node.js found with correct versions); install not run — it needs an elevated session. Same code path as the per-user install apart from `msiexec`. |
-| NVIDIA driver | Lookup verified against NVIDIA's service for an RTX 4080 (616.92 → 617.42). The 1 GB install was not run: it needs elevation and restarts the display stack. |
-| Runtimes, device problems, system info, startup manager, cleanup | Run against the real machine (Windows) and, for cleanup and startup, a Linux container as an ordinary user. |
-| macOS Sparkle updates | Pure parts tested everywhere, including a real Rectangle release's Ed25519 signature; the bundle swap is tested with fake bundles. The full install has not run on a real Mac — **first thing to try on one**. |
-| Windows Update install, driver restore | Unchanged from 2.2: unit-tested, not exercised elevated. See the history notes. |
+| `direct`, per-user install | End to end on a real machine (3.0): VS Code 1.140.0 to 1.142.0. Not repeated since; the code around it changed. |
+| `direct`, verification chain | Unit tests against real Windows files: right signer passes; another publisher, a changed byte and a wrong hash are refused; the locked file cannot be written or deleted. |
+| `direct`, catalogue | All 15 entries resolved against their publishers on 2026-11-25; weekly in CI from now on. |
+| `direct`, machine-wide installs | Scan verified. **Install not run**: needs an elevated session. |
+| Protected download directory | Unit test: an ordinary process cannot write into it; elevated (CI) the access list is read back. |
+| Windows Update search | Run on a real machine: result codes, reboot and preview flags read. |
+| Windows Update and driver **install** | **Never run.** The result codes that made it impossible to succeed are fixed and checked against the bindings; the first real install is A1. |
+| NVIDIA driver | Lookup verified for an RTX 4080. Install not run. |
+| dpkg, rpm, pacman, PEP 440 ordering | The reference test cases of each project. |
+| apt, dnf, zypper, snap, flatpak, pacman, nix, fwupd, Homebrew, Chocolatey, Go | Parsers against documented output or the tools' own source, **not** against captured output of the real tool. Compiled and linted for Linux and macOS. |
+| pip, npm, cargo, Scoop | Scans run on a real machine. Installs not run. |
+| macOS Sparkle updates | Pure parts and a real Ed25519 signature; the bundle swap with fake bundles. **Never run on a real Mac.** |
+| Windows schedule | The definition is parsed back in a test; CI registers, finds and removes a real task. Not run on a schedule yet. |
+| The app | 91 component tests, contrast computed for every text colour in both themes, the browser demo looked at. The window itself was not opened for this round. |
+| Runtimes, device problems, system info, startup manager, cleanup | Unchanged; run against the real machine for 3.0 and 3.1. |
 
-## 3. Worth doing next
+## 4. Known and left
 
-- **Grow the catalog.** Each entry needs its signer read from a real installer;
-  a pin that stops matching fails safe (the update is refused), so a signer
-  change at a publisher shows up as a refused update, not a bad install.
-- **AMD and Intel GPU drivers without winget.** Neither vendor publishes a
-  machine-readable feed; today these come from Windows Update (default) or
-  winget (opt-in).
-- **Startup: offer "delay" as well as "off".** Still no fake impact score.
-- **Duplicate files**, report-only, if a full-disk hash walk can be made fast
-  enough to verify properly.
-- **Old branches.** `dev/rust-rewrite`, `dev/updateMilestone2` and
-  `dev/iobit-parity` are fully contained in `main`. `dev/ms3` has three
-  commits no tag contains — tag it (`archive/ms3`) before deleting it.
+- **Extensions and .NET tools** are not offered any more: nobody says which
+  version is newest without an undocumented service. They were listed before,
+  always as "could not be determined".
+- **Arch** is scan only. pacman has no supported way to update one package.
+- **winget** rows with `< 1.2.3` as the installed version are refused.
+- **Homebrew casks that install a system package** ask for a password, which
+  nothing Odysync starts can do any more: programs run in a session of their own
+  so that Ctrl-C does not reach them. They fail; `brew upgrade` by hand works.
+- **PowerShell modules** from an untrusted gallery may fail now that `-Force`
+  is gone.
+- **The offline cache page** shows a cache nothing fills (A15).
+- **A console window** appears when a schedule runs on Windows (A9).
 
 ---
 
-## 4. Things learned that are not obvious from the code
+## 5. Things learned that are not obvious from the code
+
+**A constant written from memory cost four releases.** `ORC_FAILED = 2` looked
+right, a comment explained how a "failed" search can still return results, and
+the module's own history told of 14 pending updates "found by running the real
+API". They were there because the search had succeeded. When a system answers
+something that needs an explanation, check the reading first.
+
+**A conditional request is not free at GitHub.** Three `304` answers without a
+token took the anonymous allowance from 58 to 56. The comment said otherwise.
+
+**A pipe ends when the last holder lets go, not when the program exits.** An
+installer that starts the app it installed kept its output pipe open, so the
+install "ran" until the app was closed and then counted as timed out, and was
+started again.
+
+**Locking the installer does not protect the installer.** A program loads
+libraries from its own directory first. The directory needs the lock too.
+
+**PATH is an input.** The signature check ran whatever `powershell.exe` came
+first in a list any program of the same user can write.
+
+**Dependabot cannot raise something that lives in two ecosystems.** Tauri's Rust
+and npm halves must match; each half alone failed the packaging job every week.
+And a workflow's `gh pr create` needs a repository setting that is off by
+default, so the refresh that was to fix this failed silently as well.
+
+**"Not found" and "could not look" must never look the same.** Offline, a
+publisher that renamed a file, a Windows Update that failed: all three read as
+"up to date" until this round.
 
 **Windows PowerShell inherits PowerShell 7's module path.** Started from
 `pwsh`, `powershell.exe` loads PS7's copy of `Microsoft.PowerShell.Security`,

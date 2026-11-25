@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Circle,
   CircleAlert,
+  CircleHelp,
   HardDrive,
   Loader2,
   MemoryStick,
@@ -18,43 +19,44 @@ import {
   Wand2,
 } from "lucide-react";
 import * as api from "../api";
-import { safeListen } from "../events";
-import { useStore, type Resource } from "../store";
+import { useStore, type Resource } from "../store-context";
 import { Badge, Button, Card, Segmented, Switch } from "../components/ui";
 import { CareRing, type RingMode, type RingTone } from "../components/CareRing";
-import { assess, safeCleanupBytes, safeCleanupItems, type CareIssue } from "../care";
-import { formatSize } from "../format";
+import { ScanProgressView } from "../components/Progress";
+import {
+  assess,
+  safeCleanupBytes,
+  safeCleanupItems,
+  type CareIssue,
+  type FailedCheck,
+} from "../care";
+import { errorText, formatSize } from "../format";
 import type { Tab } from "../nav";
+import type { ApplyEntryDto } from "../types";
 
 /** The schedule automatic care runs under, separate from a plain update schedule. */
-export const CARE_TASK = "OdysyncCare";
+const CARE_TASK = "OdysyncCare";
 const CARE_FREQUENCY_KEY = "odysync.careFrequency";
-
-interface Progress {
-  phase: string;
-  current: number;
-  total: number;
-  package?: string | null;
-  percent?: number | null;
-}
 
 interface FixOutcome {
   updated: number;
-  failed: number;
+  /** Updates that were tried and did not work, with the reason. */
+  failures: ApplyEntryDto[];
+  /** Updates that were not started, because the run was cancelled. */
+  skipped: number;
+  cancelled: boolean;
   cleared: number;
   reboot: boolean;
   error: string | null;
 }
 
-type StepState = "waiting" | "running" | "done";
+type StepState = "unchecked" | "running" | "partial" | "failed" | "done";
 
-function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
-
-/** Whether a set of background resources is still loading. */
+/** Where a set of background checks stands. A failed one is never "done". */
 function stepState(resources: Resource<unknown>[]): StepState {
   if (resources.some((r) => r.loading)) return "running";
+  if (resources.some((r) => r.error !== null)) return "failed";
+  if (resources.some((r) => r.loadedAt === null)) return "unchecked";
   return "done";
 }
 
@@ -71,9 +73,9 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
     defender,
     health,
     config,
-    history,
-    packages,
+    apply,
   } = store;
+  const windows = sysInfo.data?.platform === "windows";
 
   // ── What the machine looks like ──────────────────────────────────────────
   const attendedKinds = useMemo(
@@ -84,7 +86,14 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
     () => new Set(backends.data.filter((b) => b.developer).map((b) => b.kind)),
     [backends.data],
   );
-  const actionable = useMemo(() => scan.data?.actionable ?? [], [scan.data]);
+  // After a failed scan the list in hand is an old one. It cannot be installed
+  // from (the command layer has nothing to match it against) and says nothing
+  // about today.
+  const scanUsable = scan.health.state !== "failed";
+  const actionable = useMemo(
+    () => (scanUsable ? (scan.data?.actionable ?? []) : []),
+    [scan.data, scanUsable],
+  );
   // Only what unattended care may install: no drivers, no developer packages.
   const updates = useMemo(
     () =>
@@ -105,26 +114,55 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
     [security.data],
   );
 
+  const failedChecks = useMemo(() => {
+    const checks: (FailedCheck | null)[] = [
+      failedCheck("devices", "Devices", devices, "drivers"),
+      failedCheck("runtimes", "Runtimes", components, "drivers"),
+      failedCheck("cleanup", "Junk files", cleanup, "maintenance"),
+      failedCheck("health", "Disk and battery health", health, "hardware"),
+      // Elsewhere these two have nothing to look at.
+      windows ? failedCheck("defender", "Microsoft Defender", defender, "security") : null,
+      windows ? failedCheck("security", "Security", security, "security") : null,
+    ];
+    return checks.filter((c) => c !== null);
+  }, [devices, components, cleanup, health, defender, security, windows]);
+
+  // Outside Windows there is no audit that could be incomplete.
+  const incompleteSecurity = windows
+    ? (security.data?.sections ?? []).filter((s) => !s.ok).length
+    : 0;
   const assessment = useMemo(
     () =>
       assess({
+        scan: scan.health,
+        sourceName: (kind) => backends.data.find((b) => b.kind === kind)?.name ?? kind,
+        failedChecks,
+        incompleteSecurity,
         updates,
         attendedUpdates,
         developerUpdates,
-        needsAdmin: (scan.data?.skipped ?? []).filter((s) =>
-          s.reason.toLowerCase().includes("administrator"),
-        ).length,
+        needsAdmin: scanUsable
+          ? (scan.data?.skipped ?? []).filter((s) =>
+              s.reason.toLowerCase().includes("administrator"),
+            ).length
+          : 0,
         devices: devices.data.length,
         outdatedRuntimes: components.data.filter((c) => c.state === "outdated").length,
         seriousFindings: findings.filter((f) => f.severity === "critical" || f.severity === "high")
           .length,
         minorFindings: findings.filter((f) => f.severity === "medium" || f.severity === "low")
           .length,
-        defender: defender.data,
+        defender: windows ? defender.data : null,
         safeCleanup,
         health: health.data,
       }),
     [
+      scan.health,
+      scanUsable,
+      backends.data,
+      failedChecks,
+      incompleteSecurity,
+      windows,
       updates,
       attendedUpdates,
       developerUpdates,
@@ -156,9 +194,20 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
     },
     { id: "health", label: "Disk & battery", icon: <HardDrive />, resources: [health as Resource<unknown>] },
   ];
-  const states = steps.map((s) => stepState(s.resources));
+  const states = steps.map((s): StepState => {
+    const state = stepState(s.resources);
+    if (state !== "done") return state;
+    if (s.id === "security") {
+      const unread = windows && defender.data?.real_time_protection === null;
+      return unread || incompleteSecurity > 0 ? "partial" : state;
+    }
+    if (s.id !== "updates") return state;
+    return scan.health.state === "partial" || scan.health.state === "failed"
+      ? scan.health.state
+      : state;
+  });
   const checking = states.some((s) => s === "running");
-  const checkedFraction = states.filter((s) => s === "done").length / steps.length;
+  const checkedFraction = states.filter((s) => s !== "running").length / steps.length;
   const runningStep = steps.find((_, i) => states[i] === "running");
 
   const scanEverything = useCallback(() => {
@@ -182,79 +231,85 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
     return () => clearTimeout(t);
   }, [celebrating]);
 
-  useEffect(
-    () =>
-      safeListen<Progress>("apply-progress", (e) => {
-        const p = e.payload;
-        if (p.total > 0) {
-          setFixing((f) =>
-            f && f.step.startsWith("Installing")
-              ? {
-                  step: p.package ? `Installing ${p.package}` : "Installing updates",
-                  progress: 5 + Math.round((p.current / p.total) * 60),
-                }
-              : f,
-          );
-        }
-      }),
-    [],
-  );
-
   const fixEverything = useCallback(async () => {
     const toInstall = updates;
     const toClean = safeCleanup.map((c) => c.id);
     setOutcome(null);
-    let updated = 0;
-    let failed = 0;
-    let reboot = false;
-    let cleared = 0;
-    let error: string | null = null;
+    setCelebrating(false);
+    const done: FixOutcome = {
+      updated: 0,
+      failures: [],
+      skipped: 0,
+      cancelled: false,
+      cleared: 0,
+      reboot: false,
+      error: null,
+    };
     try {
       if (toInstall.length > 0) {
         setFixing({ step: "Installing updates", progress: 5 });
-        const result = await api.apply({
+        const { result, cancelled } = await apply.run({
           updates: toInstall,
           dry_run: false,
           restore_point: config.data?.restore_point ?? true,
         });
-        updated = result.updated;
-        failed = result.failed;
-        reboot = result.reboot_required;
+        done.updated = result.updated;
+        done.failures = result.entries.filter(
+          (e) => e.status !== "updated" && e.status !== "skipped",
+        );
+        done.skipped = result.skipped;
+        done.cancelled = cancelled;
+        done.reboot = result.reboot_required;
       }
-      if (toClean.length > 0) {
+      // Cancel means stop, not "skip to the next step".
+      if (toClean.length > 0 && !done.cancelled) {
         setFixing({ step: "Clearing junk files", progress: 70 });
         const results = await api.cleanupRun(toClean);
-        cleared = results.reduce((sum, r) => sum + r.removed_bytes, 0);
+        done.cleared = results.reduce((sum, r) => sum + r.removed_bytes, 0);
       }
       setFixing({ step: "Checking again", progress: 90 });
       await Promise.allSettled([
-        scan.refresh(),
-        cleanup.refresh(),
-        history.refresh(),
-        packages.refresh(),
+        // The install already started a fresh scan; this waits for it.
+        toInstall.length > 0 ? scan.refresh() : null,
+        cleanup.reload(),
       ]);
     } catch (e) {
-      error = errorText(e);
+      done.error = errorText(e);
     } finally {
       setFixing(null);
-      setOutcome({ updated, failed, cleared, reboot, error });
-      setCelebrating(error === null);
+      setOutcome(done);
+      setCelebrating(done.error === null && done.failures.length === 0 && !done.cancelled);
     }
-  }, [updates, safeCleanup, config.data, scan, cleanup, history, packages]);
+  }, [updates, safeCleanup, config.data, apply, scan, cleanup]);
 
   // ── The ring ─────────────────────────────────────────────────────────────
   const booting = store.booting && scan.loadedAt === null;
+  const { score, scoreKnown } = assessment;
+  // An install started on another page shows here too.
+  const installing = apply.running && !apply.dryRun;
+  const installed = apply.progress && apply.progress.total > 0
+    ? apply.progress.current / apply.progress.total
+    : 0;
   let ringMode: RingMode = "idle";
-  let ringValue = assessment.score;
-  let ringTone: RingTone = assessment.tone;
-  let ringLabel = assessment.grade;
-  let ringCaption: string | undefined = "Care score";
+  let ringValue: number | null = scoreKnown ? score : null;
+  let ringTone: RingTone = scoreKnown ? assessment.tone : "warning";
+  let ringLabel = scoreKnown ? assessment.grade : "Not checked";
+  let ringCaption: string | undefined = scoreKnown ? "Care score" : "No score";
   if (fixing) {
     ringMode = "busy";
-    ringValue = fixing.progress;
+    ringValue = installing ? 5 + Math.round(installed * 60) : fixing.progress;
     ringTone = "accent";
     ringLabel = "Fixing";
-    ringCaption = fixing.step;
+    ringCaption =
+      installing && apply.progress?.package
+        ? `Installing ${apply.progress.package}`
+        : fixing.step;
+  } else if (installing) {
+    ringMode = "busy";
+    ringValue = Math.round(installed * 100);
+    ringTone = "accent";
+    ringLabel = "Installing";
+    ringCaption = apply.progress?.package || undefined;
   } else if (booting || checking) {
     ringMode = "busy";
     ringValue = Math.round((booting ? store.bootProgress : checkedFraction) * 100);
@@ -265,18 +320,29 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
     ringMode = "done";
   }
 
-  const busy = !!fixing || booting || checking;
-  const canFix = !busy && assessment.fixable > 0 && backends.loadedAt !== null;
+  const busy = !!fixing || installing || booting || checking;
+  const canFix =
+    !busy &&
+    !apply.running &&
+    assessment.fixable > 0 &&
+    backends.loadedAt !== null &&
+    !(updates.length > 0 && scan.fromCache);
 
   const headline = fixing
     ? "Taking care of it…"
-    : busy
-      ? "Checking your PC…"
-      : assessment.issues.length === 0
-        ? "Everything is taken care of"
-        : assessment.fixable > 0
-          ? `${assessment.fixable === 1 ? "One thing" : `${assessment.fixable} things`} can be fixed in one click`
-          : `${assessment.issues.length === 1 ? "One thing needs" : `${assessment.issues.length} things need`} a look`;
+    : installing
+      ? "Installing updates…"
+      : busy
+        ? "Checking your PC…"
+        : scan.health.state === "failed"
+          ? "Updates could not be checked"
+          : !scoreKnown
+            ? "Nothing has been checked yet"
+            : assessment.issues.length === 0
+              ? "Everything is taken care of"
+              : assessment.fixable > 0
+                ? `${assessment.fixable === 1 ? "One thing" : `${assessment.fixable} things`} can be fixed in one click`
+                : `${assessment.issues.length === 1 ? "One thing needs" : `${assessment.issues.length} things need`} a look`;
 
   const info = sysInfo.data;
   const lastChecked = scan.loadedAt
@@ -300,6 +366,8 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
             center={
               ringMode === "done" ? (
                 <CheckCircle2 className="w-16 h-16 text-success animate-pop" strokeWidth={1.5} />
+              ) : ringValue === null ? (
+                <CircleHelp className="w-16 h-16 text-warning" strokeWidth={1.5} />
               ) : undefined
             }
           />
@@ -308,23 +376,27 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
             <div className="text-xs font-semibold uppercase tracking-[0.14em] text-accent">
               Smart care
             </div>
-            <h1 className="mt-2 text-[30px] leading-tight font-bold text-fg">
+            <h1 tabIndex={-1} className="mt-2 text-[30px] leading-tight font-bold text-fg">
               {headline.replace("PC", platformName)}
             </h1>
             <p className="mt-2 text-[15px] text-muted max-w-[52ch]">
               {fixing
                 ? "Installing safe updates, then clearing junk files. Drivers and firmware are left alone."
-                : busy && showingLastTime
-                  ? `Showing what Odysync found on ${lastChecked} while it checks again.`
-                  : busy
-                    ? "Updates, drivers, junk files, security and hardware health — all at once."
-                  : assessment.fixable > 0
-                    ? "Safe updates and junk files, in one go. Drivers and anything risky always wait for you."
-                    : assessment.issues.length > 0
-                      ? "What is left needs a decision from you — each item below says where to make it."
-                      : lastChecked
-                        ? `Last checked at ${lastChecked}.`
-                        : "Odysync checks updates, drivers, junk files, security and hardware health."}
+                : installing
+                  ? "Started from another page. A scan follows when it is done."
+                  : busy && showingLastTime
+                    ? `Showing what Odysync found on ${lastChecked} while it checks again.`
+                    : busy
+                      ? "Updates, drivers, junk files, security and hardware health, all at once."
+                      : scan.health.state === "failed"
+                        ? `${scan.health.error} Without it there is no score; what the other checks found is listed below.`
+                        : assessment.fixable > 0
+                          ? "Safe updates and junk files, in one go. Drivers and anything risky always wait for you."
+                          : assessment.issues.length > 0
+                            ? "What is left needs a decision from you. Each item below says where to make it."
+                            : lastChecked
+                              ? `Last checked at ${lastChecked}.`
+                              : "Odysync checks updates, drivers, junk files, security and hardware health."}
             </p>
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -350,14 +422,27 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
                   icon={<Sparkles className="w-5 h-5" />}
                   onClick={scanEverything}
                 >
-                  {fixing ? "Working…" : busy ? "Checking…" : "Scan now"}
+                  {fixing || installing
+                    ? "Working…"
+                    : busy
+                      ? "Checking…"
+                      : scan.health.state === "failed"
+                        ? "Try again"
+                        : "Scan now"}
                 </Button>
               )}
+              {installing && <CancelInstall />}
             </div>
+
+            {scan.loading && !apply.running && (
+              <div className="mt-5 max-w-[560px]">
+                <ScanProgressView />
+              </div>
+            )}
 
             <ul className="mt-7 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-2.5">
               {steps.map((s, i) => (
-                <StepRow key={s.id} label={s.label} icon={s.icon} state={booting ? (states[i] === "done" ? "done" : "running") : states[i]} />
+                <StepRow key={s.id} label={s.label} icon={s.icon} state={booting && states[i] === "unchecked" ? "running" : states[i]} />
               ))}
             </ul>
           </div>
@@ -392,14 +477,25 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
               <div>
                 <div className="text-[15px] font-semibold">Nothing to do</div>
                 <div className="text-sm text-muted">
-                  Up to date, tidy, protected and healthy. Turn on automatic care to keep it that way.
+                  {defender.data?.real_time_protection && security.data
+                    ? "Up to date, tidy, protected and healthy."
+                    : windows && !security.data
+                      ? "Up to date, tidy and healthy. The security audit has not run."
+                      : "Up to date, tidy and healthy."}{" "}
+                  Turn on automatic care to keep it that way.
                 </div>
               </div>
             </div>
           ) : (
             <ul className="divide-y divide-line -my-2 stagger">
               {assessment.issues.map((issue) => (
-                <IssueRow key={issue.id} issue={issue} onOpen={() => onNavigate(issue.tab)} />
+                <IssueRow
+                  key={issue.id}
+                  issue={issue}
+                  busy={busy}
+                  onOpen={() => onNavigate(issue.tab)}
+                  onRetry={scanEverything}
+                />
               ))}
             </ul>
           )}
@@ -410,9 +506,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
           <Glance
             onNavigate={onNavigate}
             reclaimable={safeCleanupBytes(safeCleanup)}
-            updates={actionable.length}
-            protectedNow={defender.data ? defender.data.real_time_protection : null}
-            disksOk={health.data ? health.data.disks.every((d) => d.state === "good" || d.state === "unknown") : null}
+            windows={windows}
           />
         </div>
       </div>
@@ -420,45 +514,134 @@ export default function Dashboard({ onNavigate }: { onNavigate: (tab: Tab) => vo
   );
 }
 
+/** The entry for a check whose last attempt failed, or null when it did not. */
+function failedCheck<T>(
+  id: string,
+  label: string,
+  resource: Resource<T>,
+  tab: Tab,
+): FailedCheck | null {
+  return resource.error === null ? null : { id, label, error: resource.error, tab };
+}
+
+function CancelInstall() {
+  const { apply } = useStore();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <Button
+        size="lg"
+        busy={apply.cancelling}
+        onClick={() => {
+          setError(null);
+          apply.cancel().catch((e: unknown) => setError(errorText(e)));
+        }}
+      >
+        {apply.cancelling ? "Stopping after this package…" : "Cancel"}
+      </Button>
+      {error && <p className="text-sm text-danger break-words">Could not cancel: {error}</p>}
+    </>
+  );
+}
+
+const STEP: Record<StepState, { box: string; text: string }> = {
+  done: { box: "bg-success/12 text-success", text: "checked" },
+  running: { box: "bg-accent/12 text-accent", text: "being checked" },
+  partial: { box: "bg-warning/12 text-warning", text: "only partly checked" },
+  failed: { box: "bg-danger/12 text-danger", text: "could not be checked" },
+  unchecked: { box: "bg-raised text-faint", text: "not checked" },
+};
+
 function StepRow({ label, icon, state }: { label: string; icon: ReactNode; state: StepState }) {
   return (
     <li className="flex items-center gap-2.5 text-sm">
       <span
-        className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors [&>svg]:w-3.5 [&>svg]:h-3.5 ${
-          state === "done" ? "bg-success/12 text-success" : state === "running" ? "bg-accent/12 text-accent" : "bg-raised text-faint"
-        }`}
+        aria-hidden
+        className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors [&>svg]:w-3.5 [&>svg]:h-3.5 ${STEP[state].box}`}
       >
-        {state === "running" ? <Loader2 className="animate-spin" /> : state === "done" ? <CheckCircle2 key="done" className="animate-pop" /> : icon}
+        {state === "running" ? (
+          <Loader2 className="animate-spin" />
+        ) : state === "done" ? (
+          <CheckCircle2 key="done" className="animate-pop" />
+        ) : state === "partial" ? (
+          <TriangleAlert />
+        ) : state === "failed" ? (
+          <CircleAlert />
+        ) : (
+          icon
+        )}
       </span>
-      <span className={state === "waiting" ? "text-faint" : "text-fg"}>{label}</span>
+      <span className={state === "unchecked" ? "text-faint" : "text-fg"}>
+        {label}
+        {state === "done" || state === "running" ? (
+          <span className="sr-only">: {STEP[state].text}</span>
+        ) : (
+          <span className="block text-xs text-muted">{STEP[state].text}</span>
+        )}
+      </span>
     </li>
   );
 }
 
-function IssueRow({ issue, onOpen }: { issue: CareIssue; onOpen: () => void }) {
+function IssueRow({
+  issue,
+  busy,
+  onOpen,
+  onRetry,
+}: {
+  issue: CareIssue;
+  busy: boolean;
+  onOpen: () => void;
+  onRetry: () => void;
+}) {
   const tone = {
-    danger: { box: "bg-danger/12 text-danger", icon: <ShieldAlert className="w-4.5 h-4.5" /> },
-    warning: { box: "bg-warning/12 text-warning", icon: <TriangleAlert className="w-4.5 h-4.5" /> },
-    info: { box: "bg-info/12 text-info", icon: <CircleAlert className="w-4.5 h-4.5" /> },
+    danger: { box: "bg-danger/12 text-danger", word: "Urgent", icon: <ShieldAlert className="w-4.5 h-4.5" /> },
+    warning: { box: "bg-warning/12 text-warning", word: "Attention", icon: <TriangleAlert className="w-4.5 h-4.5" /> },
+    info: { box: "bg-info/12 text-info", word: "Note", icon: <CircleAlert className="w-4.5 h-4.5" /> },
   }[issue.tone];
   return (
     <li className="flex items-center gap-4 py-3">
-      <span className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${tone.box}`}>{tone.icon}</span>
+      <span aria-hidden className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${tone.box}`}>
+        {tone.icon}
+      </span>
       <div className="min-w-0 flex-1">
-        <div className="text-[14.5px] font-medium text-fg truncate">{issue.title}</div>
-        <div className="text-sm text-muted truncate" title={issue.detail}>
+        <div className="text-[14.5px] font-medium text-fg truncate">
+          <span className="sr-only">{tone.word}: </span>
+          {issue.title}
+        </div>
+        <div className="text-sm text-muted line-clamp-2 break-words" title={issue.detail}>
           {issue.detail}
         </div>
       </div>
-      <span className="text-xs font-semibold tabular-nums text-faint w-9 text-right" title="Points off the care score">
-        −{issue.points}
-      </span>
+      {issue.points > 0 && (
+        <span className="text-xs font-semibold tabular-nums text-faint w-9 text-right" title="Points off the care score">
+          <span aria-hidden>−{issue.points}</span>
+          <span className="sr-only">{issue.points} points off the care score</span>
+        </span>
+      )}
       {issue.fix ? (
         <Badge tone="accent">
           <Wand2 className="w-3 h-3" /> In the fix
         </Badge>
+      ) : issue.retry ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy}
+          onClick={onRetry}
+          aria-label={`Check again: ${issue.title}`}
+          icon={<RefreshCw className="w-3.5 h-3.5" />}
+        >
+          Check again
+        </Button>
       ) : (
-        <Button size="sm" variant="ghost" onClick={onOpen} icon={<ArrowRight className="w-3.5 h-3.5" />}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onOpen}
+          aria-label={`Review: ${issue.title}`}
+          icon={<ArrowRight className="w-3.5 h-3.5" />}
+        >
           Review
         </Button>
       )}
@@ -466,26 +649,72 @@ function IssueRow({ issue, onOpen }: { issue: CareIssue; onOpen: () => void }) {
   );
 }
 
+/** How many failures to spell out before pointing at History. */
+const FAILURES_SHOWN = 3;
+
 function OutcomeBanner({ outcome, onHistory }: { outcome: FixOutcome; onHistory: () => void }) {
-  if (outcome.error) {
-    return (
-      <div role="alert" className="rounded-2xl border border-danger/30 bg-danger/10 px-5 py-4 text-sm text-fg animate-rise">
-        The fix stopped: {outcome.error}
-      </div>
-    );
-  }
+  const { updated, failures, skipped, cancelled, cleared, reboot, error } = outcome;
   const parts: string[] = [];
-  if (outcome.updated > 0) parts.push(`${outcome.updated} update${outcome.updated === 1 ? "" : "s"} installed`);
-  if (outcome.cleared > 0) parts.push(`${formatSize(outcome.cleared)} cleared`);
+  if (updated > 0) parts.push(`${updated} update${updated === 1 ? "" : "s"} installed`);
+  if (cleared > 0) parts.push(`${formatSize(cleared)} cleared`);
+  const did = parts.join(", ");
+
+  const tone = error !== null ? "danger" : failures.length > 0 || cancelled ? "warning" : "success";
+  const box = {
+    danger: "border-danger/30 bg-danger/10",
+    warning: "border-warning/30 bg-warning/10",
+    success: "border-success/30 bg-success/10",
+  }[tone];
+  const title =
+    error !== null
+      ? "The fix stopped"
+      : cancelled
+        ? "Cancelled"
+        : failures.length > 0
+          ? "Finished, but not everything worked"
+          : "Done";
+
   return (
-    <div role="status" className="rounded-2xl border border-success/30 bg-success/10 px-5 py-4 flex flex-wrap items-center gap-x-4 gap-y-2 animate-rise">
-      <CheckCircle2 className="w-5 h-5 text-success flex-shrink-0" />
-      <div className="flex-1 min-w-[240px] text-sm">
-        <span className="font-semibold text-fg">Done{parts.length ? ` — ${parts.join(", ")}` : ""}.</span>
-        {outcome.failed > 0 && <span className="text-muted"> {outcome.failed} could not be installed; History says why.</span>}
-        {outcome.reboot && <span className="text-muted"> Restart when convenient to finish.</span>}
+    <div
+      role={tone === "danger" ? "alert" : "status"}
+      className={`rounded-2xl border px-5 py-4 flex flex-wrap items-start gap-x-4 gap-y-2 animate-rise ${box}`}
+    >
+      {tone === "success" ? (
+        <CheckCircle2 aria-hidden className="w-5 h-5 text-success flex-shrink-0" />
+      ) : (
+        <TriangleAlert
+          aria-hidden
+          className={`w-5 h-5 flex-shrink-0 ${tone === "danger" ? "text-danger" : "text-warning"}`}
+        />
+      )}
+      <div className="flex-1 min-w-[240px] text-sm text-fg">
+        <p>
+          <span className="font-semibold">
+            {title}
+            {did ? `: ${did}` : ""}.
+          </span>
+          {cancelled && skipped > 0 && ` ${skipped} update${skipped === 1 ? " was" : "s were"} left for later.`}
+          {reboot && " Restart when convenient to finish."}
+        </p>
+        {error !== null && <p className="mt-1 break-words">{error}</p>}
+        {failures.length > 0 && (
+          <ul className="mt-1.5 space-y-1">
+            {failures.slice(0, FAILURES_SHOWN).map((f, i) => (
+              <li key={`${f.name}-${i}`} className="break-words">
+                <span className="font-medium">{f.name}</span> was not installed
+                {f.detail ? `: ${f.detail}` : "."}
+              </li>
+            ))}
+            {failures.length > FAILURES_SHOWN && (
+              <li>
+                {failures.length - FAILURES_SHOWN} more could not be installed. History lists them
+                with the reason.
+              </li>
+            )}
+          </ul>
+        )}
       </div>
-      {outcome.failed > 0 && (
+      {failures.length > 0 && (
         <Button size="sm" variant="secondary" onClick={onHistory}>
           Open History
         </Button>
@@ -515,7 +744,12 @@ function AutomaticCare() {
     api
       .checkSchedule(CARE_TASK)
       .then((v) => live && setEnabled(v))
-      .catch(() => live && setEnabled(false));
+      .catch((e: unknown) => {
+        if (!live) return;
+        // The switch stays usable: turning it on writes the schedule anew.
+        setEnabled(false);
+        setError(`Whether automatic care is on could not be read: ${errorText(e)}`);
+      });
     return () => {
       live = false;
     };
@@ -579,7 +813,7 @@ function AutomaticCare() {
           />
         </div>
       )}
-      {error && <p className="mt-3 text-sm text-danger break-words">{error}</p>}
+      {error && <p role="alert" className="mt-3 text-sm text-danger break-words">{error}</p>}
     </Card>
   );
 }
@@ -587,27 +821,62 @@ function AutomaticCare() {
 function Glance({
   onNavigate,
   reclaimable,
-  updates,
-  protectedNow,
-  disksOk,
+  windows,
 }: {
   onNavigate: (tab: Tab) => void;
   reclaimable: number;
-  updates: number;
-  protectedNow: boolean | null;
-  disksOk: boolean | null;
+  windows: boolean;
 }) {
+  const { scan, cleanup, defender, health } = useStore();
+
+  const ready = scan.data?.actionable.length ?? 0;
+  const updates: { value: string; ok: boolean | null } =
+    scan.health.state === "failed"
+      ? { value: "Not checked", ok: null }
+      : scan.health.state === "unknown"
+        ? { value: "-", ok: null }
+        : ready > 0
+          ? { value: `${ready} ready`, ok: false }
+          : scan.health.state === "partial"
+            ? { value: "Not fully checked", ok: null }
+            : { value: "Up to date", ok: true };
+
+  const junk: { value: string; ok: boolean | null } = cleanup.error
+    ? { value: "Not measured", ok: null }
+    : cleanup.loadedAt === null
+      ? { value: "-", ok: null }
+      : {
+          value: reclaimable > 0 ? formatSize(reclaimable) : "Tidy",
+          ok: reclaimable < 200 * 1024 * 1024,
+        };
+
+  const realTime = defender.data?.real_time_protection ?? null;
+  const protection: { value: string; ok: boolean | null } =
+    defender.error || (defender.data && realTime === null)
+      ? { value: "Could not be read", ok: null }
+      : realTime === null
+        ? { value: "-", ok: null }
+        : { value: realTime ? "On" : "Off", ok: realTime };
+
+  const disks = health.data?.disks ?? [];
+  const reported = disks.filter((d) => d.state !== "unknown");
+  const disk: { value: string; ok: boolean | null } = health.error
+    ? { value: "Could not be read", ok: null }
+    : health.data === null
+      ? { value: "-", ok: null }
+      : reported.length === 0
+        ? { value: "Not reported", ok: null }
+        : reported.every((d) => d.state === "good")
+          ? { value: "Healthy", ok: true }
+          : { value: "Check", ok: false };
+
   const rows: { tab: Tab; icon: ReactNode; label: string; value: string; ok: boolean | null }[] = [
-    { tab: "updates", icon: <Package />, label: "Updates", value: updates === 0 ? "Up to date" : `${updates} ready`, ok: updates === 0 },
-    { tab: "maintenance", icon: <Brush />, label: "Junk files", value: reclaimable > 0 ? formatSize(reclaimable) : "Tidy", ok: reclaimable < 200 * 1024 * 1024 },
-    {
-      tab: "security",
-      icon: <ShieldCheck />,
-      label: "Protection",
-      value: protectedNow === null ? "—" : protectedNow ? "On" : "Off",
-      ok: protectedNow,
-    },
-    { tab: "hardware", icon: <HardDrive />, label: "Disks", value: disksOk === null ? "—" : disksOk ? "Healthy" : "Check", ok: disksOk },
+    { tab: "updates", icon: <Package />, label: "Updates", ...updates },
+    { tab: "maintenance", icon: <Brush />, label: "Junk files", ...junk },
+    ...(windows
+      ? [{ tab: "security" as const, icon: <ShieldCheck />, label: "Protection", ...protection }]
+      : []),
+    { tab: "hardware", icon: <HardDrive />, label: "Disks", ...disk },
   ];
   return (
     <Card title="At a glance" padded>
@@ -623,9 +892,9 @@ function Glance({
               <span className="text-muted">{r.label}</span>
               <span className="ml-auto flex items-center gap-2 font-medium text-fg">
                 {r.ok === null ? (
-                  <Circle className="w-2 h-2 text-faint" />
+                  <Circle aria-hidden className="w-2 h-2 text-faint" />
                 ) : (
-                  <span className={`w-2 h-2 rounded-full ${r.ok ? "bg-success" : "bg-warning"}`} />
+                  <span aria-hidden className={`w-2 h-2 rounded-full ${r.ok ? "bg-success" : "bg-warning"}`} />
                 )}
                 {r.value}
               </span>

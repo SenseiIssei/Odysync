@@ -34,21 +34,27 @@ pub struct Config {
     pub profiles: Vec<Profile>,
     /// Take a system restore point (Windows) before applying anything.
     pub restore_point: bool,
-    /// Scan interval in hours for background scanning (0 = manual only).
+    /// How often the app looks for updates while it sits in the tray, in hours
+    /// (0 = only when asked).
     pub scan_interval_hours: u32,
-    /// Max concurrent backend scans/applys.
+    /// Not used any more: sources are asked all at once, each with its own
+    /// time limit. Kept so that an existing config file still loads in an
+    /// older version.
     pub concurrency: u32,
-    /// HTTP proxy URL for web crawlers and registry requests.
+    /// HTTP proxy for lookups and downloads. Without one the system's applies.
     pub proxy_url: Option<String>,
-    /// Automatically apply updates after scanning (dangerous).
+    /// Not used any more: automatic care does this, with a schedule and
+    /// without drivers. Kept like `concurrency`.
     pub auto_apply: bool,
     /// Show desktop notifications for scan results and apply completion.
     pub notifications: bool,
     /// Skip pre-release versions (alias for policy.stable_only, kept for UI).
     pub skip_prerelease: bool,
-    /// Retry failed updates up to N times.
+    /// How often to try again what failed before anything was changed, such as
+    /// a download. An installer that was started is never started again.
     pub max_retries: u32,
-    /// Timeout for individual backend operations in seconds.
+    /// How long one source may take to scan, in seconds. Windows Update gets at
+    /// least five minutes.
     pub backend_timeout_secs: u32,
     /// Export the whole driver store before applying driver updates (Windows).
     ///
@@ -96,9 +102,9 @@ impl PausedBackend {
     /// permanent. A typo in a hand-edited config must not silently stop
     /// security updates forever; failing open here means the worst case is an
     /// update the user wanted to defer, rather than one they never receive.
-    pub fn is_active_at(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
-        match chrono::DateTime::parse_from_rfc3339(self.until.trim()) {
-            Ok(until) => now < until.with_timezone(&chrono::Utc),
+    pub fn is_active_at(&self, now: jiff::Timestamp) -> bool {
+        match self.until.trim().parse::<jiff::Timestamp>() {
+            Ok(until) => now < until,
             Err(e) => {
                 tracing::warn!(
                     backend = %self.backend,
@@ -181,17 +187,13 @@ impl Config {
     /// An explicit disable always wins, so a user who turns something off does
     /// not have it turned back on by an opt-in list they edited earlier.
     pub fn backend_enabled(&self, kind: BackendKind) -> bool {
-        self.backend_enabled_at(kind, chrono::Utc::now())
+        self.backend_enabled_at(kind, jiff::Timestamp::now())
     }
 
     /// [`backend_enabled`](Config::backend_enabled) as of a given moment.
     ///
     /// Split out so the pause logic is testable without waiting for a clock.
-    pub fn backend_enabled_at(
-        &self,
-        kind: BackendKind,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> bool {
+    pub fn backend_enabled_at(&self, kind: BackendKind, now: jiff::Timestamp) -> bool {
         if self
             .disabled_backends
             .iter()
@@ -217,14 +219,10 @@ impl Config {
     /// is missing and when it comes back — "paused until 3 August" is
     /// actionable, "no updates found" is misleading.
     pub fn pause_for(&self, kind: BackendKind) -> Option<&PausedBackend> {
-        self.pause_for_at(kind, chrono::Utc::now())
+        self.pause_for_at(kind, jiff::Timestamp::now())
     }
 
-    fn pause_for_at(
-        &self,
-        kind: BackendKind,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Option<&PausedBackend> {
+    fn pause_for_at(&self, kind: BackendKind, now: jiff::Timestamp) -> Option<&PausedBackend> {
         self.paused_backends
             .iter()
             .find(|p| p.backend.eq_ignore_ascii_case(kind.id()) && p.is_active_at(now))
@@ -234,14 +232,14 @@ impl Config {
     pub fn pause_backend(
         &mut self,
         kind: BackendKind,
-        until: chrono::DateTime<chrono::Utc>,
+        until: jiff::Timestamp,
         note: Option<String>,
     ) {
         self.paused_backends
             .retain(|p| !p.backend.eq_ignore_ascii_case(kind.id()));
         self.paused_backends.push(PausedBackend {
             backend: kind.id().to_string(),
-            until: until.to_rfc3339(),
+            until: until.to_string(),
             note,
         });
     }
@@ -357,10 +355,8 @@ mod tests {
         }
     }
 
-    fn at(text: &str) -> chrono::DateTime<chrono::Utc> {
-        chrono::DateTime::parse_from_rfc3339(text)
-            .unwrap()
-            .with_timezone(&chrono::Utc)
+    fn at(text: &str) -> jiff::Timestamp {
+        text.parse().unwrap()
     }
 
     #[test]

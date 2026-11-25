@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CalendarClock, Trash2 } from "lucide-react";
 import * as api from "../api";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import {
   Badge,
   Button,
@@ -89,7 +89,7 @@ export default function Schedule() {
     <>
       <PageHeader
         title="Schedule"
-        subtitle={`Let ${scheduler} run Odysync for you. A scheduled run installs the updates that pass every safety rule — the same ones the Updates page shows as ready — and nothing else.`}
+        subtitle={`Let ${scheduler} run Odysync for you. A scheduled run installs the updates that pass every safety rule, the same ones the Updates page shows as ready, and nothing else.`}
       />
 
       {message && <SuccessBar message={message} />}
@@ -99,7 +99,13 @@ export default function Schedule() {
         title="Automatic scan"
         actions={
           <Badge tone={scheduled ? "success" : "neutral"}>
-            {checking || scheduled === null ? "Checking…" : scheduled ? "Active" : "Not scheduled"}
+            {checking
+              ? "Checking…"
+              : scheduled === null
+                ? "Unknown"
+                : scheduled
+                  ? "Active"
+                  : "Not scheduled"}
           </Badge>
         }
       >
@@ -125,7 +131,7 @@ export default function Schedule() {
               type="time"
               value={time}
               onChange={(e) => setTime(e.target.value)}
-              className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:border-accent"
+              className="w-full h-9 px-3 rounded-lg border border-control bg-canvas text-sm outline-none focus:border-accent"
             />
           </div>
           <div>
@@ -137,7 +143,7 @@ export default function Schedule() {
               type="text"
               value={taskName}
               onChange={(e) => setTaskName(e.target.value)}
-              className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-sm outline-none focus:border-accent"
+              className="w-full h-9 px-3 rounded-lg border border-control bg-canvas text-sm outline-none focus:border-accent"
             />
           </div>
         </div>

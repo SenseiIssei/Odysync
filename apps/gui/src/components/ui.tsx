@@ -1,9 +1,16 @@
 /** Shared presentational building blocks used across every page. */
 
-import { AlertTriangle, CheckCircle2, Info, Loader2, RefreshCw, Search } from "lucide-react";
-import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { useCountUp } from "../useCountUp";
-import type { Resource } from "../store";
+import { AlertTriangle, CheckCircle2, Info, Loader2, Search } from "lucide-react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  type ButtonHTMLAttributes,
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+} from "react";
+import type { Resource } from "../store-context";
 
 export function PageHeader({
   title,
@@ -17,7 +24,10 @@ export function PageHeader({
   return (
     <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-1">
       <div className="min-w-0">
-        <h1 className="text-[26px] leading-tight font-bold text-fg">{title}</h1>
+        {/* Focusable so that navigation can move the focus here. */}
+        <h1 tabIndex={-1} className="text-[26px] leading-tight font-bold text-fg">
+          {title}
+        </h1>
         {subtitle && <p className="text-sm text-muted mt-1 max-w-[70ch]">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2 flex-shrink-0">{actions}</div>}
@@ -28,12 +38,12 @@ export function PageHeader({
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
 const BUTTON_STYLES: Record<ButtonVariant, string> = {
-  primary: "bg-gradient-accent text-white border border-transparent btn-glow",
+  primary: "bg-gradient-accent text-accent-fg border border-transparent btn-glow",
   secondary:
     "bg-surface/70 text-fg border border-line hover:bg-raised hover:border-line-strong backdrop-blur",
   ghost: "text-muted hover:text-fg hover:bg-raised border border-transparent",
   danger:
-    "bg-danger/10 text-danger border border-danger/25 hover:bg-danger/15 hover:border-danger/40",
+    "bg-danger/10 text-danger border border-danger/25 hover:bg-danger/12 hover:border-danger/40",
 };
 
 export function Button({
@@ -45,6 +55,7 @@ export function Button({
   className = "",
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
+  ref?: Ref<HTMLButtonElement>;
   variant?: ButtonVariant;
   size?: "sm" | "md" | "lg";
   icon?: ReactNode;
@@ -63,30 +74,9 @@ export function Button({
       disabled={rest.disabled || busy}
       className={`inline-flex items-center justify-center font-medium whitespace-nowrap transition-colors disabled:opacity-50 disabled:pointer-events-none ${sizing} ${BUTTON_STYLES[variant]} ${className}`}
     >
-      {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : icon}
+      {busy ? <Loader2 aria-hidden className="w-4 h-4 animate-spin" /> : icon}
       {children}
     </button>
-  );
-}
-
-export function RefreshButton({
-  onClick,
-  spinning,
-  label = "Refresh",
-}: {
-  onClick: () => void;
-  spinning?: boolean;
-  label?: string;
-}) {
-  return (
-    <Button
-      variant="secondary"
-      onClick={onClick}
-      disabled={spinning}
-      icon={<RefreshCw className={`w-4 h-4 ${spinning ? "animate-spin" : ""}`} />}
-    >
-      {label}
-    </Button>
   );
 }
 
@@ -115,10 +105,12 @@ function Notice({
   tone,
   icon,
   message,
+  action,
 }: {
   tone: Tone;
   icon: ReactNode;
   message: ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <div
@@ -126,13 +118,21 @@ function Notice({
       className={`flex items-start gap-2.5 text-sm rounded-lg px-3.5 py-2.5 border ${TONE_BADGE[tone]}`}
     >
       <span className="flex-shrink-0 mt-0.5">{icon}</span>
-      <span className="break-words text-fg/90">{message}</span>
+      <div className="min-w-0 flex-1 break-words text-fg">{message}</div>
+      {action && <div className="flex-shrink-0">{action}</div>}
     </div>
   );
 }
 
-export function ErrorBar({ message }: { message: string }) {
-  return <Notice tone="danger" icon={<AlertTriangle className="w-4 h-4" />} message={message} />;
+export function ErrorBar({ message, action }: { message: ReactNode; action?: ReactNode }) {
+  return (
+    <Notice
+      tone="danger"
+      icon={<AlertTriangle className="w-4 h-4" />}
+      message={message}
+      action={action}
+    />
+  );
 }
 
 export function SuccessBar({ message }: { message: string }) {
@@ -143,18 +143,27 @@ export function InfoBar({ message }: { message: ReactNode }) {
   return <Notice tone="info" icon={<Info className="w-4 h-4" />} message={message} />;
 }
 
-export function WarningBar({ message }: { message: ReactNode }) {
-  return <Notice tone="warning" icon={<AlertTriangle className="w-4 h-4" />} message={message} />;
+export function WarningBar({ message, action }: { message: ReactNode; action?: ReactNode }) {
+  return (
+    <Notice
+      tone="warning"
+      icon={<AlertTriangle className="w-4 h-4" />}
+      message={message}
+      action={action}
+    />
+  );
 }
 
 export function EmptyState({
   icon,
   title,
   hint,
+  action,
 }: {
   icon: ReactNode;
   title: string;
   hint?: string;
+  action?: ReactNode;
 }) {
   return (
     <div className="text-center py-12 px-6">
@@ -163,11 +172,12 @@ export function EmptyState({
       </div>
       <p className="text-sm font-medium text-fg">{title}</p>
       {hint && <p className="text-sm text-muted mt-1 max-w-[52ch] mx-auto">{hint}</p>}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }
 
-export function LoadingState({ label }: { label: string }) {
+function LoadingState({ label }: { label: string }) {
   return (
     <div className="flex items-center justify-center gap-2.5 py-12 text-sm text-muted">
       <Loader2 className="w-4 h-4 animate-spin text-accent" />
@@ -247,7 +257,7 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-[22px] w-[38px] flex-shrink-0 items-center rounded-full border transition-colors disabled:opacity-50 ${
-        checked ? "bg-gradient-accent border-transparent" : "bg-raised border-line-strong"
+        checked ? "bg-gradient-accent border-transparent" : "bg-raised border-control"
       }`}
     >
       <span
@@ -277,7 +287,7 @@ export function Checkbox({
       checked={checked}
       disabled={disabled}
       onChange={(e) => onChange(e.target.checked)}
-      className="h-4 w-4 rounded border-line-strong accent-[var(--accent)] cursor-pointer disabled:cursor-default"
+      className="h-4 w-4 rounded accent-[var(--accent)] cursor-pointer disabled:cursor-default"
     />
   );
 }
@@ -293,18 +303,42 @@ export function Segmented<T extends string>({
   onChange: (v: T) => void;
   label: string;
 }) {
+  // One tab stop for the group; the arrow keys move the choice within it, as
+  // they do in a group of native radio buttons.
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const step =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? 1
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (step === 0 && e.key !== "Home" && e.key !== "End") return;
+    e.preventDefault();
+    const at = options.findIndex((o) => o.value === value);
+    const next =
+      e.key === "Home"
+        ? 0
+        : e.key === "End"
+          ? options.length - 1
+          : (Math.max(at, 0) + step + options.length) % options.length;
+    onChange(options[next].value);
+    e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus();
+  };
+  const chosen = options.some((o) => o.value === value);
   return (
     <div
       role="radiogroup"
       aria-label={label}
+      onKeyDown={onKeyDown}
       className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-canvas p-0.5"
     >
-      {options.map((o) => (
+      {options.map((o, i) => (
         <button
           key={o.value}
           type="button"
           role="radio"
           aria-checked={value === o.value}
+          tabIndex={value === o.value || (!chosen && i === 0) ? 0 : -1}
           onClick={() => onChange(o.value)}
           className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium transition-colors ${
             value === o.value
@@ -355,37 +389,6 @@ export function Card({
   );
 }
 
-export function StatCard({
-  icon,
-  value,
-  label,
-  color = "text-accent",
-  hint,
-}: {
-  icon: ReactNode;
-  value: string;
-  label: string;
-  color?: string;
-  /** @deprecated the neon glow is gone; accepted so callers need not change. */
-  glow?: string;
-  /** @deprecated kept for API compatibility. */
-  delay?: number;
-  hint?: string;
-}) {
-  return (
-    <div className="rounded-2xl glass border border-line p-4 animate-rise">
-      <div className="flex items-center gap-2 text-sm text-muted">
-        <span className={`${color} [&>svg]:w-4 [&>svg]:h-4`}>{icon}</span>
-        {label}
-      </div>
-      <div className="text-2xl font-semibold mt-2 tracking-tight truncate" title={value}>
-        {value}
-      </div>
-      {hint && <div className="text-xs text-faint mt-0.5">{hint}</div>}
-    </div>
-  );
-}
-
 export function SearchInput({
   value,
   onChange,
@@ -396,8 +399,8 @@ export function SearchInput({
   placeholder: string;
 }) {
   return (
-    <label className="flex items-center gap-2 h-9 px-3 rounded-lg border border-line bg-canvas/60 focus-within:border-accent min-w-[220px] flex-1">
-      <Search className="w-4 h-4 text-faint flex-shrink-0" />
+    <label className="flex items-center gap-2 h-9 px-3 rounded-lg border border-control bg-canvas/60 focus-within:border-accent min-w-[220px] flex-1">
+      <Search aria-hidden className="w-4 h-4 text-faint flex-shrink-0" />
       <input
         type="search"
         value={value}
@@ -424,7 +427,17 @@ export function Facts({ items }: { items: [string, ReactNode][] }) {
   );
 }
 
-export function Meter({ value, tone = "accent" }: { value: number; tone?: Tone }) {
+export function Meter({
+  value,
+  label,
+  tone = "accent",
+}: {
+  /** 0 to 1. */
+  value: number;
+  /** What is being measured, for screen readers. */
+  label: string;
+  tone?: Tone;
+}) {
   const pct = Math.max(0, Math.min(100, value * 100));
   const bar: Record<Tone, string> = {
     neutral: "bg-faint",
@@ -435,18 +448,85 @@ export function Meter({ value, tone = "accent" }: { value: number; tone?: Tone }
     info: "bg-info",
   };
   return (
-    <div className="h-1.5 w-full rounded-full bg-raised overflow-hidden">
+    <div
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(pct)}
+      className="h-1.5 w-full rounded-full bg-raised overflow-hidden"
+    >
       <div className={`h-full rounded-full ${bar[tone]} transition-[width] duration-500 ease-out`} style={{ width: `${pct}%` }} />
     </div>
   );
 }
 
-export function CountUp({ value, format }: { value: number; format?: (n: number) => string }) {
-  const n = useCountUp(value);
-  return <>{format ? format(n) : n}</>;
-}
+/**
+ * The second step of something that cannot be taken back.
+ *
+ * It is a bar of its own rather than a new label on the button that was
+ * pressed, so a double click never confirms: the place that was clicked stays
+ * what it was (disable it while this is open), and the keyboard lands on
+ * Cancel. Show it below the thing it is about, and tie it to the selection it
+ * was opened for, so that changing the selection closes it.
+ */
+export function ConfirmBar({
+  message,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+  cancelLabel = "Cancel",
+  className = "",
+}: {
+  message: ReactNode;
+  confirmLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  cancelLabel?: string;
+  className?: string;
+}) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const messageId = useId();
 
-/** A shimmering bar standing in for text that is still loading. */
-export function Skeleton({ className = "h-4 w-32" }: { className?: string }) {
-  return <span aria-hidden className={`skeleton inline-block ${className}`} />;
+  useEffect(() => {
+    const before = document.activeElement;
+    const bar = barRef.current;
+    cancelRef.current?.focus();
+    return () => {
+      // Hand the focus back, unless it has already gone somewhere else.
+      const now = document.activeElement;
+      const lost = now === null || now === document.body || (bar?.contains(now) ?? false);
+      if (lost && before instanceof HTMLElement) before.focus();
+    };
+  }, []);
+
+  return (
+    <div
+      ref={barRef}
+      role="alertdialog"
+      aria-label="Please confirm"
+      aria-describedby={messageId}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+      className={`rounded-lg border border-danger/25 bg-danger/10 px-3.5 py-3 text-sm animate-fade-in ${className}`}
+    >
+      <div id={messageId} className="flex items-start gap-2.5 break-words text-fg">
+        <AlertTriangle aria-hidden className="w-4 h-4 mt-0.5 flex-shrink-0 text-danger" />
+        <div className="min-w-0">{message}</div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button ref={cancelRef} size="sm" onClick={onCancel}>
+          {cancelLabel}
+        </Button>
+        <Button size="sm" variant="danger" onClick={onConfirm}>
+          {confirmLabel}
+        </Button>
+      </div>
+    </div>
+  );
 }

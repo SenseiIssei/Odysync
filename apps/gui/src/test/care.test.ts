@@ -23,6 +23,10 @@ const cleanupItem = (over: Partial<CleanupItemDto>): CleanupItemDto =>
   }) as CleanupItemDto;
 
 const clean: CareInput = {
+  scan: { state: "complete" },
+  sourceName: (backend) => backend,
+  failedChecks: [],
+  incompleteSecurity: 0,
   updates: [],
   attendedUpdates: [],
   developerUpdates: [],
@@ -88,6 +92,68 @@ describe("care score", () => {
     });
     expect(a.issues[0].id).toBe("defender-off");
     expect(a.issues[0].tone).toBe("danger");
+  });
+
+  it("gives no score when the update check failed as a whole", () => {
+    const a = assess({ ...clean, scan: { state: "failed", error: "no network", failed: [] } });
+    expect(a.scoreKnown).toBe(false);
+    expect(a.issues[0]).toMatchObject({ id: "scan-failed", detail: "no network", retry: true });
+    expect(assess({ ...clean, scan: { state: "unknown" } }).scoreKnown).toBe(false);
+  });
+
+  it("names the sources that could not be checked and takes points for them", () => {
+    const a = assess({
+      ...clean,
+      sourceName: (b) => (b === "windows-update" ? "Windows Update" : b),
+      scan: {
+        state: "partial",
+        failed: [
+          { backend: "windows-update", error: "timeout" },
+          { backend: "pip", error: "timeout" },
+        ],
+      },
+    });
+    expect(a.scoreKnown).toBe(true);
+    expect(a.score).toBeLessThan(100);
+    const issue = a.issues.find((i) => i.id === "sources-unchecked");
+    expect(issue?.detail).toContain("Windows Update, pip");
+    expect(issue?.retry).toBe(true);
+  });
+
+  it("says a cancelled check was cancelled, not that it failed", () => {
+    const a = assess({
+      ...clean,
+      scan: { state: "partial", failed: [{ backend: "pip", error: "cancelled" }] },
+    });
+    expect(a.issues[0].title).toBe("1 update source not checked");
+    expect(a.issues[0].detail).toContain("cancelled");
+  });
+
+  it("lists a check that failed instead of reading it as healthy", () => {
+    const a = assess({
+      ...clean,
+      failedChecks: [{ id: "cleanup", label: "Junk files", error: "denied", tab: "maintenance" }],
+    });
+    expect(a.score).toBeLessThan(100);
+    expect(a.issues[0].title).toBe("Junk files could not be checked");
+  });
+
+  it("does not take an unreadable Defender for one that is off", () => {
+    const a = assess({
+      ...clean,
+      defender: {
+        real_time_protection: null,
+        tamper_protection: null,
+        antivirus_enabled: null,
+        signature_age_days: null,
+        signature_version: "",
+        last_quick_scan: null,
+        last_full_scan: null,
+      },
+    });
+    expect(a.score).toBe(100);
+    expect(a.issues.map((i) => i.id)).toEqual(["defender-unknown"]);
+    expect(a.issues[0].title).toContain("could not be read");
   });
 
   it("does not mention a few megabytes of cache", () => {

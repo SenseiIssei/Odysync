@@ -17,9 +17,20 @@ export function formatDate(value: string): string {
   return d.toLocaleString();
 }
 
+/** Codes the command layer rejects with, in words. */
+const ERROR_CODES: Record<string, string> = {
+  "apply-running": "An update is being installed. Wait for it to finish, or cancel it.",
+  cancelled: "Cancelled before it answered.",
+};
+
+/** Whether a command was refused because an update is being installed. */
+export function isApplyRunning(e: unknown): boolean {
+  return e === "apply-running" || (e instanceof Error && e.message === "apply-running");
+}
+
 export function errorText(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === "string") return e;
+  if (e instanceof Error) return ERROR_CODES[e.message] ?? e.message;
+  if (typeof e === "string") return ERROR_CODES[e] ?? e;
   try {
     return JSON.stringify(e);
   } catch {

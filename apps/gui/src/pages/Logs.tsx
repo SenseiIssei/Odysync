@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, FolderOpen, RefreshCw, ScrollText } from "lucide-react";
 import * as api from "../api";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import {
   Button,
   Card,
@@ -12,6 +12,7 @@ import {
   Segmented,
   Switch,
 } from "../components/ui";
+import { errorText } from "../format";
 
 const AUTO_REFRESH_MS = 5000;
 
@@ -21,6 +22,7 @@ export default function Logs() {
   const [search, setSearch] = useState("");
   const [follow, setFollow] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [folderError, setFolderError] = useState<string | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
 
   const entries = logs.data;
@@ -40,7 +42,7 @@ export default function Logs() {
   const refresh = logs.refresh;
   useEffect(() => {
     if (!follow) return;
-    const id = setInterval(() => void refresh(), AUTO_REFRESH_MS);
+    const id = setInterval(() => void refresh({ quiet: true }), AUTO_REFRESH_MS);
     return () => clearInterval(id);
   }, [follow, refresh]);
 
@@ -79,12 +81,13 @@ export default function Logs() {
             <Button
               variant="ghost"
               icon={<FolderOpen className="w-4 h-4" />}
-              onClick={() =>
-                void api
+              onClick={() => {
+                setFolderError(null);
+                api
                   .getLogFolder()
                   .then((dir) => api.revealPath(dir))
-                  .catch(() => {})
-              }
+                  .catch((e: unknown) => setFolderError(errorText(e)));
+              }}
             >
               Open folder
             </Button>
@@ -99,7 +102,8 @@ export default function Logs() {
         }
       />
 
-      {logs.error && <ErrorBar message={logs.error} />}
+      {logs.error && <ErrorBar message={`The log could not be read: ${logs.error}`} />}
+      {folderError && <ErrorBar message={`The log folder could not be opened: ${folderError}`} />}
 
       <Card padded={false}>
         <div className="flex flex-wrap items-center gap-3 px-5 py-3 border-b border-line">
@@ -126,7 +130,9 @@ export default function Logs() {
               logs.loading && logs.loadedAt === null
                 ? "Reading the log…"
                 : entries.length === 0
-                  ? "The log is empty"
+                  ? logs.error
+                    ? "The log could not be read"
+                    : "The log is empty"
                   : "No entry matches the filter"
             }
           />
@@ -135,6 +141,10 @@ export default function Logs() {
             <div
               ref={viewportRef}
               onScroll={onScroll}
+              // Focusable, so the keyboard can scroll it.
+              tabIndex={0}
+              role="region"
+              aria-label="Log messages"
               className="px-5 py-4 max-h-[62vh] overflow-y-auto font-mono text-[12.5px] leading-relaxed space-y-0.5 selectable"
             >
               {filtered.map((l, i) => (

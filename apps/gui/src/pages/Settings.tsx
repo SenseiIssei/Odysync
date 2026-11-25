@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { CheckCircle2, Lock, Monitor, Moon, Sun } from "lucide-react";
+import { useId, useState } from "react";
+import { CheckCircle2, Lock, LockOpen, Monitor, Moon, Sun } from "lucide-react";
 import * as api from "../api";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import { useTheme, type ThemeChoice } from "../theme";
 import {
   Badge,
@@ -15,7 +15,14 @@ import {
   Toggle,
 } from "../components/ui";
 import { errorText } from "../format";
-import type { BackendDto, Config } from "../types";
+import type { BackendDto, Config, Hold } from "../types";
+
+/** The exclusion list as it is stored, from what was typed. */
+const parseExclude = (text: string) =>
+  text
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
@@ -25,6 +32,9 @@ export default function Settings() {
   // Unsaved edits. `null` means "no edits": the form shows the saved config.
   const [edits, setEdits] = useState<Config | null>(null);
   const draft = edits ?? config.data;
+  // The exclusion list as typed. Parsing it on every keystroke would remove
+  // the line break the moment it is entered.
+  const [excludeText, setExcludeText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -47,12 +57,17 @@ export default function Settings() {
 
   const save = async () => {
     if (!draft) return;
+    const toSave =
+      excludeText === null
+        ? draft
+        : { ...draft, policy: { ...draft.policy, exclude: parseExclude(excludeText) } };
     setSaving(true);
     setError(null);
     try {
-      await api.saveConfig(draft);
-      await Promise.all([config.refresh(), backends.refresh()]);
+      await api.saveConfig(toSave);
+      await Promise.all([config.reload(), backends.reload()]);
       setEdits(null);
+      setExcludeText(null);
       setSaved(true);
     } catch (e) {
       setError(errorText(e));
@@ -64,12 +79,21 @@ export default function Settings() {
   const revert = async () => {
     await config.refresh();
     setEdits(null);
+    setExcludeText(null);
     setSaved(false);
     setError(null);
   };
 
+  // Holds are released on the spot and are not part of what is saved here, so
+  // they do not make the form dirty.
+  const comparable = (c: Config) => JSON.stringify({ ...c, policy: { ...c.policy, holds: [] } });
+  const excludeEdited =
+    excludeText !== null &&
+    config.data !== null &&
+    parseExclude(excludeText).join("\n") !== config.data.policy.exclude.join("\n");
   const dirty =
-    edits !== null && config.data !== null && JSON.stringify(edits) !== JSON.stringify(config.data);
+    excludeEdited ||
+    (edits !== null && config.data !== null && comparable(edits) !== comparable(config.data));
 
   /** Whether a source is switched on in the draft. */
   const isOn = (b: BackendDto) => {
@@ -156,7 +180,7 @@ export default function Settings() {
                 />
                 <Toggle
                   label="Require known versions"
-                  description="Skip an update when either version cannot be read — a guess is how downgrades happen."
+                  description="Skip an update when either version cannot be read. A guess is how downgrades happen."
                   checked={draft.policy.require_known_versions}
                   onChange={(v) => patchPolicy({ require_known_versions: v })}
                 />
@@ -168,26 +192,7 @@ export default function Settings() {
                     onChange={(v) => patch({ restore_point: v })}
                   />
                 )}
-                {draft.policy.holds.length > 0 && (
-                  <div className="pt-4 border-t border-line">
-                    <div className="text-sm font-medium flex items-center gap-1.5 mb-2">
-                      <Lock className="w-3.5 h-3.5 text-muted" />
-                      Held packages
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {draft.policy.holds.map((h) => (
-                        <span key={h.package} title={h.note ?? undefined}>
-                          <Badge>
-                            <span className="font-mono">
-                              {h.package}
-                              {h.pin ? ` @ ${h.pin}` : ""}
-                            </span>
-                          </Badge>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <Holds holds={config.data?.policy.holds ?? []} />
               </div>
             </Card>
 
@@ -195,12 +200,6 @@ export default function Settings() {
 
             <Card title="Automation">
               <div className="space-y-5">
-                <Toggle
-                  label="Install automatically after a scan"
-                  description="Applies everything the safety rules allow without asking. Off is the careful choice."
-                  checked={draft.auto_apply}
-                  onChange={(v) => patch({ auto_apply: v })}
-                />
                 <Toggle
                   label="Notifications"
                   description="When a scan finds updates and when an installation finishes."
@@ -237,36 +236,21 @@ export default function Settings() {
             </Card>
 
             <Card title="Network">
-              <div className="grid gap-5 sm:grid-cols-[1fr_200px]">
-                <div>
-                  <label htmlFor="proxy" className="block text-sm font-medium mb-1.5">
-                    HTTP proxy
-                  </label>
-                  <input
-                    id="proxy"
-                    type="text"
-                    value={draft.proxy_url ?? ""}
-                    onChange={(e) => patch({ proxy_url: e.target.value.trim() || null })}
-                    className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-sm placeholder:text-faint focus:border-accent outline-none"
-                    placeholder="http://proxy.example.com:8080"
-                  />
-                  <p className="text-sm text-muted mt-1.5">Leave empty for a direct connection.</p>
-                </div>
-                <div>
-                  <label htmlFor="conc" className="block text-sm font-medium mb-1.5">
-                    Parallel sources: <span className="tabular-nums">{draft.concurrency}</span>
-                  </label>
-                  <input
-                    id="conc"
-                    type="range"
-                    min={1}
-                    max={16}
-                    value={draft.concurrency}
-                    onChange={(e) => patch({ concurrency: Number(e.target.value) })}
-                    className="w-full accent-[var(--accent)] mt-2"
-                  />
-                </div>
-              </div>
+              <label htmlFor="proxy" className="block text-sm font-medium mb-1.5">
+                HTTP proxy
+              </label>
+              <input
+                id="proxy"
+                type="text"
+                value={draft.proxy_url ?? ""}
+                onChange={(e) => patch({ proxy_url: e.target.value.trim() || null })}
+                aria-describedby="proxy-hint"
+                className="w-full h-9 px-3 rounded-lg border border-control bg-canvas text-sm placeholder:text-faint focus:border-accent outline-none"
+                placeholder="http://proxy.example.com:8080"
+              />
+              <p id="proxy-hint" className="text-sm text-muted mt-1.5">
+                Leave empty for a direct connection.
+              </p>
             </Card>
 
             <Card
@@ -274,17 +258,19 @@ export default function Settings() {
               description="One per line, as a bare id (vscode) or source:id (pip:requests). Excluded packages are never updated."
             >
               <textarea
-                value={draft.policy.exclude.join("\n")}
-                onChange={(e) =>
-                  patchPolicy({
-                    exclude: e.target.value
-                      .split("\n")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  })
-                }
+                aria-label="Excluded packages, one per line"
+                value={excludeText ?? draft.policy.exclude.join("\n")}
+                onChange={(e) => {
+                  setExcludeText(e.target.value);
+                  setSaved(false);
+                }}
+                onBlur={() => {
+                  if (excludeText === null) return;
+                  patchPolicy({ exclude: parseExclude(excludeText) });
+                  setExcludeText(null);
+                }}
                 rows={4}
-                className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm font-mono placeholder:text-faint focus:border-accent outline-none selectable"
+                className="w-full px-3 py-2 rounded-lg border border-control bg-canvas text-sm font-mono placeholder:text-faint focus:border-accent outline-none selectable"
                 placeholder={"vscode\npip:requests"}
               />
             </Card>
@@ -311,6 +297,80 @@ export default function Settings() {
         )}
       </ResourceView>
     </>
+  );
+}
+
+/**
+ * Packages that are never updated until they are released.
+ *
+ * Read from the saved config, not from unsaved edits: holding and releasing
+ * take effect at once.
+ */
+function Holds({ holds }: { holds: Hold[] }) {
+  const { config } = useStore();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [released, setReleased] = useState<string | null>(null);
+
+  const release = async (pkg: string) => {
+    setBusy(pkg);
+    setError(null);
+    setReleased(null);
+    try {
+      // The text of the hold is enough: one written by hand may name no source.
+      await api.unhold({ backend: "", id: pkg });
+      await config.reload();
+      setReleased(pkg);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (holds.length === 0 && !error && !released) return null;
+  return (
+    <div className="pt-4 border-t border-line">
+      <div className="text-sm font-medium flex items-center gap-1.5 mb-1">
+        <Lock aria-hidden className="w-3.5 h-3.5 text-muted" />
+        Held packages
+      </div>
+      <p className="text-sm text-muted">
+        Never updated until released. Hold a package from the Updates page.
+      </p>
+      <ul className="mt-2 divide-y divide-line">
+        {holds.map((h) => {
+          return (
+            <li key={h.package} className="flex items-center gap-3 py-2">
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-mono break-all selectable">
+                  {h.package}
+                  {h.pin ? ` @ ${h.pin}` : ""}
+                </span>
+                {h.note && <span className="block text-xs text-muted">{h.note}</span>}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                busy={busy === h.package}
+                disabled={busy !== null}
+                aria-label={`Release ${h.package}`}
+                icon={<LockOpen className="w-3.5 h-3.5" />}
+                onClick={() => void release(h.package)}
+              >
+                Release
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+      {error && <ErrorBar message={`Could not release: ${error}`} />}
+      {released && (
+        <p role="status" className="text-sm text-muted mt-1">
+          {released} is offered again after the next scan.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -381,7 +441,7 @@ function StartupCard({ platform }: { platform: string }) {
       <div className="space-y-5">
         <Toggle
           label="Start Odysync when you sign in"
-          description="Registered for your user only — no administrator rights needed."
+          description="Registered for your user only. No administrator rights needed."
           checked={cfg?.enabled ?? false}
           disabled={busy || autostart.loading}
           onChange={(v) => void set(v, cfg?.minimized ?? true)}
@@ -400,6 +460,9 @@ function StartupCard({ platform }: { platform: string }) {
             checked={security.scanOnStartup}
             onChange={security.setScanOnStartup}
           />
+        )}
+        {autostart.error && (
+          <ErrorBar message={`Whether Odysync starts with you could not be read: ${autostart.error}`} />
         )}
         {error && <ErrorBar message={error} />}
       </div>
@@ -422,22 +485,45 @@ function NumberField({
   value: number;
   onChange: (v: number) => void;
 }) {
-  const clamp = (n: number) => Math.min(max, Math.max(min, n));
+  const id = useId();
+  // What is being typed. Clamping it on every keystroke would turn the "1" of
+  // "120" into the minimum before the rest can follow.
+  const [text, setText] = useState<string | null>(null);
+  const commit = () => {
+    if (text === null) return;
+    const parsed = parseInt(text, 10);
+    // An emptied field keeps the value it had.
+    onChange(Number.isNaN(parsed) ? value : Math.min(max, Math.max(min, parsed)));
+    setText(null);
+  };
   return (
     <div>
-      <label className="block text-sm font-medium mb-1.5">{label}</label>
+      <label htmlFor={id} className="block text-sm font-medium mb-1.5">
+        {label}
+      </label>
       <input
+        id={id}
         type="number"
         min={min}
         max={max}
-        value={value}
+        value={text ?? String(value)}
+        aria-describedby={`${id}-hint`}
         onChange={(e) => {
-          const parsed = parseInt(e.target.value, 10);
-          onChange(Number.isNaN(parsed) ? min : clamp(parsed));
+          const next = e.target.value;
+          setText(next);
+          // A value that is already valid counts at once, so that Save is
+          // offered without leaving the field first.
+          const parsed = Number(next);
+          if (next !== "" && Number.isInteger(parsed) && parsed >= min && parsed <= max) {
+            onChange(parsed);
+          }
         }}
-        className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-sm tabular-nums focus:border-accent outline-none"
+        onBlur={commit}
+        className="w-full h-9 px-3 rounded-lg border border-control bg-canvas text-sm tabular-nums focus:border-accent outline-none"
       />
-      <p className="text-xs text-faint mt-1">{hint}</p>
+      <p id={`${id}-hint`} className="text-xs text-faint mt-1">
+        {hint}
+      </p>
     </div>
   );
 }

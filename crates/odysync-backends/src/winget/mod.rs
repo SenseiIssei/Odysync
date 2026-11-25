@@ -28,6 +28,8 @@ use odysync_core::model::{BackendKind, InstalledPackage, PackageId, UpdateCandid
 use odysync_core::proc;
 use odysync_core::version::Version;
 
+use crate::guard;
+
 /// Scans can be slow on a cold source index, but must not hang a service.
 const SCAN_TIMEOUT: Duration = Duration::from_secs(180);
 /// Large installers (Office, toolchains) legitimately take a long time.
@@ -113,24 +115,14 @@ impl Backend for WingetBackend {
             });
         }
 
-        let kind = self.kind();
-        Ok(rows
+        let rows: Vec<table::Row> = rows
             .into_iter()
             // winget lists Store packages inside the winget table and vice
             // versa; keep each backend to its own source so elevation rules
             // are applied correctly.
             .filter(|r| r.source.is_empty() || r.source.eq_ignore_ascii_case(self.source()))
-            .map(|r| UpdateCandidate {
-                id: PackageId::new(kind, r.id),
-                name: r.name,
-                installed: Version::parse(&r.version),
-                available: Version::parse(&r.available),
-                size_bytes: None,
-                // winget verifies the installer hash against its own manifest
-                // internally; we do not have the digest to re-check here.
-                expected_sha256: None,
-            })
-            .collect())
+            .collect();
+        Ok(candidates(self.kind(), &rows))
     }
 
     async fn list_installed(&self) -> Result<Vec<InstalledPackage>> {
@@ -170,12 +162,7 @@ impl Backend for WingetBackend {
         // Refuse to run without a concrete target version. Without `--version`
         // winget resolves "latest" itself, which reintroduces the gap between
         // what policy approved and what actually gets installed.
-        if !candidate.available.is_known() {
-            return Err(Error::Verification {
-                package: candidate.id.to_string(),
-                detail: "refusing to install without an exact target version".into(),
-            });
-        }
+        guard::precheck(candidate)?;
 
         let mut args = vec![
             "upgrade".to_string(),
@@ -193,7 +180,7 @@ impl Backend for WingetBackend {
 
         let out = proc::run("winget", &args, INSTALL_TIMEOUT).await?;
 
-        if out.success() {
+        if out.success() || finishes_with_restart(out.code) {
             return Ok(());
         }
 
@@ -217,13 +204,66 @@ impl Backend for WingetBackend {
         args.extend(self.common_args());
 
         let out = proc::run("winget", &args, QUERY_TIMEOUT).await?;
-        let rows = table::parse(&out.stdout);
+        let rows = table::parse_list(&out.stdout);
 
-        Ok(rows
-            .into_iter()
-            .find(|r| r.id.eq_ignore_ascii_case(&candidate.id.native))
-            .map(|r| r.version))
+        // The same program can be listed more than once, for example for this
+        // user and for everyone, or with an older version next to it.
+        let versions: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.id.eq_ignore_ascii_case(&candidate.id.native))
+            .map(|r| r.version.as_str())
+            .collect();
+        Ok(newest_installed(&versions).map(str::to_string))
     }
+}
+
+/// The newest of the installed versions, when every one of them can be read.
+fn newest_installed<'a>(versions: &[&'a str]) -> Option<&'a str> {
+    if versions.iter().any(|v| table::is_truncated(v)) {
+        return None;
+    }
+    guard::newest(versions.iter().copied(), Version::parse)
+}
+
+/// One candidate per package id.
+///
+/// winget lists a program once per entry in the list of installed programs, so
+/// an id can appear several times. The newest entry decides: an older one next
+/// to it is not a reason to update. Where the entries cannot be ordered the
+/// installed version is unknown, and policy refuses.
+fn candidates(kind: BackendKind, rows: &[table::Row]) -> Vec<UpdateCandidate> {
+    let mut found: Vec<UpdateCandidate> = Vec::new();
+    for row in rows {
+        let same_id = |id: &str| id.eq_ignore_ascii_case(&row.id);
+        if found.iter().any(|c| same_id(&c.id.native)) {
+            continue;
+        }
+        let same: Vec<&table::Row> = rows.iter().filter(|r| same_id(&r.id)).collect();
+        let installed: Vec<&str> = same.iter().map(|r| r.version.as_str()).collect();
+        let one_target = same.iter().all(|r| r.available == row.available);
+        let available = if one_target && !table::is_truncated(&row.available) {
+            Version::parse(&row.available)
+        } else {
+            Version::Unknown(row.available.clone())
+        };
+        found.push(UpdateCandidate {
+            id: PackageId::new(kind, row.id.as_str()),
+            name: row.name.clone(),
+            installed: Version::parse(newest_installed(&installed).unwrap_or_default()),
+            available,
+            size_bytes: None,
+            // winget verifies the installer hash against its own manifest
+            // internally; we do not have the digest to re-check here.
+            expected_sha256: None,
+        });
+    }
+    found
+}
+
+/// The update is installed and the machine has to restart to finish it:
+/// INSTALL_REBOOT_REQUIRED_TO_FINISH and INSTALL_REBOOT_INITIATED.
+fn finishes_with_restart(code: i32) -> bool {
+    matches!(code as u32, 0x8A150109 | 0x8A15010B)
 }
 
 /// Turn winget's numeric exit codes into something a user can act on.
@@ -231,15 +271,21 @@ impl Backend for WingetBackend {
 /// These are the documented APPINSTALLER_CLI_ERROR values; surfacing them by
 /// name is the difference between "it failed" and knowing a reboot is pending.
 fn describe_exit(code: i32, stderr: &str, stdout: &str) -> String {
-    // winget reports these as unsigned hex in its docs.
+    // winget reports these as unsigned hex in its docs:
+    // https://github.com/microsoft/winget-cli/blob/master/doc/windows/package-manager/winget/returnCodes.md
     let hint = match code as u32 {
-        0x8A15002B => Some("no applicable installer for this system"),
-        0x8A150109 => Some("a reboot is required before this package can be updated"),
-        0x8A150049 => Some("the package is pinned in winget itself"),
-        0x8A15010D => Some("the installer hash did not match winget's manifest"),
-        0x8A150011 => Some("the installer failed its own integrity check"),
-        0x8A150056 => Some("this package must be updated from the Microsoft Store app"),
-        0x8A150044 => Some("administrator rights are required for this package"),
+        0x8A150011 => Some("the installer hash did not match winget's manifest"),
+        0x8A150014 => Some("winget no longer finds this package"),
+        0x8A150019 => Some("administrator rights are required for this package"),
+        0x8A15002B => Some("winget has no applicable update for this package"),
+        0x8A150049 => Some("running the MSI installer failed"),
+        0x8A15004F => Some("the approved version is not newer than the installed one"),
+        0x8A150056 => Some("this installer must not be run as administrator"),
+        0x8A150068 => Some("the package is pinned in winget itself"),
+        0x8A15010A => Some("a restart is required before this package can be updated"),
+        0x8A15010C => Some("the installation was cancelled"),
+        0x8A15010D => Some("another version of this application is already installed"),
+        0x8A15010E => Some("a higher version of this application is already installed"),
         _ => None,
     };
 
@@ -261,11 +307,75 @@ mod tests {
 
     #[test]
     fn known_winget_error_codes_get_a_readable_hint() {
-        let msg = describe_exit(0x8A150109u32 as i32, "", "");
-        assert!(msg.contains("reboot is required"), "got: {msg}");
+        let msg = describe_exit(0x8A15010Au32 as i32, "", "");
+        assert!(msg.contains("restart is required"), "got: {msg}");
 
         let msg = describe_exit(0x8A15010Du32 as i32, "", "");
+        assert!(msg.contains("already installed"), "got: {msg}");
+
+        let msg = describe_exit(0x8A150011u32 as i32, "", "");
         assert!(msg.contains("hash did not match"), "got: {msg}");
+    }
+
+    #[test]
+    fn an_update_that_needs_a_restart_to_finish_is_a_success() {
+        assert!(finishes_with_restart(0x8A150109u32 as i32));
+        assert!(finishes_with_restart(0x8A15010Bu32 as i32));
+        // These did not install anything.
+        for code in [0x8A15010Au32, 0x8A15010D, 0x8A15010E, 0x8A15002B, 1] {
+            assert!(!finishes_with_restart(code as i32), "{code:#x}");
+        }
+    }
+
+    fn row(id: &str, version: &str, available: &str) -> table::Row {
+        table::Row {
+            name: id.into(),
+            id: id.into(),
+            version: version.into(),
+            available: available.into(),
+            source: "winget".into(),
+        }
+    }
+
+    #[test]
+    fn a_package_that_is_listed_twice_is_one_candidate() {
+        let found = candidates(
+            BackendKind::Winget,
+            &[
+                row("A.A", "1.9", "2.0"),
+                row("B.B", "1.0", "1.1"),
+                row("a.a", "1.10", "2.0"),
+                row("C.C", "1.0", "3.0"),
+                row("C.C", "Unknown", "3.0"),
+                row("D.D", "1.0", "2.0"),
+                row("D.D", "1.0", "2.1"),
+                row("E.E", "1.0", "2.0.1\u{2026}"),
+                row("F.F", "1.0.1\u{2026}", "2.0"),
+            ],
+        );
+        assert_eq!(found.len(), 6);
+        assert_eq!(found[0].installed.raw(), "1.10");
+        assert!(found[1].installed.is_upgrade_to(&found[1].available));
+        // Not comparable, two different targets, cut off: never acted on.
+        assert!(!found[2].installed.is_known());
+        assert!(!found[3].available.is_known());
+        assert!(!found[4].available.is_known());
+        assert!(!found[5].installed.is_known());
+    }
+
+    #[test]
+    fn the_newest_of_several_installed_versions_is_read_back() {
+        assert_eq!(newest_installed(&["1.9", "1.10"]), Some("1.10"));
+        assert_eq!(newest_installed(&["1.9", "Unknown"]), None);
+        assert_eq!(newest_installed(&["1.9\u{2026}"]), None);
+        assert_eq!(newest_installed(&[]), None);
+    }
+
+    #[tokio::test]
+    async fn apply_refuses_options_as_ids() {
+        for backend in [WingetBackend::new(), WingetBackend::store()] {
+            crate::lang_backends::assert_refuses_bad_input(&backend, "Vendor.App", None).await;
+        }
     }
 
     #[test]

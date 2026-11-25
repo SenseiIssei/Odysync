@@ -1,14 +1,14 @@
 //! Machine- and human-readable run reports.
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{ApplyOutcome, PackageId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunReport {
-    pub started: DateTime<Utc>,
-    pub finished: Option<DateTime<Utc>>,
+    pub started: Timestamp,
+    pub finished: Option<Timestamp>,
     pub entries: Vec<ReportEntry>,
     /// Set when a backend signalled that a reboot is needed to finish.
     pub reboot_required: bool,
@@ -30,7 +30,7 @@ impl Default for RunReport {
 impl RunReport {
     pub fn new() -> Self {
         Self {
-            started: Utc::now(),
+            started: Timestamp::now(),
             finished: None,
             entries: Vec::new(),
             reboot_required: false,
@@ -46,7 +46,7 @@ impl RunReport {
     }
 
     pub fn finish(&mut self) {
-        self.finished = Some(Utc::now());
+        self.finished = Some(Timestamp::now());
     }
 
     pub fn updated(&self) -> usize {

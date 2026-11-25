@@ -51,6 +51,10 @@ pub enum Error {
     #[error("health check failed: {check}: {detail}")]
     HealthCheckFailed { check: String, detail: String },
 
+    /// Stopped by the user before it was done.
+    #[error("cancelled")]
+    Cancelled,
+
     #[error("configuration error: {0}")]
     Config(String),
 
@@ -105,15 +109,16 @@ impl Error {
         }
     }
 
-    /// Whether this error is worth retrying.
+    /// Whether the same operation may simply be started again.
     ///
-    /// Transient errors and timeouts are retryable. Verification errors,
-    /// security violations, and invalid package IDs are never retryable.
+    /// Only when nothing was changed yet: a download that broke off, a lock
+    /// held by someone else. A program that was started and timed out is not
+    /// in this group. It was stopped in the middle of something, or it has
+    /// finished and nobody noticed; running the installer a second time is
+    /// the reinstall over a working copy this tool promises never to do.
     pub fn is_retryable(&self) -> bool {
         match self {
             Error::Transient { .. } => true,
-            Error::CommandTimeout { .. } => true,
-            Error::CommandFailed { code, .. } => *code == 11 || *code == 143,
             Error::Io(e) => {
                 matches!(
                     e.kind(),
@@ -161,10 +166,20 @@ fn sanitize_text(text: &str) -> String {
         }
     }
 
-    // Redact IP addresses
-    let ip_re = regex::Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
-        .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
-    result = ip_re.replace_all(&result, "[IP REDACTED]").to_string();
+    // Redact IP addresses, but not four-part versions, which look the same:
+    // "the publisher now offers 8.9.8.1" lost the one thing it had to say.
+    // So only where the text says it is an address, or the range is private.
+    let ip_re = regex::Regex::new(
+        r"(?i)(?P<lead>://|\b(?:to|from|at|host|address|server|proxy|ip)[ :=]+)(?:\d{1,3}\.){3}\d{1,3}\b",
+    )
+    .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
+    result = ip_re
+        .replace_all(&result, "${lead}[IP REDACTED]")
+        .to_string();
+    let private_re =
+        regex::Regex::new(r"\b(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b")
+            .unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
+    result = private_re.replace_all(&result, "[IP REDACTED]").to_string();
 
     // Redact environment variable values that look like tokens
     let token_re = regex::Regex::new(r"(?i)(token|key|secret|password|api[_-]?key)\s*[=:]\s*\S+")
@@ -184,13 +199,38 @@ mod tests {
         assert!(e.is_retryable());
     }
 
+    /// Starting an installer again after a timeout runs it over whatever the
+    /// first one left, possibly while the first one is still working.
     #[test]
-    fn timeouts_are_retryable() {
-        let e = Error::CommandTimeout {
-            command: "dnf check-update".into(),
-            seconds: 300,
+    fn a_program_that_was_started_is_never_started_again() {
+        let timeout = Error::CommandTimeout {
+            command: "installer.exe".into(),
+            seconds: 1800,
         };
-        assert!(e.is_retryable());
+        assert!(!timeout.is_retryable());
+        for code in [1, 11, 143, 1603] {
+            let failed = Error::CommandFailed {
+                command: "installer.exe".into(),
+                code,
+                stderr: String::new(),
+            };
+            assert!(!failed.is_retryable(), "exit code {code}");
+        }
+    }
+
+    #[test]
+    fn sanitize_keeps_version_numbers() {
+        let e = Error::Verification {
+            package: "Notepad++".into(),
+            detail: "the publisher now offers 8.9.8.1 instead of the approved 8.9.8.0".into(),
+        };
+        let text = e.sanitize();
+        assert!(
+            text.contains("8.9.8.1") && text.contains("8.9.8.0"),
+            "{text}"
+        );
+        let e = Error::transient("direct", "could not fetch https://203.0.113.9/x", 0);
+        assert!(!e.sanitize().contains("203.0.113.9"));
     }
 
     #[test]

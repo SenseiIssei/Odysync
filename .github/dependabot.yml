@@ -21,6 +21,16 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Tauri's Rust crates and its npm packages must be on the same minor
+      # version, and a pull request of one ecosystem can only raise one half:
+      # both halves failed the packaging job every week and neither could be
+      # merged. The weekly lockfile refresh raises them together. Security
+      # updates are not affected by this.
+      - dependency-name: "tauri*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
     commit-message:
       prefix: "chore(deps)"
 
@@ -36,6 +46,11 @@ updates:
           - minor
           - patch
     ignore:
+      # See the Rust half above.
+      - dependency-name: "@tauri-apps/*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
       # The Node typings must describe the Node the build runs on (24, set in
       # the workflows); a newer major would type-check APIs that do not exist
       # there. Raise both together.

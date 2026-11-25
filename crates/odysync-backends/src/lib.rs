@@ -6,7 +6,6 @@
 //! manager means implementing [`Backend`] and adding one line to
 //! [`detect_backends`] — nothing else in the codebase changes.
 
-pub mod appimage;
 pub mod apt;
 pub mod autostart;
 pub mod chocolatey;
@@ -19,26 +18,22 @@ pub mod direct;
 pub mod dnf;
 #[cfg(windows)]
 pub mod driver_backup;
-pub mod firmware_backends;
 pub mod flatpak;
 pub mod fwupd;
-// GPU driver updates are delivered through winget, so these backends reference
-// `crate::winget`, which only exists on Windows. Every use site in
-// `all_backends` is already `cfg(windows)`; the module declaration was not, so
-// the crate failed to compile on Linux and macOS.
+// NVIDIA's driver; the adapters it belongs to come from WMI.
 #[cfg(windows)]
 pub mod gpu;
+mod guard;
 pub mod homebrew;
+pub mod inactive;
 pub mod lang_backends;
 pub mod mac_firmware;
 pub mod mac_software_update;
 pub mod maintenance;
 pub mod nix;
-pub mod notifications;
-#[cfg(windows)]
-pub mod oem;
 pub mod offline;
 pub mod pacman;
+pub mod scan;
 pub mod scheduler;
 pub mod scoop;
 pub mod security;
@@ -46,10 +41,6 @@ pub mod self_update;
 pub mod snap;
 pub mod startup_items;
 pub mod system_info;
-// Same as `gpu`: installs the guest additions through winget, so it cannot
-// compile without `crate::winget`. Its only use site is already cfg(windows).
-#[cfg(windows)]
-pub mod virtualization_guest;
 #[cfg(windows)]
 pub mod windows_drivers;
 #[cfg(windows)]
@@ -86,30 +77,20 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
             windows_update::WindowsUpdateBackend::feature_upgrades(),
         ));
         v.push(Box::new(gpu::nvidia_gpu::NvidiaGpuBackend::new()));
-        v.push(Box::new(gpu::amd_gpu::AmdGpuBackend::new()));
-        v.push(Box::new(gpu::intel_gpu::IntelGpuBackend::new()));
-        v.push(Box::new(gpu::qualcomm_gpu::QualcommGpuBackend::new()));
-        v.push(Box::new(
-            oem::dell_command_update::DellCommandUpdateBackend::new(),
-        ));
-        v.push(Box::new(
-            oem::hp_image_assistant::HpImageAssistantBackend::new(),
-        ));
-        v.push(Box::new(
-            oem::lenovo_system_update::LenovoSystemUpdateBackend::new(),
-        ));
-        v.push(Box::new(oem::msi_center::MsiCenterBackend::new()));
-        v.push(Box::new(oem::asus_armoury::AsusArmouryBackend::new()));
-        v.push(Box::new(
-            oem::gigabyte_control_center::GigabyteControlCenterBackend::new(),
-        ));
-        v.push(Box::new(oem::acer_care_center::AcerCareCenterBackend::new()));
-        v.push(Box::new(oem::razer_synapse::RazerSynapseBackend::new()));
+        v.push(Box::new(inactive::AmdGpuBackend::new()));
+        v.push(Box::new(inactive::IntelGpuBackend::new()));
+        v.push(Box::new(inactive::QualcommGpuBackend::new()));
+        v.push(Box::new(inactive::DellCommandUpdateBackend::new()));
+        v.push(Box::new(inactive::HpImageAssistantBackend::new()));
+        v.push(Box::new(inactive::LenovoSystemUpdateBackend::new()));
+        v.push(Box::new(inactive::MsiCenterBackend::new()));
+        v.push(Box::new(inactive::AsusArmouryBackend::new()));
+        v.push(Box::new(inactive::GigabyteControlCenterBackend::new()));
+        v.push(Box::new(inactive::AcerCareCenterBackend::new()));
+        v.push(Box::new(inactive::RazerSynapseBackend::new()));
         v.push(Box::new(chocolatey::ChocolateyBackend::new()));
         v.push(Box::new(scoop::ScoopBackend::new()));
-        v.push(Box::new(
-            virtualization_guest::VirtualizationGuestBackend::new(),
-        ));
+        v.push(Box::new(inactive::VirtualizationGuestBackend::new()));
     }
 
     // Language runtime package managers (cross-platform)
@@ -117,21 +98,19 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
     v.push(Box::new(lang_backends::CargoBackend::new()));
     v.push(Box::new(lang_backends::NpmBackend::new()));
     v.push(Box::new(lang_backends::GoBackend::new()));
-    v.push(Box::new(lang_backends::DotnetToolBackend::new()));
-    v.push(Box::new(lang_backends::VscodeExtensionBackend::new()));
-    v.push(Box::new(lang_backends::JetbrainsPluginBackend::new()));
+    v.push(Box::new(inactive::DotnetToolBackend::new()));
+    v.push(Box::new(inactive::VscodeExtensionBackend::new()));
+    v.push(Box::new(inactive::JetbrainsPluginBackend::new()));
 
     #[cfg(windows)]
     {
         v.push(Box::new(lang_backends::PowerShellModuleBackend::new()));
-        v.push(Box::new(lang_backends::WindowsOptionalFeatureBackend::new()));
-        v.push(Box::new(
-            lang_backends::NvidiaGeForceExperienceBackend::new(),
-        ));
-        v.push(Box::new(lang_backends::IntelDsaBackend::new()));
-        v.push(Box::new(firmware_backends::DellFirmwareBackend::new()));
-        v.push(Box::new(firmware_backends::HpFirmwareBackend::new()));
-        v.push(Box::new(firmware_backends::LenovoFirmwareBackend::new()));
+        v.push(Box::new(inactive::WindowsOptionalFeatureBackend::new()));
+        v.push(Box::new(inactive::NvidiaGeForceExperienceBackend::new()));
+        v.push(Box::new(inactive::IntelDsaBackend::new()));
+        v.push(Box::new(inactive::DellFirmwareBackend::new()));
+        v.push(Box::new(inactive::HpFirmwareBackend::new()));
+        v.push(Box::new(inactive::LenovoFirmwareBackend::new()));
     }
 
     // Homebrew also runs on Linux, so it is not gated to macOS.
@@ -147,7 +126,7 @@ fn all_backends() -> Vec<Box<dyn Backend>> {
         v.push(Box::new(fwupd::FwupdBackend::new()));
         v.push(Box::new(snap::SnapBackend::new()));
         v.push(Box::new(zypper::ZypperBackend::new()));
-        v.push(Box::new(appimage::AppImageBackend::new()));
+        v.push(Box::new(inactive::AppImageBackend::new()));
     }
 
     #[cfg(target_os = "macos")]
@@ -188,7 +167,22 @@ impl ProbedBackend {
 /// It is also the only place availability is probed: callers should probe once
 /// and cache, since a full sweep is roughly one process spawn per backend.
 pub async fn probe_backends(config: &Config) -> Vec<ProbedBackend> {
-    let candidates = all_backends();
+    probe_kinds(config, &|_| true).await
+}
+
+/// [`probe_backends`] for some of the sources only.
+///
+/// Asking one source should not start the thirty others just to find out that
+/// they are there.
+pub async fn probe_kinds(
+    config: &Config,
+    wanted: &(dyn Fn(odysync_core::model::BackendKind) -> bool + Sync),
+) -> Vec<ProbedBackend> {
+    direct::http::set_proxy(config.proxy_url.as_deref());
+    let candidates: Vec<_> = all_backends()
+        .into_iter()
+        .filter(|b| wanted(b.kind()))
+        .collect();
     let results = futures::future::join_all(candidates.iter().map(|b| b.is_available())).await;
 
     candidates

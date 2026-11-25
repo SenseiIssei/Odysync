@@ -5,9 +5,10 @@
 //! Linux: systemd user timer via `~/.config/systemd/user/`.
 //!
 //! The schedule is a simple daily or weekly trigger at a specified time.
-//! The scheduled command is `odysync apply --yes`, or `odysync care --yes`
-//! for automatic care (updates plus the safe cleanup), followed by any extra
-//! arguments.
+//! The scheduled command is `odysync apply --yes --unattended`, or
+//! `odysync care --yes` for automatic care (updates plus the safe cleanup),
+//! followed by any extra arguments. Both leave drivers, firmware, system
+//! upgrades and developer packages to a person.
 
 // Only the launchd (macOS) and systemd (Linux) paths build file paths; on
 // Windows this would be an unused import, which `-D warnings` rejects.
@@ -87,6 +88,9 @@ impl ScheduleSpec {
             ScheduledCommand::Care => "care",
         };
         let mut args = vec![verb.to_string(), "--yes".to_string()];
+        if self.command == ScheduledCommand::Apply {
+            args.push("--unattended".to_string());
+        }
         args.extend(self.extra_args.iter().cloned());
         args
     }
@@ -97,6 +101,167 @@ impl ScheduleSpec {
             None => current_exe(),
         }
     }
+}
+
+/// Refuse a task name that is more than a name.
+///
+/// It becomes a file name on macOS and Linux and a path in the Task Scheduler,
+/// where `..` and separators would reach other people's schedules.
+fn check_task_name(name: &str) -> Result<()> {
+    let ok = !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ' '));
+    if ok {
+        Ok(())
+    } else {
+        Err(Error::Config(format!(
+            "{name:?} is not a usable schedule name; use letters, digits, spaces, '-' and '_'"
+        )))
+    }
+}
+
+/// `text` inside an XML element.
+#[cfg(any(windows, target_os = "macos", test))]
+fn xml_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// The Task Scheduler definition for `spec`.
+///
+/// `schtasks /SC DAILY` cannot say any of what matters here, and its defaults
+/// are wrong for an updater: a run missed because the computer was off is
+/// dropped for good, and a run in progress is **stopped** when a laptop is
+/// unplugged, in the middle of whatever installer was running.
+#[cfg(any(windows, test))]
+fn task_xml(spec: &ScheduleSpec, program: &str, now: jiff::civil::DateTime) -> Result<String> {
+    // The next time this hour comes round. A start in the past would count as
+    // missed, and `StartWhenAvailable` would make up for it right away: whoever
+    // chose nine in the morning at three in the afternoon would see it install.
+    let (h, m) = parse_time(&spec.time)?;
+    let start = next_start(now, h, m)?;
+    let schedule = match spec.frequency {
+        ScheduleFrequency::Daily => {
+            "<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>".to_string()
+        }
+        ScheduleFrequency::Weekly => "<ScheduleByWeek><WeeksInterval>1</WeeksInterval>\
+             <DaysOfWeek><Monday /></DaysOfWeek></ScheduleByWeek>"
+            .to_string(),
+    };
+    Ok(format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Odysync scheduled run</Description></RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>{start}</StartBoundary>
+      {schedule}
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>false</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{command}</Command>
+      <Arguments>{arguments}</Arguments>
+    </Exec>
+  </Actions>
+</Task>"#,
+        command = xml_text(program),
+        arguments = xml_text(
+            &spec
+                .args()
+                .iter()
+                .map(|a| windows_quoted(a))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+        start = start.strftime("%Y-%m-%dT%H:%M:%S"),
+    ))
+}
+
+/// The next `h:m` after `now`, in the same local time.
+#[cfg(any(windows, test))]
+fn next_start(now: jiff::civil::DateTime, h: i32, m: i32) -> Result<jiff::civil::DateTime> {
+    use jiff::ToSpan;
+    let bad = |e: jiff::Error| Error::Config(format!("could not work out the first run: {e}"));
+    let time = jiff::civil::Time::new(h as i8, m as i8, 0, 0).map_err(bad)?;
+    let today = now.date().to_datetime(time);
+    if today > now {
+        Ok(today)
+    } else {
+        today.checked_add(1.day()).map_err(bad)
+    }
+}
+
+/// Local time as Windows shows it.
+#[cfg(windows)]
+fn local_now() -> Result<jiff::civil::DateTime> {
+    // SAFETY: no arguments, returns a plain structure.
+    let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    jiff::civil::DateTime::new(
+        t.wYear as i16,
+        t.wMonth as i8,
+        t.wDay as i8,
+        t.wHour as i8,
+        t.wMinute as i8,
+        t.wSecond as i8,
+        0,
+    )
+    .map_err(|e| Error::Config(format!("the clock shows no valid time: {e}")))
+}
+
+/// One argument of a Windows command line, quoted if it has to be.
+#[cfg(any(windows, test))]
+fn windows_quoted(arg: &str) -> String {
+    if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+        return arg.to_string();
+    }
+    // Backslashes count double only in front of a quote.
+    let mut out = String::from("\"");
+    let mut backslashes = 0;
+    for c in arg.chars() {
+        match c {
+            '\\' => backslashes += 1,
+            '"' => {
+                out.push_str(&"\\".repeat(backslashes + 1));
+                backslashes = 0;
+            }
+            _ => backslashes = 0,
+        }
+        out.push(c);
+    }
+    out.push_str(&"\\".repeat(backslashes));
+    out.push('"');
+    out
+}
+
+/// One argument of a systemd command line.
+#[cfg(any(target_os = "linux", test))]
+fn systemd_quoted(arg: &str) -> String {
+    let escaped = arg
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('%', "%%")
+        .replace('$', "$$");
+    format!("\"{escaped}\"")
 }
 
 /// Resolve the path to the current executable, for the scheduler to launch.
@@ -110,27 +275,24 @@ fn current_exe() -> Result<String> {
 
 #[cfg(windows)]
 pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
-    let exe = spec.program()?;
-    let args = spec.args();
-    let tr = format!("\"{exe}\" {}", args.join(" "));
+    check_task_name(&spec.task_name)?;
+    let xml = task_xml(spec, &spec.program()?, local_now()?)?;
 
-    let sc = match spec.frequency {
-        ScheduleFrequency::Daily => "DAILY",
-        ScheduleFrequency::Weekly => "WEEKLY",
-    };
+    // schtasks reads the definition from a file, in the UTF-16 it declares.
+    let dir = crate::direct::http::DownloadDir::new("schedule")?;
+    let file = dir.path().join("task.xml");
+    let mut bytes = vec![0xFF, 0xFE];
+    bytes.extend(xml.encode_utf16().flat_map(u16::to_le_bytes));
+    std::fs::write(&file, bytes)?;
 
     let out = proc::run(
         "schtasks",
         &[
             "/Create",
-            "/SC",
-            sc,
             "/TN",
             &spec.task_name,
-            "/TR",
-            &tr,
-            "/ST",
-            &spec.time,
+            "/XML",
+            &file.to_string_lossy(),
             "/F",
         ],
         std::time::Duration::from_secs(30),
@@ -150,6 +312,7 @@ pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
 
 #[cfg(windows)]
 pub async fn remove_schedule(task_name: &str) -> Result<()> {
+    check_task_name(task_name)?;
     let out = proc::run(
         "schtasks",
         &["/Delete", "/TN", task_name, "/F"],
@@ -193,7 +356,8 @@ fn plist_path(task_name: &str) -> PathBuf {
 
 #[cfg(target_os = "macos")]
 pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
-    let exe = spec.program()?;
+    check_task_name(&spec.task_name)?;
+    let exe = xml_text(&spec.program()?);
     let args = spec.args();
 
     let label = format!("dev.odysync.{}", spec.task_name);
@@ -231,7 +395,7 @@ pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
 </plist>"#,
         args_xml = args
             .iter()
-            .map(|a| format!("<string>{a}</string>"))
+            .map(|a| format!("<string>{}</string>", xml_text(a)))
             .collect::<Vec<_>>()
             .join("\n    "),
     );
@@ -265,6 +429,7 @@ pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
 /// written against one platform could not compile on the others.
 #[cfg(target_os = "macos")]
 pub async fn remove_schedule(task_name: &str) -> Result<()> {
+    check_task_name(task_name)?;
     let path = plist_path(task_name);
     let _ = proc::run(
         "launchctl",
@@ -298,6 +463,8 @@ fn unit_dir() -> Result<PathBuf> {
 
 #[cfg(target_os = "linux")]
 pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
+    check_task_name(&spec.task_name)?;
+    parse_time(&spec.time)?;
     let exe = spec.program()?;
     let args = spec.args();
 
@@ -308,7 +475,11 @@ pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
     let service_name = format!("dev.odysync.{unit}.service");
     let timer_name = format!("dev.odysync.{unit}.timer");
 
-    let exec_start = format!("{exe} {}", args.join(" "));
+    let exec_start = std::iter::once(&exe)
+        .chain(args.iter())
+        .map(|a| systemd_quoted(a))
+        .collect::<Vec<_>>()
+        .join(" ");
 
     let service = format!(
         "[Unit]\nDescription=Odysync scheduled run\n\n[Service]\nType=oneshot\nExecStart={exec_start}\n"
@@ -375,6 +546,7 @@ pub async fn create_schedule(spec: &ScheduleSpec) -> Result<()> {
 /// See the macOS variant: `Result<()>` to match Windows.
 #[cfg(target_os = "linux")]
 pub async fn remove_schedule(task_name: &str) -> Result<()> {
+    check_task_name(task_name)?;
     let dir = unit_dir()?;
 
     let timer_name = format!("dev.odysync.{task_name}.timer");
@@ -437,7 +609,6 @@ pub async fn schedule_exists(_task_name: &str) -> bool {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Parse "HH:MM" into (hour, minute).
-#[allow(dead_code)]
 fn parse_time(time: &str) -> Result<(i32, i32)> {
     let (h, m) = time
         .split_once(':')
@@ -495,12 +666,107 @@ mod tests {
     fn a_schedule_runs_apply_or_care_unattended() {
         assert_eq!(
             spec(ScheduledCommand::Apply).args(),
-            ["apply", "--yes", "--restore-point"]
+            ["apply", "--yes", "--unattended", "--restore-point"]
         );
         assert_eq!(
             spec(ScheduledCommand::Care).args(),
             ["care", "--yes", "--restore-point"]
         );
+    }
+
+    /// A run must not be lost because the computer was off, and an installer
+    /// must not be stopped because a laptop was unplugged.
+    #[test]
+    fn the_task_survives_a_missed_start_and_a_pulled_plug() {
+        let mut spec = spec(ScheduledCommand::Care);
+        spec.extra_args = vec!["--config".into(), r"C:\R&D <x>\c.json".into()];
+        let now = jiff::civil::date(2026, 11, 25).at(15, 0, 0, 0);
+        let xml = task_xml(&spec, r"C:\Program Files\Odysync\odysync.exe", now).unwrap();
+        let doc =
+            roxmltree::Document::parse(xml.split_once("?>").expect("declaration").1.trim_start())
+                .expect("well-formed");
+        let text = |name: &str| {
+            let hits: Vec<_> = doc
+                .descendants()
+                .filter(|n| n.tag_name().name() == name)
+                .collect();
+            assert_eq!(hits.len(), 1, "{name}");
+            hits[0].text().unwrap_or_default().to_string()
+        };
+        assert_eq!(text("StartWhenAvailable"), "true");
+        assert_eq!(text("StopIfGoingOnBatteries"), "false");
+        assert_eq!(text("AllowHardTerminate"), "false");
+        assert_eq!(text("MultipleInstancesPolicy"), "IgnoreNew");
+        assert_eq!(text("RunLevel"), "LeastPrivilege");
+        // Chosen at three in the afternoon: tomorrow, not right now.
+        assert_eq!(text("StartBoundary"), "2026-11-26T09:00:00");
+        assert_eq!(text("DaysInterval"), "1");
+        assert_eq!(text("Command"), r"C:\Program Files\Odysync\odysync.exe");
+        assert_eq!(
+            text("Arguments"),
+            r#"care --yes --config "C:\R&D <x>\c.json""#
+        );
+
+        spec.frequency = ScheduleFrequency::Weekly;
+        assert!(task_xml(&spec, "x", now).unwrap().contains("<Monday />"));
+        spec.time = "15:01".into();
+        assert!(
+            task_xml(&spec, "x", now)
+                .unwrap()
+                .contains("2026-11-25T15:01:00")
+        );
+        spec.time = "25:00".into();
+        assert!(task_xml(&spec, "x", now).is_err());
+    }
+
+    #[test]
+    fn arguments_survive_the_schedulers_command_lines() {
+        assert_eq!(windows_quoted("--yes"), "--yes");
+        assert_eq!(windows_quoted("a b"), r#""a b""#);
+        assert_eq!(windows_quoted(r"C:\a b\"), r#""C:\a b\\""#);
+        assert_eq!(windows_quoted(r#"a"b"#), r#""a\"b""#);
+        assert_eq!(windows_quoted(r#"a\"b"#), r#""a\\\"b""#);
+        assert_eq!(windows_quoted(""), r#""""#);
+        assert_eq!(systemd_quoted("--yes"), r#""--yes""#);
+        assert_eq!(systemd_quoted("/home/x y/50%$A"), r#""/home/x y/50%%$$A""#);
+        assert_eq!(systemd_quoted(r#"a"b\c"#), r#""a\"b\\c""#);
+    }
+
+    #[test]
+    fn a_schedule_name_is_only_a_name() {
+        for ok in ["Odysync", "Odysync weekly", "care_2", "a-b"] {
+            assert!(check_task_name(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "..",
+            "../x",
+            r"Microsoft\Windows\x",
+            "a/b",
+            "a.b",
+            "a\nb",
+        ] {
+            assert!(check_task_name(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    /// Creates, finds and removes a real task. Never run on a computer
+    /// somebody uses; CI runs it on a throw-away one.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore = "registers a scheduled task; CI only"]
+    async fn a_real_task_can_be_created_found_and_removed() {
+        assert!(
+            std::env::var_os("GITHUB_ACTIONS").is_some(),
+            "this test changes the machine and only runs in CI"
+        );
+        let mut spec = spec(ScheduledCommand::Care);
+        spec.task_name = "Odysync-ci-test".into();
+        spec.program = Some(r"C:\Windows\System32\whoami.exe".into());
+        create_schedule(&spec).await.expect("create");
+        assert!(schedule_exists(&spec.task_name).await);
+        remove_schedule(&spec.task_name).await.expect("remove");
+        assert!(!schedule_exists(&spec.task_name).await);
     }
 
     #[test]

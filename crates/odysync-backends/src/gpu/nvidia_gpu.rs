@@ -180,11 +180,14 @@ async fn nvidia_adapters() -> Vec<GpuAdapter> {
 }
 
 #[cfg(windows)]
-async fn lookup(adapter: &GpuAdapter) -> Result<Option<NvidiaDriver>> {
+async fn lookup(
+    adapter: &GpuAdapter,
+    purpose: crate::direct::http::Purpose,
+) -> Result<Option<NvidiaDriver>> {
     let client = crate::direct::http::client(None, Duration::from_secs(60))?;
     let laptop = odysync_core::platform::has_system_battery();
     let url = lookup_url(&adapter.device_id, &os_build(), laptop);
-    let json = crate::direct::http::get_json(&client, &url).await?;
+    let json = crate::direct::http::get_json_for(&client, &url, purpose).await?;
     Ok(parse_lookup(&json))
 }
 
@@ -205,10 +208,11 @@ impl Backend for NvidiaGpuBackend {
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
         #[cfg(windows)]
         {
+            use crate::direct::http::Purpose;
             // One driver package serves every NVIDIA GPU in the machine, so
             // the first card that gets an answer decides it.
             for adapter in nvidia_adapters().await {
-                let Some(driver) = lookup(&adapter).await? else {
+                let Some(driver) = lookup(&adapter, Purpose::Scan).await? else {
                     continue;
                 };
                 let installed =
@@ -234,39 +238,47 @@ impl Backend for NvidiaGpuBackend {
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
         #[cfg(windows)]
         {
+            use crate::direct::http::Purpose;
+
             if !candidate.available.is_known() {
                 return Err(Error::Verification {
                     package: candidate.name.clone(),
                     detail: "refusing to install without an exact target version".into(),
                 });
             }
-            let adapter = nvidia_adapters().await.into_iter().next().ok_or_else(|| {
-                Error::unavailable("nvidia-gpu", "no NVIDIA GPU is present any more")
-            })?;
-            let driver = lookup(&adapter).await?.ok_or_else(|| {
-                Error::unavailable(
-                    "nvidia-gpu",
-                    "NVIDIA no longer offers a driver for this GPU",
-                )
-            })?;
-            if driver.version.trim() != candidate.available.raw().trim() {
+            crate::guard::still_older(
+                candidate,
+                self.installed_version(candidate).await?.as_deref(),
+            )?;
+
+            // With two NVIDIA cards the scan shows the first that has an
+            // answer, which need not be the first card.
+            let mut offered = Vec::new();
+            for adapter in nvidia_adapters().await {
+                // NVIDIA's own answer right now, never one from the disk: the
+                // cache belongs to the user and this runs elevated.
+                if let Some(driver) = lookup(&adapter, Purpose::Install).await? {
+                    offered.push(driver);
+                }
+            }
+            let approved = candidate.available.raw().trim();
+            let Some(driver) = offered.iter().find(|d| d.version.trim() == approved) else {
+                let now: Vec<&str> = offered.iter().map(|d| d.version.as_str()).collect();
                 return Err(Error::Verification {
                     package: candidate.name.clone(),
-                    detail: format!(
-                        "NVIDIA now offers {} instead of the approved {}; scan again",
-                        driver.version,
-                        candidate.available.raw()
-                    ),
+                    detail: if now.is_empty() {
+                        "NVIDIA no longer offers a driver for this GPU".into()
+                    } else {
+                        format!(
+                            "NVIDIA now offers {} instead of the approved {approved}; scan again",
+                            now.join(", ")
+                        )
+                    },
                 });
-            }
+            };
 
-            let dir = crate::direct::http::download_dir()?.join(format!(
-                "nvidia-{}-{}",
-                driver.version,
-                chrono::Utc::now().timestamp_millis()
-            ));
-            tokio::fs::create_dir_all(&dir).await?;
-            let file = dir.join(crate::direct::http::file_name_for(
+            let dir = crate::direct::http::DownloadDir::new(&format!("nvidia-{}", driver.version))?;
+            let file = dir.path().join(crate::direct::http::file_name_for(
                 &driver.url,
                 "nvidia-driver.exe",
             ));
@@ -284,7 +296,7 @@ impl Backend for NvidiaGpuBackend {
                 .await?;
 
                 let path = file.to_string_lossy().to_string();
-                let out = odysync_core::proc::run(
+                let out = odysync_core::proc::run_installer(
                     &path,
                     &["-s", "-noreboot", "-noeula", "-nofinish", "-nosplash"],
                     INSTALL_TIMEOUT,
@@ -305,7 +317,7 @@ impl Backend for NvidiaGpuBackend {
             }
             .await;
 
-            let _ = tokio::fs::remove_dir_all(&dir).await;
+            drop(dir);
             result
         }
         #[cfg(not(windows))]

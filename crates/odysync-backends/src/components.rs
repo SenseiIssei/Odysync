@@ -383,7 +383,9 @@ mod windows_impl {
                     return Err(Error::invalid_package_id(id, "unknown .NET product"));
                 }
                 let client = http::client(None, Duration::from_secs(30))?;
-                let channels = parse_dotnet_index(&http::get_json(&client, DOTNET_INDEX).await?);
+                let channels = parse_dotnet_index(
+                    &http::get_json_for(&client, DOTNET_INDEX, http::Purpose::Install).await?,
+                );
                 let channel = channels
                     .into_iter()
                     .find(|c| c.channel == line)
@@ -394,7 +396,9 @@ mod windows_impl {
                         format!(".NET {line} is out of support; Microsoft ships no more patches"),
                     ));
                 }
-                let releases = http::get_json(&client, &channel.releases_json).await?;
+                let releases =
+                    http::get_json_for(&client, &channel.releases_json, http::Purpose::Install)
+                        .await?;
                 let (version, url, sha512) = dotnet_installer(&releases, product, rid())
                     .ok_or_else(|| {
                         Error::unavailable("components", "no installer for this machine")
@@ -409,12 +413,8 @@ mod windows_impl {
                 return Err(Error::invalid_package_id(id, "not a known component"));
             };
 
-        let dir = http::download_dir()?.join(format!(
-            "component-{id}-{}",
-            chrono::Utc::now().timestamp_millis()
-        ));
-        tokio::fs::create_dir_all(&dir).await?;
-        let file = dir.join(http::file_name_for(&url, "installer.exe"));
+        let dir = http::DownloadDir::new(&format!("component-{id}"))?;
+        let file = dir.path().join(http::file_name_for(&url, "installer.exe"));
 
         let result = async {
             let client = http::client(None, Duration::from_secs(60 * 60))?;
@@ -427,7 +427,7 @@ mod windows_impl {
             )
             .await?;
             let path = file.to_string_lossy().to_string();
-            let out = odysync_core::proc::run(&path, &args, INSTALL_TIMEOUT).await;
+            let out = odysync_core::proc::run_installer(&path, &args, INSTALL_TIMEOUT).await;
             drop(lock);
             let out = out?;
             // 1638: a newer version is already installed — for "install the
@@ -445,7 +445,7 @@ mod windows_impl {
         }
         .await;
 
-        let _ = tokio::fs::remove_dir_all(&dir).await;
+        drop(dir);
         result
     }
 }

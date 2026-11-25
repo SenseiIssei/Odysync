@@ -12,40 +12,47 @@
  * firing fourteen of them at once made the window unresponsive at startup.
  */
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as api from "./api";
+import { coalesce } from "./coalesce";
 import { safeListen } from "./events";
+import { errorText, isApplyRunning } from "./format";
+import { scanHealth } from "./scan-health";
+import {
+  StoreContext,
+  type AppStore,
+  type ApplyOutcome,
+  type ApplyState,
+  type BackupData,
+  type OfflineData,
+  type Resource,
+  type ScanProgress,
+  type ScanResource,
+  type SecurityResource,
+} from "./store-context";
 import type {
+  ApplyProgress,
+  ApplyRequest,
   AutostartConfig,
-  BackupDto,
-  Config,
-  DefenderStatusDto,
-  ScanReport,
-  HardwareInfoDto,
-  HistoryEntryDto,
-  InstalledPackageDto,
-  LogEntryDto,
-  OfflineCacheStatusDto,
-  OfflineManifestEntryDto,
-  ProfileDto,
-  ScanResult,
-  StartupProgramDto,
-  SystemInfoDto,
   BackendDto,
   CleanupItemDto,
   ComponentStatus,
+  Config,
+  DefenderStatusDto,
   DeviceProblem,
   DriverBackupDto,
+  HardwareInfoDto,
   HealthReportDto,
+  HistoryEntryDto,
+  InstalledPackageDto,
+  LogEntryDto,
+  ProfileDto,
+  ScanProgressEvent,
+  ScanReport,
+  ScanResult,
+  SectionProgress,
+  StartupProgramDto,
+  SystemInfoDto,
 } from "./types";
 
 // ── Concurrency queue ────────────────────────────────────────────────────────
@@ -81,23 +88,6 @@ function createQueue(limit: number) {
 const heavyQueue = createQueue(3);
 
 // ── Resource primitive ───────────────────────────────────────────────────────
-
-export interface Resource<T> {
-  data: T;
-  loading: boolean;
-  /** Error text from the most recent failed load, cleared on success. */
-  error: string | null;
-  /** Epoch millis of the last successful load, or null if never loaded. */
-  loadedAt: number | null;
-  refresh: () => Promise<void>;
-  /** Replace the data locally without a round-trip (optimistic updates). */
-  set: (value: T) => void;
-  /**
-   * The data is what the previous session found, shown while the first load
-   * of this session is still running.
-   */
-  fromCache: boolean;
-}
 
 interface ResourceOptions {
   /** Route the loader through the shared concurrency queue. */
@@ -136,16 +126,6 @@ function writeCache<T>(name: string, data: T) {
   }
 }
 
-function errorText(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === "string") return e;
-  try {
-    return JSON.stringify(e);
-  } catch {
-    return String(e);
-  }
-}
-
 function useResource<T>(
   name: string,
   loader: () => Promise<T>,
@@ -161,124 +141,157 @@ function useResource<T>(
   const [loadedAt, setLoadedAt] = useState<number | null>(cached ? cached.at : null);
   const [fromCache, setFromCache] = useState(cached !== null);
 
-  // Keep the latest loader without making `refresh` unstable.
-  const loaderRef = useRef(loader);
-  loaderRef.current = loader;
-
-  // Coalesces concurrent refreshes (including React StrictMode's double
-  // effect invocation in dev) into a single request.
-  const inFlight = useRef<Promise<void> | null>(null);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
+  // Built once, from the first render's loader: every loader is a plain call
+  // to the command layer and closes over nothing that changes.
+  const [{ refresh, reload, mount }] = useState(() => {
+    const heavy = options.heavy ?? false;
+    let everLoaded = cached !== null;
+    let mounted = true;
+    const ifMounted = (update: () => void) => {
+      if (mounted) update();
     };
-  }, []);
-
-  const heavy = options.heavy ?? false;
-
-  const refresh = useCallback((): Promise<void> => {
-    if (inFlight.current) return inFlight.current;
-
-    setLoading(true);
-    const run = async () => {
-      try {
-        const value = heavy
-          ? await heavyQueue(() => loaderRef.current())
-          : await loaderRef.current();
-        if (!mounted.current) return;
-        setData(value);
-        setError(null);
-        setLoadedAt(Date.now());
-        setFromCache(false);
-        if (persist) writeCache(name, value);
-      } catch (e) {
-        if (!mounted.current) return;
-        const text = errorText(e);
-        console.error(`[odysync] ${name} failed:`, e);
-        setError(text);
-      } finally {
-        if (mounted.current) setLoading(false);
-        inFlight.current = null;
-      }
+    const loads = coalesce<T>({
+      load: (begin) => {
+        const fetch = () => {
+          begin();
+          return loader();
+        };
+        return heavy ? heavyQueue(fetch) : fetch();
+      },
+      // A quiet poll stays invisible once there is something to show.
+      onRequest: (quiet) => {
+        if (!quiet || !everLoaded) setLoading(true);
+      },
+      onValue: (value) =>
+        ifMounted(() => {
+          everLoaded = true;
+          setData(value);
+          setError(null);
+          setLoadedAt(Date.now());
+          setFromCache(false);
+          if (persist) writeCache(name, value);
+        }),
+      onError: (e) =>
+        ifMounted(() => {
+          console.error(`[odysync] ${name} failed:`, e);
+          setError(errorText(e));
+        }),
+      onEnd: () => ifMounted(() => setLoading(false)),
+    });
+    return {
+      ...loads,
+      /** An effect: nothing is stored or remembered after an unmount. */
+      mount: () => {
+        mounted = true;
+        return () => {
+          mounted = false;
+        };
+      },
     };
+  });
+  useEffect(mount, [mount]);
 
-    const promise = run();
-    inFlight.current = promise;
-    return promise;
-  }, [heavy, name, persist]);
-
-  const set = useCallback(
-    (value: T) => {
-      setData(value);
-      setLoadedAt(Date.now());
-      setError(null);
-      setFromCache(false);
-      if (persist) writeCache(name, value);
-    },
-    [name, persist],
-  );
+  // A local edit is not a load: when the data was fetched, and whether that
+  // went well, stay what they were.
+  const set = useCallback((value: T) => setData(value), []);
 
   return useMemo(
-    () => ({ data, loading, error, loadedAt, refresh, set, fromCache }),
-    [data, loading, error, loadedAt, refresh, set, fromCache],
+    () => ({ data, loading, error, loadedAt, refresh, reload, set, fromCache }),
+    [data, loading, error, loadedAt, refresh, reload, set, fromCache],
   );
 }
 
-// ── Store shape ──────────────────────────────────────────────────────────────
+// ── Scan progress ────────────────────────────────────────────────────────────
 
-export interface OfflineData {
-  status: OfflineCacheStatusDto | null;
-  entries: OfflineManifestEntryDto[];
+/** What the sources of the running scan have reported, by backend id. */
+type SourceStates = Map<string, ScanProgressEvent>;
+
+function summarise(sources: SourceStates): ScanProgress | null {
+  if (sources.size === 0) return null;
+  const events = [...sources.values()];
+  return {
+    // Events from parallel sources can arrive out of order; counts only grow.
+    done: Math.max(...events.map((e) => e.done)),
+    total: Math.max(...events.map((e) => e.total)),
+    found: events.reduce((n, e) => n + e.found, 0),
+    waiting: events.filter((e) => e.state === "started").map((e) => e.name),
+  };
 }
 
-export interface BackupData {
-  backups: BackupDto[];
-  protectionEnabled: boolean;
-}
+// ── Installing ───────────────────────────────────────────────────────────────
 
-/** The security audit, plus the "run it at startup" preference. */
-export interface SecurityResource extends Resource<ScanReport | null> {
-  scanOnStartup: boolean;
-  setScanOnStartup: (v: boolean) => void;
-}
+const NOT_APPLYING = {
+  running: false,
+  dryRun: false,
+  progress: null as ApplyProgress | null,
+  cancelling: false,
+};
 
-export interface AppStore {
-  sysInfo: Resource<SystemInfoDto | null>;
-  security: SecurityResource;
-  defender: Resource<DefenderStatusDto | null>;
-  autostart: Resource<AutostartConfig | null>;
-  backends: Resource<BackendDto[]>;
-  config: Resource<Config | null>;
-  scan: Resource<ScanResult | null>;
-  hardware: Resource<HardwareInfoDto | null>;
-  packages: Resource<InstalledPackageDto[]>;
-  history: Resource<HistoryEntryDto[]>;
-  logs: Resource<LogEntryDto[]>;
-  profiles: Resource<ProfileDto[]>;
-  offline: Resource<OfflineData>;
-  startup: Resource<StartupProgramDto[]>;
-  backup: Resource<BackupData>;
-  cleanup: Resource<CleanupItemDto[]>;
-  components: Resource<ComponentStatus[]>;
-  devices: Resource<DeviceProblem[]>;
-  driverBackups: Resource<DriverBackupDto[]>;
-  health: Resource<HealthReportDto | null>;
-  /** True until the initial background load of every resource has settled. */
-  booting: boolean;
-  /** Fraction of the initial background load that has completed, 0..1. */
-  bootProgress: number;
-  /** Refresh everything (used by the global refresh button). */
-  refreshAll: () => Promise<void>;
-}
+/** `onChanged` runs after anything that may have changed what is installed. */
+function useApply(onChanged: () => void): ApplyState {
+  const [state, setState] = useState(NOT_APPLYING);
+  const running = useRef(false);
+  const cancelRequested = useRef(false);
 
-const StoreContext = createContext<AppStore | null>(null);
+  useEffect(
+    () =>
+      safeListen<ApplyProgress>("apply-progress", (e) =>
+        setState((s) => (s.running ? { ...s, progress: e.payload } : s)),
+      ),
+    [],
+  );
 
-export function useStore(): AppStore {
-  const ctx = useContext(StoreContext);
-  if (!ctx) throw new Error("useStore must be used within <StoreProvider>");
-  return ctx;
+  // A run started from this window reports back through `run` below; the event
+  // matters for one that was not.
+  useEffect(
+    () =>
+      safeListen("apply-finished", () => {
+        if (!running.current) onChanged();
+      }),
+    [onChanged],
+  );
+
+  const run = useCallback(
+    async (request: ApplyRequest): Promise<ApplyOutcome> => {
+      // The state is only visible after the next render; two clicks on two
+      // pages can be faster than that.
+      if (running.current) throw new Error("apply-running");
+      running.current = true;
+      cancelRequested.current = false;
+      setState({ ...NOT_APPLYING, running: true, dryRun: request.dry_run });
+      let changed = !request.dry_run;
+      try {
+        const result = await api.apply(request);
+        return {
+          result,
+          cancelled: cancelRequested.current && result.entries.some((e) => e.status === "skipped"),
+        };
+      } catch (e) {
+        if (isApplyRunning(e)) changed = false;
+        throw e;
+      } finally {
+        running.current = false;
+        setState(NOT_APPLYING);
+        if (changed) onChanged();
+      }
+    },
+    [onChanged],
+  );
+
+  const cancel = useCallback(async () => {
+    if (!running.current) return;
+    cancelRequested.current = true;
+    setState((s) => ({ ...s, cancelling: true }));
+    try {
+      await api.cancelApply();
+    } catch (e) {
+      cancelRequested.current = false;
+      setState((s) => ({ ...s, cancelling: false }));
+      throw e;
+    }
+  }, []);
+
+  return useMemo(() => ({ ...state, run, cancel }), [state, run, cancel]);
 }
 
 const EMPTY_OFFLINE: OfflineData = { status: null, entries: [] };
@@ -288,7 +301,7 @@ const SCAN_ON_STARTUP_KEY = "odysync.securityScanOnStartup";
 /** Defender state is one cheap CIM read; poll it often enough to feel live. */
 const DEFENDER_POLL_MS = 60_000;
 
-/** The full audit spawns many PowerShell queries — keep it well clear of idle. */
+/** The full audit spawns many PowerShell queries; keep it well clear of idle. */
 const SECURITY_POLL_MS = 10 * 60_000;
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -316,10 +329,53 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const config = useResource<Config | null>("config", () => api.getConfig(), null);
 
-  const scan = useResource<ScanResult | null>("scan", () => api.scan(), null, {
-    heavy: true,
-    persist: true,
-  });
+  const [scanSources, setScanSources] = useState<SourceStates>(() => new Map());
+  const [scanCancelling, setScanCancelling] = useState(false);
+  const scanBase = useResource<ScanResult | null>(
+    "scan",
+    async () => {
+      setScanSources(new Map());
+      try {
+        return await api.scan();
+      } finally {
+        setScanCancelling(false);
+      }
+    },
+    null,
+    { heavy: true, persist: true },
+  );
+  useEffect(
+    () =>
+      safeListen<ScanProgressEvent>("scan-progress", (e) =>
+        setScanSources((prev) => new Map(prev).set(e.payload.backend, e.payload)),
+      ),
+    [],
+  );
+  // The timer in the tray process: look again without making the window busy.
+  const refreshQuietly = scanBase.refresh;
+  useEffect(
+    () => safeListen("background-scan", () => void refreshQuietly({ quiet: true })),
+    [refreshQuietly],
+  );
+  const cancelScan = useCallback(async () => {
+    setScanCancelling(true);
+    try {
+      await api.cancelScan();
+    } catch (e) {
+      setScanCancelling(false);
+      throw e;
+    }
+  }, []);
+  const scan: ScanResource = useMemo(
+    () => ({
+      ...scanBase,
+      health: scanHealth(scanBase, backends.data),
+      progress: scanBase.loading ? summarise(scanSources) : null,
+      cancelling: scanCancelling,
+      cancel: cancelScan,
+    }),
+    [scanBase, backends.data, scanSources, scanCancelling, cancelScan],
+  );
 
   const hardware = useResource<HardwareInfoDto | null>(
     "hardware info",
@@ -381,11 +437,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     null,
   );
 
+  // Cleared when an audit starts, so the board never shows the last one's ticks.
+  const [auditSections, setAuditSections] = useState<Record<string, SectionProgress>>({});
   const securityScan = useResource<ScanReport | null>(
     "security audit",
-    () => api.securityScan(),
+    () => {
+      setAuditSections({});
+      return api.securityScan();
+    },
     null,
     { heavy: true, persist: true },
+  );
+  useEffect(
+    () =>
+      safeListen<SectionProgress>("security-progress", (e) =>
+        setAuditSections((prev) => ({ ...prev, [e.payload.name]: e.payload })),
+      ),
+    [],
   );
 
   const backup = useResource<BackupData>(
@@ -428,7 +496,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   // Whether the security audit runs as part of the startup load. It is the
-  // slowest thing in the app, so it is opt-in — but on by default, because a
+  // slowest thing in the app, so it can be turned off, but it is on by default: a
   // machine that has already been compromised should be told, not asked.
   const [scanOnStartup, setScanOnStartupState] = useState(
     () => localStorage.getItem(SCAN_ON_STARTUP_KEY) !== "false",
@@ -438,145 +506,126 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setScanOnStartupState(v);
   }, []);
 
-  const resources = useMemo(
+  // Everything that is loaded at startup. The order is the order of the heavy
+  // queue: the update scan is what the user is waiting for and the slowest by
+  // far, so it goes first and the rest shares the remaining slots.
+  const startupLoads = useMemo(
     () => [
-      sysInfo,
-      config,
-      autostart,
-      backends,
-      history,
-      logs,
-      profiles,
-      offline,
-      hardware,
-      defender,
-      packages,
-      startup,
-      backup,
-      driverBackups,
-      components,
-      devices,
-      health,
-      cleanup,
-      scan,
-      ...(scanOnStartup ? [securityScan] : []),
+      scanBase.refresh,
+      sysInfo.refresh,
+      config.refresh,
+      autostart.refresh,
+      backends.refresh,
+      history.refresh,
+      logs.refresh,
+      profiles.refresh,
+      offline.refresh,
+      hardware.refresh,
+      defender.refresh,
+      packages.refresh,
+      startup.refresh,
+      backup.refresh,
+      driverBackups.refresh,
+      components.refresh,
+      devices.refresh,
+      health.refresh,
+      cleanup.refresh,
     ],
     [
-      sysInfo,
-      config,
-      autostart,
-      backends,
-      history,
-      logs,
-      profiles,
-      offline,
-      hardware,
-      defender,
-      packages,
-      startup,
-      backup,
-      driverBackups,
-      components,
-      devices,
-      health,
-      cleanup,
-      scan,
-      securityScan,
-      scanOnStartup,
+      scanBase.refresh,
+      sysInfo.refresh,
+      config.refresh,
+      autostart.refresh,
+      backends.refresh,
+      history.refresh,
+      logs.refresh,
+      profiles.refresh,
+      offline.refresh,
+      hardware.refresh,
+      defender.refresh,
+      packages.refresh,
+      startup.refresh,
+      backup.refresh,
+      driverBackups.refresh,
+      components.refresh,
+      devices.refresh,
+      health.refresh,
+      cleanup.refresh,
     ],
   );
 
-  // Keep a stable handle on the refresh functions so the boot effect runs once.
-  const refreshFns = useRef<Array<() => Promise<void>>>([]);
-  refreshFns.current = resources.map((r) => r.refresh);
-
-  // The full audit is the heaviest thing the app does — ~15 PowerShell/CIM
-  // calls — and the least time-critical. Running it in the initial batch
-  // throttled the winget scan the user is actually watching (both fight for
-  // the same three heavy-queue slots and for winget itself). It is deferred to
-  // start once the rest of the boot has settled, so it costs nothing the user
-  // is waiting on while still running automatically at startup.
-  const refreshSecurityStartup = securityScan.refresh;
-  const deferSecurity = scanOnStartup;
-
+  const refreshSecurity = securityScan.refresh;
   const [booting, setBooting] = useState(true);
   const [bootDone, setBootDone] = useState(0);
-  // Security is loaded after the batch, so exclude it from the batch's count.
-  const bootTotal = resources.length - (deferSecurity ? 1 : 0);
+  const bootTotal = startupLoads.length;
 
-  // Background-load everything, once, at startup. Cheap metadata first so the
-  // shell fills in immediately; the expensive scans follow behind the queue.
+  // Background-load everything, once, at startup.
+  //
+  // The full audit is the heaviest thing the app does (about 15 PowerShell and
+  // CIM calls) and the least time-critical. In the initial batch it slowed the
+  // update scan the user is actually watching, because both fight for the same
+  // heavy-queue slots. It starts once the rest of the boot has settled.
   const booted = useRef(false);
   useEffect(() => {
     if (booted.current) return;
     booted.current = true;
 
-    let cancelled = false;
-    // Everything except the deferred security audit (which, when present, is
-    // the last entry in refreshFns).
-    const batch = deferSecurity
-      ? refreshFns.current.slice(0, -1)
-      : refreshFns.current;
-
-    const tasks = batch.map((fn) =>
-      fn().finally(() => {
-        if (!cancelled) setBootDone((n) => n + 1);
-      }),
-    );
-
-    Promise.allSettled(tasks).then(() => {
-      if (cancelled) return;
+    const tasks = startupLoads.map((load) => load().finally(() => setBootDone((n) => n + 1)));
+    void Promise.allSettled(tasks).then(() => {
       setBooting(false);
-      // Kick the audit off now the contention has cleared.
-      if (deferSecurity) void refreshSecurityStartup();
+      if (scanOnStartup) void refreshSecurity();
     });
-
-    return () => {
-      cancelled = true;
-    };
-    // Intentionally run once; deferSecurity/refresh are stable for the session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const refreshAll = useCallback(async () => {
-    await Promise.allSettled(refreshFns.current.map((fn) => fn()));
-  }, []);
+    // Runs once: `booted` guards it, whatever changes later.
+  }, [startupLoads, scanOnStartup, refreshSecurity]);
 
   // A finished apply invalidates almost everything.
-  const refreshScan = scan.refresh;
-  const refreshHistory = history.refresh;
-  const refreshPackages = packages.refresh;
+  const reloadScan = scanBase.reload;
+  const reloadHistory = history.reload;
+  const reloadPackages = packages.reload;
+  const reloadBackups = backup.reload;
   const refreshLogs = logs.refresh;
-  useEffect(
-    () =>
-      safeListen("apply-finished", () => {
-        void refreshScan();
-        void refreshHistory();
-        void refreshPackages();
-        void refreshLogs();
-      }),
-    [refreshScan, refreshHistory, refreshPackages, refreshLogs],
-  );
+  const onChanged = useCallback(() => {
+    void reloadScan();
+    void reloadHistory();
+    void reloadPackages();
+    void reloadBackups();
+    void refreshLogs({ quiet: true });
+  }, [reloadScan, reloadHistory, reloadPackages, reloadBackups, refreshLogs]);
+  const apply = useApply(onChanged);
+
+  // While an update is being installed a scan would look at a machine that is
+  // changing under it; the one after the install is the one that counts.
+  const applying = apply.running;
+  const refreshScan = scanBase.refresh;
+  const refreshAll = useCallback(async () => {
+    const loads = startupLoads.filter((load) => !(applying && load === refreshScan));
+    if (scanOnStartup) loads.push(refreshSecurity);
+    await Promise.allSettled(loads.map((load) => load()));
+  }, [startupLoads, applying, refreshScan, scanOnStartup, refreshSecurity]);
 
   const security: SecurityResource = useMemo(
-    () => ({ ...securityScan, scanOnStartup, setScanOnStartup }),
-    [securityScan, scanOnStartup, setScanOnStartup],
+    () => ({ ...securityScan, scanOnStartup, setScanOnStartup, sections: auditSections }),
+    [securityScan, scanOnStartup, setScanOnStartup, auditSections],
   );
 
   // Keep the security view live rather than a snapshot from startup. Defender's
   // own state is cheap to read and changes on its own (a scan finishes, a
   // signature update lands, something gets quarantined), so it polls often; the
-  // full audit shells out to WMI and CIM, so it refreshes far more slowly.
+  // full audit shells out to WMI and CIM, so it refreshes far more slowly, and
+  // not at all for someone who turned the startup audit off.
+  //
+  // Both are quiet: a poll nobody asked for must not turn Home into "Checking
+  // your PC" every minute.
   const refreshDefender = defender.refresh;
-  const refreshSecurity = securityScan.refresh;
   useEffect(() => {
-    const defenderTimer = setInterval(() => void refreshDefender(), DEFENDER_POLL_MS);
-    const auditTimer = setInterval(() => void refreshSecurity(), SECURITY_POLL_MS);
-    return () => {
-      clearInterval(defenderTimer);
-      clearInterval(auditTimer);
-    };
-  }, [refreshDefender, refreshSecurity]);
+    const timer = setInterval(() => void refreshDefender({ quiet: true }), DEFENDER_POLL_MS);
+    return () => clearInterval(timer);
+  }, [refreshDefender]);
+  useEffect(() => {
+    if (!scanOnStartup) return;
+    const timer = setInterval(() => void refreshSecurity({ quiet: true }), SECURITY_POLL_MS);
+    return () => clearInterval(timer);
+  }, [scanOnStartup, refreshSecurity]);
 
   const value: AppStore = useMemo(
     () => ({
@@ -587,6 +636,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       backends,
       config,
       scan,
+      apply,
       hardware,
       packages,
       history,
@@ -612,6 +662,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       backends,
       config,
       scan,
+      apply,
       hardware,
       packages,
       history,

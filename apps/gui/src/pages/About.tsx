@@ -1,15 +1,17 @@
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import { Card, Facts } from "../components/ui";
 import { Logo } from "../components/Logo";
 
-const HIGHLIGHTS = [
-  "Updates installed programs straight from their publishers — winget is optional",
+/** What the app does, without naming a version: that would be wrong by the next one. */
+const FEATURES = [
+  "Updates installed programs straight from their publishers; winget is optional",
   "Every installer Odysync downloads must carry its publisher's signature",
-  "NVIDIA drivers from NVIDIA's own service, WHQL only",
+  "Drivers from Windows Update and the hardware makers, never installed without you",
   "Mac apps through their own Sparkle feeds, checked against the app's own key",
+  "A care score that lists every point it takes off, and what could not be checked",
   "Cleanup that measures first and asks before anything permanent",
   "Runtimes, device problems and driver backups in one place",
-  "A calmer interface with light and dark themes",
+  "Automatic care on a schedule, for safe updates and junk files only",
 ];
 
 const PRINCIPLES = [
@@ -27,17 +29,17 @@ export default function About() {
     <>
       <section className="rounded-xl border border-line bg-surface p-8 flex flex-col items-center text-center">
         <Logo className="w-16 h-16" />
-        <h1 className="text-2xl font-semibold tracking-tight mt-4">Odysync</h1>
+        <h1 tabIndex={-1} className="text-2xl font-semibold tracking-tight mt-4">Odysync</h1>
         <p className="text-muted mt-1">Safe software and driver updates for Windows, macOS and Linux.</p>
         <p className="text-sm text-faint mt-1">Version {info?.version ?? "…"} · free and open source (MIT)</p>
       </section>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <Card title="New in this version">
+        <Card title="What Odysync does">
           <ul className="space-y-2 text-sm text-muted">
-            {HIGHLIGHTS.map((line) => (
+            {FEATURES.map((line) => (
               <li key={line} className="flex gap-2.5">
-                <span className="mt-2 w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
+                <span aria-hidden className="mt-2 w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
                 {line}
               </li>
             ))}

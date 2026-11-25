@@ -174,6 +174,7 @@ pub struct ApplyEntryDto {
 pub struct ApplyRequest {
     pub updates: Vec<UpdateDto>,
     pub dry_run: bool,
+    /// Decides for this run; the setting is where the checkbox starts from.
     pub restore_point: bool,
 }
 
@@ -243,9 +244,7 @@ pub struct ConfigDto {
     pub profiles: Vec<ProfileDto>,
     pub restore_point: bool,
     pub scan_interval_hours: u32,
-    pub concurrency: u32,
     pub proxy_url: Option<String>,
-    pub auto_apply: bool,
     pub notifications: bool,
     pub max_retries: u32,
     pub backend_timeout_secs: u32,
@@ -281,9 +280,7 @@ impl From<&Config> for ConfigDto {
                 .collect(),
             restore_point: c.restore_point,
             scan_interval_hours: c.scan_interval_hours,
-            concurrency: c.concurrency,
             proxy_url: c.proxy_url.clone(),
-            auto_apply: c.auto_apply,
             notifications: c.notifications,
             max_retries: c.max_retries,
             backend_timeout_secs: c.backend_timeout_secs,
@@ -309,9 +306,7 @@ impl ConfigDto {
         config.enabled_backends = self.enabled_backends;
         config.restore_point = self.restore_point;
         config.scan_interval_hours = self.scan_interval_hours.min(24 * 7);
-        config.concurrency = self.concurrency.clamp(1, 16);
         config.proxy_url = self.proxy_url.filter(|s| !s.trim().is_empty());
-        config.auto_apply = self.auto_apply;
         config.notifications = self.notifications;
         config.max_retries = self.max_retries.min(10);
         config.backend_timeout_secs = self.backend_timeout_secs.clamp(10, 3600);
@@ -337,28 +332,33 @@ fn backend_kind_from_str(s: &str) -> Option<BackendKind> {
 // ── Tauri commands ───────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
+pub async fn scan(app: AppHandle, state: State<'_, AppState>) -> Result<ScanResult, String> {
     let config = state.config();
+    let (cancel, generation) = state.begin_scan();
     let probed = state.probed_backends().await;
-    let usable: Vec<_> = probed.iter().filter(|p| p.usable()).collect();
+    let usable: Vec<&dyn odysync_core::backend::Backend> = probed
+        .iter()
+        .filter(|p| p.usable())
+        .map(|p| p.backend.as_ref())
+        .collect();
     tracing::info!(backends = usable.len(), "starting scan");
 
-    let results = futures::future::join_all(usable.iter().map(|p| async {
-        let kind_id = p.backend.kind().id().to_string();
-        (kind_id, p.backend.scan().await)
-    }))
-    .await;
+    let limit = std::time::Duration::from_secs(u64::from(config.backend_timeout_secs.max(10)));
+    let emit = |p: odysync_backends::scan::ScanProgress| {
+        let _ = app.emit("scan-progress", &p);
+    };
+    let results = odysync_backends::scan::scan_sources(&usable, limit, &cancel, &emit).await;
 
     let mut actionable = Vec::new();
     let mut skipped = Vec::new();
     let mut failed_backends = Vec::new();
     let mut cache = crate::state::ScanCache::new();
 
-    for (kind_id, result) in results {
-        let candidates = match result {
+    for source in results {
+        let kind_id = source.kind.id().to_string();
+        let candidates = match source.result {
             Ok(c) => c,
             Err(e) => {
-                tracing::warn!(backend = %kind_id, error = %e, "scan failed");
                 failed_backends.push(BackendErrorDto {
                     backend: kind_id,
                     error: e.sanitize(),
@@ -392,7 +392,7 @@ pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
         }
     }
 
-    state.replace_scan_cache(cache);
+    state.adopt_scan(cache, generation);
 
     let total = actionable.len() + skipped.len();
     tracing::info!(
@@ -402,6 +402,9 @@ pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
         failed = failed_backends.len(),
         "scan complete"
     );
+    if state.take_background_scan() && config.notifications && !actionable.is_empty() {
+        announce_updates(&app, actionable.len());
+    }
     Ok(ScanResult {
         actionable,
         skipped,
@@ -410,12 +413,61 @@ pub async fn scan(state: State<'_, AppState>) -> Result<ScanResult, String> {
     })
 }
 
+/// Stop the running scan. What has answered so far is kept.
+#[tauri::command]
+pub async fn cancel_scan(state: State<'_, AppState>) -> Result<(), String> {
+    state.cancel_scan();
+    Ok(())
+}
+
+/// Stop installing after the package in progress.
+#[tauri::command]
+pub async fn cancel_apply(state: State<'_, AppState>) -> Result<(), String> {
+    state.cancel_apply();
+    Ok(())
+}
+
+/// Tell the user about updates a background scan found, unless they are
+/// looking at the window that already shows them.
+fn announce_updates(app: &AppHandle, count: usize) {
+    use tauri::Manager;
+    use tauri_plugin_notification::NotificationExt;
+
+    let looking = app
+        .get_webview_window("main")
+        .is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false));
+    if looking {
+        return;
+    }
+    let body = if count == 1 {
+        "1 update is ready to install.".to_string()
+    } else {
+        format!("{count} updates are ready to install.")
+    };
+    if let Err(e) = app
+        .notification()
+        .builder()
+        .title("Odysync")
+        .body(body)
+        .show()
+    {
+        tracing::warn!(error = %e, "could not show a notification");
+    }
+}
+
 #[tauri::command]
 pub async fn apply(
     app: AppHandle,
     request: ApplyRequest,
     state: State<'_, AppState>,
 ) -> Result<ApplyResultDto, String> {
+    let _claim = state.claim_apply()?;
+    // The scheduler and a terminal are separate processes.
+    let _lock = if request.dry_run {
+        None
+    } else {
+        Some(odysync_core::ApplyLock::acquire().map_err(|e| e.to_string())?)
+    };
     tracing::info!(
         count = request.updates.len(),
         dry_run = request.dry_run,
@@ -472,7 +524,9 @@ pub async fn apply(
 
     let plan = config.policy.plan(candidates_to_apply);
 
-    let mut runner = Runner::new(backends, request.dry_run).with_max_retries(config.max_retries);
+    let mut runner = Runner::new(backends, request.dry_run)
+        .with_max_retries(config.max_retries)
+        .with_cancel(state.cancel_flag());
     if !request.dry_run {
         // Record what happened so the History page has something to show.
         runner = runner.with_history(odysync_core::history::UpdateHistory::load());
@@ -481,12 +535,7 @@ pub async fn apply(
     let emitter = TauriProgressEmitter { app: app.clone() };
     let mut report = RunReport::new();
     runner
-        .run_with_progress(
-            &plan,
-            &mut report,
-            request.restore_point || config.restore_point,
-            Some(&emitter),
-        )
+        .run_with_progress(&plan, &mut report, request.restore_point, Some(&emitter))
         .await;
 
     let entries: Vec<ApplyEntryDto> = report
@@ -513,7 +562,7 @@ pub async fn apply(
 
     // Anything applied invalidates the scan; let every page know.
     if !request.dry_run {
-        state.replace_scan_cache(crate::state::ScanCache::new());
+        state.forget_scans();
         let _ = app.emit("apply-finished", ());
     }
 
@@ -595,11 +644,33 @@ pub async fn hold(request: HoldRequest, state: State<'_, AppState>) -> Result<()
 #[tauri::command]
 pub async fn unhold(request: HoldRequest, state: State<'_, AppState>) -> Result<(), String> {
     let mut config = state.config();
-    let Some(kind) = backend_kind_from_str(&request.backend) else {
-        return Err(format!("unknown backend: {}", request.backend));
-    };
-    let id = PackageId::new(kind, request.id);
-    config.policy.holds.retain(|h| h.package != id.to_string());
+    // What the list in Settings shows is the text of the hold, and one written
+    // by hand may name no source.
+    let text = request.id.trim();
+    let before = config.policy.holds.len();
+    config
+        .policy
+        .holds
+        .retain(|h| !h.package.trim().eq_ignore_ascii_case(text));
+    let mut released = before - config.policy.holds.len();
+
+    if let Some(kind) = backend_kind_from_str(&request.backend) {
+        let mut id = PackageId::new(kind, text);
+        // A hold can also name the alias, which only the scan knows.
+        if let Some(alias) = state
+            .scan_cache()
+            .get(kind.id())
+            .and_then(|found| found.iter().find(|c| c.id == id))
+            .and_then(|c| c.id.alias.clone())
+        {
+            id = id.with_alias(alias);
+        }
+        released += config.policy.release(&id);
+    }
+
+    if released == 0 {
+        return Err(format!("{text} is not held"));
+    }
     state.save_config(config).map_err(|e| e.to_string())
 }
 
@@ -734,23 +805,6 @@ pub async fn get_system_info(state: State<'_, AppState>) -> Result<SystemInfoDto
     })
 }
 
-#[tauri::command]
-pub async fn background_scan(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<ScanResult, String> {
-    let result = scan(state).await?;
-
-    if !result.actionable.is_empty() {
-        let _ = app.emit(
-            "updates-available",
-            serde_json::json!({ "count": result.actionable.len() }),
-        );
-    }
-
-    Ok(result)
-}
-
 // ── Update History ───────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -772,7 +826,7 @@ pub async fn get_update_history() -> Result<Vec<HistoryEntryDto>, String> {
         .iter()
         .rev()
         .map(|e| HistoryEntryDto {
-            timestamp: e.timestamp.to_rfc3339(),
+            timestamp: e.timestamp.to_string(),
             package: e.package_name.clone(),
             backend: e.backend.id().to_string(),
             from_version: e.from_version.clone(),
@@ -1133,15 +1187,27 @@ pub async fn verify_offline_cache() -> Result<Vec<bool>, String> {
 
 // ── App lifecycle ────────────────────────────────────────────────────────────
 
+/// Leave the app. Refused while an update is being installed, unless `force`:
+/// ending in the middle of an installer is how programs end up half installed.
 #[tauri::command]
-pub async fn quit_app(app: AppHandle) -> Result<(), String> {
-    tracing::info!("user requested quit, exiting application");
+pub async fn quit_app(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    force: bool,
+) -> Result<(), String> {
+    if state.is_applying() && !force {
+        return Err(crate::state::APPLY_RUNNING.to_string());
+    }
+    tracing::info!(force, "user requested quit, exiting application");
     app.exit(0);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn restart_as_admin(app: AppHandle) -> Result<(), String> {
+pub async fn restart_as_admin(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if state.is_applying() {
+        return Err(crate::state::APPLY_RUNNING.to_string());
+    }
     #[cfg(windows)]
     {
         use std::ffi::OsStr;
@@ -1272,10 +1338,12 @@ pub async fn security_scan(app: AppHandle) -> Result<security::ScanReport, Strin
 
 #[derive(Serialize)]
 pub struct DefenderStatusDto {
-    pub real_time_protection: bool,
-    pub tamper_protection: bool,
-    pub antivirus_enabled: bool,
-    pub signature_age_days: u32,
+    /// `None` when Defender did not say. Not knowing is not the same as off:
+    /// with another antivirus installed these fields are simply absent.
+    pub real_time_protection: Option<bool>,
+    pub tamper_protection: Option<bool>,
+    pub antivirus_enabled: Option<bool>,
+    pub signature_age_days: Option<u32>,
     pub signature_version: String,
     pub last_quick_scan: Option<String>,
     pub last_full_scan: Option<String>,
@@ -1301,14 +1369,15 @@ pub async fn get_defender_status() -> Result<DefenderStatusDto, String> {
         .map_err(|e| e.to_string())?;
     let s = snapshot.status.unwrap_or_default();
 
-    // Defender reports ages in days, and "unknown" as an absent field. Treat
-    // absent as 0 rather than as stale so a machine we cannot read is not
-    // painted red on a guess.
+    // Ages come in days, "never" as `u32::MAX` and "unknown" as an absent
+    // field.
     Ok(DefenderStatusDto {
-        real_time_protection: s.real_time_protection_enabled.unwrap_or(false),
-        tamper_protection: s.is_tamper_protected.unwrap_or(false),
-        antivirus_enabled: s.antivirus_enabled.unwrap_or(false),
-        signature_age_days: s.antivirus_signature_age.unwrap_or(0).max(0) as u32,
+        real_time_protection: s.real_time_protection_enabled,
+        tamper_protection: s.is_tamper_protected,
+        antivirus_enabled: s.antivirus_enabled,
+        signature_age_days: s
+            .antivirus_signature_age
+            .and_then(|d| u32::try_from(d.max(0)).ok()),
         signature_version: s.antivirus_signature_version.unwrap_or_default(),
         last_quick_scan: describe_scan_age(s.quick_scan_age),
         last_full_scan: describe_scan_age(s.full_scan_age),
@@ -1772,9 +1841,7 @@ mod tests {
                 "enabled_backends": ["winget"],
                 "restore_point": false,
                 "scan_interval_hours": 6,
-                "concurrency": 99,
                 "proxy_url": "   ",
-                "auto_apply": true,
                 "notifications": false,
                 "max_retries": 3,
                 "backend_timeout_secs": 5
@@ -1791,7 +1858,6 @@ mod tests {
         assert!(!config.skip_prerelease, "kept in sync with stable_only");
         assert_eq!(config.disabled_backends, vec!["scoop".to_string()]);
         assert_eq!(config.enabled_backends, vec!["winget".to_string()]);
-        assert_eq!(config.concurrency, 16, "clamped to the supported range");
         assert_eq!(config.backend_timeout_secs, 10, "clamped to the minimum");
         assert_eq!(config.proxy_url, None, "blank proxy becomes None");
         assert_eq!(config.scan_interval_hours, 6);
@@ -1808,9 +1874,7 @@ mod tests {
             "profiles",
             "restore_point",
             "scan_interval_hours",
-            "concurrency",
             "proxy_url",
-            "auto_apply",
             "notifications",
             "max_retries",
             "backend_timeout_secs",

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Bug,
   CheckCircle2,
   Circle,
+  CircleHelp,
   Eye,
   Loader2,
   Network,
@@ -15,12 +16,12 @@ import {
   Wrench,
 } from "lucide-react";
 import * as api from "../api";
-import { safeListen } from "../events";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import {
   Badge,
   Button,
   Card,
+  ConfirmBar,
   EmptyState,
   ErrorBar,
   InfoBar,
@@ -29,7 +30,7 @@ import {
   WarningBar,
 } from "../components/ui";
 import { errorText, formatDate } from "../format";
-import type { Remediation, SectionProgress, SecurityFinding, Severity } from "../types";
+import type { Remediation, SecurityFinding, Severity } from "../types";
 
 const SECTION_LABELS: Record<string, string> = {
   defender: "Microsoft Defender",
@@ -51,7 +52,7 @@ const SEVERITY: Record<Severity, { tone: "danger" | "warning" | "info" | "neutra
   medium: { tone: "warning", label: "Medium" },
   low: { tone: "info", label: "Low" },
   // Deliberately not alarming: these are normal things worth being able to
-  // see — your own apps, games, Spotify — not suspected malware.
+  // see (your own apps, games, Spotify), not suspected malware.
   info: { tone: "neutral", label: "Watching" },
 };
 
@@ -75,21 +76,6 @@ export default function Security() {
   const elevated = sysInfo.data?.elevated ?? false;
   const platform = sysInfo.data?.platform ?? "windows";
   const report = security.data;
-
-  // Live per-section progress, so a running audit shows which checks are in
-  // flight and how long each took rather than one opaque spinner.
-  const [sectionState, setSectionState] = useState<Record<string, SectionProgress>>({});
-  useEffect(
-    () =>
-      safeListen<SectionProgress>("security-progress", (e) => {
-        setSectionState((prev) => ({ ...prev, [e.payload.name]: e.payload }));
-      }),
-    [],
-  );
-  // Clear the per-section board when a fresh audit starts.
-  useEffect(() => {
-    if (security.loading) setSectionState({});
-  }, [security.loading]);
 
   const sorted = useMemo(
     () =>
@@ -154,17 +140,11 @@ export default function Security() {
 
   const applyFix = async (finding: SecurityFinding) => {
     if (!finding.remediation) return;
-    if (confirming !== finding.id) {
-      setConfirming(finding.id);
-      return;
-    }
     setConfirming(null);
     await run(
       `fix:${finding.id}`,
       () => api.applyRemediation(finding.remediation as Remediation),
-      async () => {
-        await security.refresh();
-      },
+      () => security.reload(),
     );
   };
 
@@ -174,7 +154,7 @@ export default function Security() {
     <>
       <PageHeader
         title="Security"
-        subtitle="Persistence, tampering, network exposure and weak settings — plus Microsoft Defender, which does the actual malware scanning."
+        subtitle="Persistence, tampering, network exposure and weak settings, plus Microsoft Defender, which does the actual malware scanning."
         actions={
           <Button
             onClick={() => void security.refresh()}
@@ -200,9 +180,15 @@ export default function Security() {
       />
 
       {!elevated && (
-        <WarningBar message="Some checks — machine-wide persistence, service configuration, Defender control — need administrator rights and are skipped without them." />
+        <WarningBar message="Some checks (machine-wide persistence, service configuration, Defender control) need administrator rights and are skipped without them." />
       )}
       {error && <ErrorBar message={error} />}
+      {security.error && (
+        <ErrorBar message={`The security audit could not be completed: ${security.error}`} />
+      )}
+      {defender.error && (
+        <ErrorBar message={`Microsoft Defender's status could not be read: ${defender.error}`} />
+      )}
       {notice && <SuccessBar message={notice} />}
 
       <Card
@@ -255,12 +241,19 @@ export default function Security() {
       >
         {d && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Status label="Real-time protection" ok={d.real_time_protection} />
-            <Status label="Tamper protection" ok={d.tamper_protection} />
-            <Status label="Antivirus" ok={d.antivirus_enabled} />
+            <Status label="Real-time protection" on={d.real_time_protection} />
+            <Status label="Tamper protection" on={d.tamper_protection} />
+            <Status label="Antivirus" on={d.antivirus_enabled} />
             <Status
-              label={d.signature_age_days === 0 ? "Definitions current" : `Definitions ${d.signature_age_days} days old`}
-              ok={d.signature_age_days <= 7}
+              label="Definitions"
+              on={d.signature_age_days === null ? null : d.signature_age_days <= 7}
+              text={
+                d.signature_age_days === null
+                  ? undefined
+                  : d.signature_age_days === 0
+                    ? "current"
+                    : `${d.signature_age_days} day${d.signature_age_days === 1 ? "" : "s"} old`
+              }
             />
           </div>
         )}
@@ -270,21 +263,31 @@ export default function Security() {
         <Card title="Audit in progress" padded={false}>
           <ul className="divide-y divide-line border-t border-line">
             {ALL_SECTIONS.map((name) => {
-              const s = sectionState[name];
+              const s = security.sections[name];
               const state = s?.state ?? "pending";
               return (
                 <li key={name} className="flex items-center gap-3 px-5 py-2.5 text-sm">
                   {state === "done" ? (
-                    <CheckCircle2 className="w-4 h-4 text-success" />
+                    <CheckCircle2 aria-hidden className="w-4 h-4 text-success" />
                   ) : state === "failed" ? (
-                    <AlertTriangle className="w-4 h-4 text-danger" />
+                    <AlertTriangle aria-hidden className="w-4 h-4 text-danger" />
                   ) : state === "started" ? (
-                    <Loader2 className="w-4 h-4 text-accent animate-spin" />
+                    <Loader2 aria-hidden className="w-4 h-4 text-accent animate-spin" />
                   ) : (
-                    <Circle className="w-4 h-4 text-line-strong" />
+                    <Circle aria-hidden className="w-4 h-4 text-faint" />
                   )}
                   <span className={`flex-1 ${state === "pending" ? "text-faint" : "text-fg"}`}>
                     {SECTION_LABELS[name] ?? name}
+                    <span className="sr-only">
+                      :{" "}
+                      {state === "done"
+                        ? "done"
+                        : state === "failed"
+                          ? "failed"
+                          : state === "started"
+                            ? "running"
+                            : "waiting"}
+                    </span>
                   </span>
                   {s?.durationMs != null && (
                     <span className="text-faint tabular-nums">
@@ -326,7 +329,10 @@ export default function Security() {
                 <button
                   type="button"
                   key={sev}
-                  onClick={() => setSeverityFilter(active ? "all" : sev)}
+                  onClick={() => {
+                    setSeverityFilter(active ? "all" : sev);
+                    setConfirming(null);
+                  }}
                   aria-pressed={active}
                   className={`inline-flex items-center gap-2 h-8 px-3 rounded-lg border text-sm transition-colors ${
                     active ? "border-accent bg-accent/10 text-fg" : "border-line text-muted hover:text-fg hover:bg-raised"
@@ -343,15 +349,23 @@ export default function Security() {
           {findings.length === 0 ? (
             <div className="border-t border-line">
               <EmptyState
-                icon={<CheckCircle2 className="text-success" />}
+                icon={
+                  failedSections.length > 0 ? (
+                    <AlertTriangle className="text-warning" />
+                  ) : (
+                    <CheckCircle2 className="text-success" />
+                  )
+                }
                 title={
                   severityFilter === "all"
-                    ? "Nothing needs your attention"
+                    ? failedSections.length > 0
+                      ? "Nothing found by the checks that could run"
+                      : "Nothing needs your attention"
                     : `No ${SEVERITY[severityFilter as Severity].label.toLowerCase()} findings`
                 }
                 hint={
                   severityFilter === "all"
-                    ? `${watching.length} item${watching.length !== 1 ? "s are" : " is"} listed under Watching below. No indicators were found — which is not the same as proof of a clean machine.`
+                    ? `${watching.length} item${watching.length !== 1 ? "s are" : " is"} listed under Watching below. No indicators were found, which is not the same as proof of a clean machine.`
                     : undefined
                 }
               />
@@ -365,6 +379,8 @@ export default function Security() {
                   busy={busy === `fix:${f.id}`}
                   disabled={busy !== null}
                   confirming={confirming === f.id}
+                  onAsk={() => setConfirming(f.id)}
+                  onCancel={() => setConfirming(null)}
                   onFix={() => void applyFix(f)}
                 />
               ))}
@@ -373,14 +389,14 @@ export default function Security() {
         </Card>
       )}
 
-      {/* Inventory, collapsed. Your own apps, games and tools live here — this
+      {/* Inventory, collapsed. Your own apps, games and tools live here: this
           is "what is running on this machine", not "what is wrong with it". */}
       {severityFilter === "all" && watching.length > 0 && (
         <Card padded={false}>
           <details>
             <summary className="cursor-pointer px-5 py-4 text-sm text-muted hover:text-fg list-none flex items-center gap-2">
               <Eye className="w-4 h-4" />
-              Watching — {watching.length} item{watching.length !== 1 ? "s" : ""} noted, none flagged
+              Watching: {watching.length} item{watching.length !== 1 ? "s" : ""} noted, none flagged
               as a problem
             </summary>
             <p className="px-5 pb-3 text-sm text-muted">
@@ -395,6 +411,8 @@ export default function Security() {
                   busy={busy === `fix:${f.id}`}
                   disabled={busy !== null}
                   confirming={confirming === f.id}
+                  onAsk={() => setConfirming(f.id)}
+                  onCancel={() => setConfirming(null)}
                   onFix={() => void applyFix(f)}
                 />
               ))}
@@ -406,17 +424,44 @@ export default function Security() {
   );
 }
 
-function Status({ label, ok }: { label: string; ok: boolean }) {
+/** `on` is null when Defender did not say: neither good nor bad. */
+function Status({ label, on, text }: { label: string; on: boolean | null; text?: string }) {
+  const value = on === null ? "could not be read" : (text ?? (on ? "on" : "off"));
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-line bg-canvas px-3 py-2.5 text-sm">
-      {ok ? (
-        <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
+    <div className="flex items-start gap-2 rounded-lg border border-line bg-canvas px-3 py-2.5 text-sm">
+      {on === null ? (
+        <CircleHelp aria-hidden className="w-4 h-4 mt-0.5 text-faint flex-shrink-0" />
+      ) : on ? (
+        <CheckCircle2 aria-hidden className="w-4 h-4 mt-0.5 text-success flex-shrink-0" />
       ) : (
-        <AlertTriangle className="w-4 h-4 text-danger flex-shrink-0" />
+        <AlertTriangle aria-hidden className="w-4 h-4 mt-0.5 text-danger flex-shrink-0" />
       )}
-      <span className={`truncate ${ok ? "text-fg" : "text-danger"}`}>{label}</span>
+      <span className="min-w-0">
+        <span className="block text-fg">{label}</span>
+        <span className={`block text-xs ${on === false ? "text-danger" : "text-muted"}`}>{value}</span>
+      </span>
     </div>
   );
+}
+
+/** What pressing "fix" is about to do, in words. */
+function describeFix(r: Remediation): string {
+  switch (r.kind) {
+    case "remove-defender-threat":
+      return "Microsoft Defender removes this threat.";
+    case "disable-run-key":
+      return `The startup entry "${r.name}" is removed. Its value is saved first.`;
+    case "disable-scheduled-task":
+      return `The scheduled task ${r.task_path} is disabled.`;
+    case "delete-file":
+      return `The file ${r.path} is moved to quarantine. Nothing is deleted.`;
+    case "stop-and-disable-service":
+      return `The service "${r.name}" is stopped and does not start again.`;
+    case "reset-hosts-file":
+      return "The hosts file is reset to the Windows default. Your own entries are saved in a backup.";
+    case "manual":
+      return r.instructions;
+  }
 }
 
 function Finding({
@@ -424,16 +469,21 @@ function Finding({
   busy,
   disabled,
   confirming,
+  onAsk,
+  onCancel,
   onFix,
 }: {
   finding: SecurityFinding;
   busy: boolean;
   disabled: boolean;
   confirming: boolean;
+  onAsk: () => void;
+  onCancel: () => void;
   onFix: () => void;
 }) {
   const sev = SEVERITY[finding.severity];
   const [open, setOpen] = useState(finding.severity === "critical");
+  const evidenceId = useId();
 
   return (
     <li className="px-5 py-4">
@@ -453,19 +503,22 @@ function Finding({
               <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}
+                aria-expanded={open}
+                aria-controls={open ? evidenceId : undefined}
+                aria-label={`${open ? "Hide" : "Show"} evidence for ${finding.title}`}
                 className="text-sm text-accent hover:underline mt-1.5"
               >
                 {open ? "Hide" : "Show"} evidence ({finding.evidence.length})
               </button>
               {open && (
-                <pre className="mt-2 text-xs whitespace-pre-wrap break-all font-mono bg-canvas border border-line rounded-lg p-3 max-h-48 overflow-y-auto selectable text-muted">
+                <pre id={evidenceId} className="mt-2 text-xs whitespace-pre-wrap break-all font-mono bg-canvas border border-line rounded-lg p-3 max-h-48 overflow-y-auto selectable text-muted">
                   {finding.evidence.join("\n")}
                 </pre>
               )}
             </>
           )}
           {finding.remediation?.kind === "manual" && (
-            <p className="text-sm text-fg/90 mt-2">
+            <p className="text-sm text-fg mt-2">
               <span className="text-muted">What to do: </span>
               {finding.remediation.instructions}
             </p>
@@ -474,16 +527,26 @@ function Finding({
         {finding.remediation && finding.remediation.kind !== "manual" && (
           <Button
             size="sm"
-            variant={confirming ? "danger" : "secondary"}
+            variant="secondary"
             busy={busy}
-            disabled={disabled}
-            onClick={onFix}
+            disabled={disabled || confirming}
+            onClick={onAsk}
+            aria-label={`Fix: ${finding.title}`}
             icon={<Wrench className="w-3.5 h-3.5" />}
           >
-            {confirming ? "Confirm fix" : "Fix"}
+            Fix
           </Button>
         )}
       </div>
+      {confirming && finding.remediation && (
+        <ConfirmBar
+          className="mt-3 ml-7"
+          message={describeFix(finding.remediation)}
+          confirmLabel="Apply this fix"
+          onConfirm={onFix}
+          onCancel={onCancel}
+        />
+      )}
     </li>
   );
 }

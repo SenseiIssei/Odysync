@@ -23,15 +23,17 @@ The workspace is deliberately layered so that safety rules cannot be bypassed
 by a backend, and so the CLI and the (Phase 2) Tauri GUI share one brain.
 
 ```
-odysync-core       domain model, version algebra, safety policy, planner, runner
-  └─ no knowledge of any specific package manager; pure and fully unit-tested
+odysync-core       domain model, version rules, safety policy, planner, runner
+  └─ no knowledge of any specific package manager; unit-tested everywhere
 
 odysync-verify     SHA-256 integrity + platform code-signature verification
   └─ Authenticode (Windows), codesign (macOS), repo-signed (Linux)
 
 odysync-backends   every update source and every maintenance tool
   ├─ direct/       installers straight from the publisher (catalog, Sparkle)
-  ├─ windows_update/, gpu/, oem/, firmware: drivers and the OS itself
+  ├─ windows_update/, gpu/, fwupd: drivers, firmware and the OS itself
+  ├─ guard, scan: what every source's apply and every scan go through
+  ├─ inactive: sources known by name that cannot keep the contract, and why
   ├─ homebrew, apt, dnf, pacman, zypper, flatpak, snap, nix, …
   ├─ cleanup, components, devices, startup_items, system_info
   └─ winget, chocolatey, scoop: optional
@@ -53,11 +55,18 @@ backend cannot reach into a front-end, and `core` cannot reach into a backend.
 | Always install the approved version | `backends::*::apply` | `--version <exact>` / `pkg=version`; refuses to run without one |
 | Confirm the update landed | `core::runner` | Reads the version back; exit code 0 alone is not accepted as success |
 | No console windows | `core::proc` | `CREATE_NO_WINDOW`, no shell, `--disable-interactivity` |
-| Nothing hangs forever | `core::proc` | Every spawn is time-boxed and `kill_on_drop` |
+| Nothing hangs forever | `core::proc`, `backends::scan` | Every spawn is time-boxed and ends with everything it started (a job object on Windows, a session of its own on Unix); every source has its own scan limit; Windows Update runs on a thread that can be left behind |
+| An installer never runs twice | `core::runner`, `core::error`, `core::proc` | A timeout is never retried; the installed version is read back instead. `run_installer` waits for what the installer started |
+| Never over something newer | `backends::guard`, every `apply` | What is installed is read again and must still be older |
+| One run at a time | `core::apply_lock` | An operating-system lock held by app, terminal or schedule |
+| Room on the disk | `core::health`, `core::runner` | Checked before every install |
+| Windows' own tools are Windows' own | `core::proc` | Full path from `GetSystemDirectoryW`, not from `PATH` |
+| Nothing planted next to an elevated installer | `backends::direct::private_dir` | A fresh directory with an administrators-only access list |
+| Unattended runs leave drivers alone | `core::model::in_unattended_care` | Used by `care`, `apply --unattended`, the daemon and schedules |
 | Stable channel only | `core::policy` | `stable_only` rejects alpha/beta/rc/nightly |
 | Store apps never run elevated | `core::model`, `core::policy` | `forbids_elevation()` is a hard block |
 
-Because `core` performs no I/O, every rule above is covered by unit tests that
+The policy itself performs no I/O, so every rule is covered by unit tests that
 run on all three platforms without needing the package manager installed.
 
 ## The version algebra
@@ -69,7 +78,15 @@ package versions (`1.2.3.4`, `2024.05.01`, `1.0.0-rc.2`, `17.14.29 (March 2026)`
 The critical design decision: **an unparseable version is `Unknown`, and
 comparing anything against `Unknown` returns `None` — never `Equal`.** Callers
 must treat `None` as "refuse to act". This makes "do nothing" the default answer
-whenever the tool is uncertain, which is the opposite of v1's behaviour.
+whenever the tool is uncertain, which is the opposite of v1's behaviour. The
+same goes for two versions whose difference has no agreed meaning, such as
+`1.0.0` against `1.0.0-4`.
+
+Distribution packages follow rules of their own. `1.1.1w-0+deb11u1` to
+`+deb11u2` is a security update, and the general rules read it as the same
+version. `core::version_native` implements dpkg's, rpm's and pacman's ordering
+and PEP 440, tested with the reference cases of each; `Version::parse_as`
+selects one, and versions under different rules are never compared.
 
 ## winget table parsing
 
@@ -103,11 +120,14 @@ three:
 2. the URL must belong to the publisher — a GitHub asset must be a release of
    the repository the catalog names, a vendor URL must start with the pinned
    prefix — and every redirect must stay on HTTPS;
-3. the file is opened with `FILE_SHARE_READ` only, so nothing can write,
+3. the download directory is new, and when Odysync is elevated only
+   administrators can write to it (a library next to an installer is loaded
+   with its rights);
+4. the file is opened with `FILE_SHARE_READ` only, so nothing can write,
    rename or delete it until the installer exits, and it is hashed from disk
    under that lock;
-4. the published digest must match;
-5. the Authenticode signature must be valid and its subject's CN or O must
+5. the published digest must match;
+6. the Authenticode signature must be valid and its subject's CN or O must
    equal the signer the catalog pins. The subject is parsed, not searched, so
    a quoted comma or a longer name cannot satisfy the check.
 
@@ -118,16 +138,17 @@ Apple Team ID.
 
 ## Adding a backend
 
-Implement `core::backend::Backend` (five methods) and add one line to
+Implement `core::backend::Backend` (six methods) and add one line to
 `backends::all_backends()`. Nothing else changes: policy, planning,
 verification, reporting and both front-ends pick it up automatically.
 
 The trait's contract is documented in `core/src/backend.rs` and is binding —
 in particular, `apply` must pin an exact version and must never fall back to
-installing a package that is already present.
+installing a package that is already present. `backends::guard` has the checks
+every `apply` starts with. A tool that cannot install one exact item belongs in
+`backends::inactive`, with the reason.
 
 ## Status
 
-Version 3.0: about 620 Rust tests and the frontend tests run in CI on Windows,
-macOS and Linux, which also packages the app for all three. What remains open
-is in [NEXT.md](NEXT.md).
+What is verified, how, and what is not is kept in [NEXT.md](NEXT.md); what comes
+next in [ROADMAP.md](ROADMAP.md).

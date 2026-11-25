@@ -8,16 +8,16 @@ import {
   Stethoscope,
 } from "lucide-react";
 import * as api from "../api";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import {
   Badge,
   Button,
   Card,
   Checkbox,
+  ConfirmBar,
   ErrorBar,
   PageHeader,
   SuccessBar,
-  WarningBar,
 } from "../components/ui";
 import { errorText, formatSize } from "../format";
 import type {
@@ -38,7 +38,7 @@ const GROUPS: { id: Group; title: string; hint: string }[] = [
   {
     id: "choice",
     title: "Your choice",
-    hint: "Harmless, but with a small cost — read the line under each before ticking it.",
+    hint: "Harmless, but with a small cost. Read the line under each before ticking it.",
   },
   {
     id: "permanent",
@@ -66,7 +66,8 @@ export default function Maintenance() {
 
   // Choices the user made, layered over each category's default.
   const [choices, setChoices] = useState<Record<string, boolean>>({});
-  const [confirming, setConfirming] = useState(false);
+  // The selection the question was asked about; any other one closes it.
+  const [confirmFor, setConfirmFor] = useState<string | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [results, setResults] = useState<CleanupResultDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,26 +85,29 @@ export default function Maintenance() {
   );
   const selectedBytes = selected.reduce((n, i) => n + i.bytes, 0);
   const permanent = selected.filter((i) => i.needs_confirmation);
+  const selection = selected.map((i) => i.id).join("|");
+  const confirming = confirmFor !== null && confirmFor === selection;
 
   const clean = async () => {
-    if (selected.length === 0) return;
-    if (permanent.length > 0 && !confirming) {
-      setConfirming(true);
-      return;
-    }
-    setConfirming(false);
+    setConfirmFor(null);
     setCleaning(true);
     setError(null);
     setResults(null);
     try {
       setResults(await api.cleanupRun(selected.map((i) => i.id)));
       setChoices({});
-      await cleanup.refresh();
+      await cleanup.reload();
     } catch (e) {
       setError(errorText(e));
     } finally {
       setCleaning(false);
     }
+  };
+
+  const start = () => {
+    if (selected.length === 0) return;
+    if (permanent.length > 0) setConfirmFor(selection);
+    else void clean();
   };
 
   const removed = results?.reduce((n, r) => n + r.removed_bytes, 0) ?? 0;
@@ -127,6 +131,21 @@ export default function Maintenance() {
       />
 
       {error && <ErrorBar message={error} />}
+      {cleanup.error && (
+        <ErrorBar
+          message={`The junk files could not be measured: ${cleanup.error}`}
+          action={
+            <Button
+              size="sm"
+              busy={cleanup.loading}
+              onClick={() => void cleanup.refresh()}
+              icon={<RefreshCw className="w-3.5 h-3.5" />}
+            >
+              Try again
+            </Button>
+          }
+        />
+      )}
       {results && (
         <SuccessBar
           message={`Reclaimed ${formatSize(removed)}.${
@@ -142,33 +161,40 @@ export default function Maintenance() {
           <div>
             <div className="text-sm text-muted">Selected</div>
             <div className="text-2xl font-semibold tracking-tight">
-              {cleanup.loadedAt === null ? "Measuring…" : formatSize(selectedBytes)}
+              {cleanup.loadedAt !== null
+                ? formatSize(selectedBytes)
+                : cleanup.error
+                  ? "Not measured"
+                  : "Measuring…"}
             </div>
           </div>
           <Button
-            variant={confirming ? "danger" : "primary"}
-            onClick={() => void clean()}
+            variant="primary"
+            onClick={start}
             busy={cleaning}
-            disabled={selected.length === 0 || cleanup.loading}
+            disabled={selected.length === 0 || cleanup.loading || confirming}
             icon={<Brush className="w-4 h-4" />}
           >
-            {confirming ? "Yes, delete permanently" : `Clean ${selected.length} categor${selected.length === 1 ? "y" : "ies"}`}
+            {`Clean ${selected.length} categor${selected.length === 1 ? "y" : "ies"}`}
           </Button>
         </div>
         {confirming && (
           <div className="px-5 pb-4">
-            <WarningBar
+            <ConfirmBar
               message={
                 <>
                   You selected {permanent.length === 1 ? "something" : "things"} that cannot be
                   undone:{" "}
                   {permanent.map((p) => (
                     <span key={p.id} className="block mt-1">
-                      <strong className="font-medium">{p.label}</strong> — {p.consequence}
+                      <strong className="font-medium">{p.label}</strong>: {p.consequence}
                     </span>
                   ))}
                 </>
               }
+              confirmLabel="Yes, delete permanently"
+              onConfirm={() => void clean()}
+              onCancel={() => setConfirmFor(null)}
             />
           </div>
         )}
@@ -188,10 +214,7 @@ export default function Maintenance() {
                         label={`Clean ${item.label}`}
                         checked={isSelected(item)}
                         disabled={!selectable(item) || cleaning}
-                        onChange={(v) => {
-                          setConfirming(false);
-                          setChoices((c) => ({ ...c, [item.id]: v }));
-                        }}
+                        onChange={(v) => setChoices((c) => ({ ...c, [item.id]: v }))}
                       />
                     )}
                   </div>
@@ -202,7 +225,10 @@ export default function Maintenance() {
                   </div>
                   <div className="text-right flex-shrink-0">
                     {item.error ? (
-                      <Badge tone="warning">could not measure</Badge>
+                      <span title={item.error}>
+                        <Badge tone="warning">could not measure</Badge>
+                        <span className="sr-only">: {item.error}</span>
+                      </span>
                     ) : (
                       <>
                         <div className="text-sm font-medium tabular-nums text-fg">
@@ -210,7 +236,7 @@ export default function Maintenance() {
                             ? formatSize(item.bytes)
                             : item.id === "component-store"
                               ? "size unknown"
-                              : "—"}
+                              : "-"}
                         </div>
                         {item.file_count > 0 && (
                           <div className="text-xs text-faint tabular-nums">
@@ -253,7 +279,7 @@ function LargeFiles() {
   return (
     <Card
       title="Large files"
-      description="The biggest files in your home folder. Odysync only lists them — what is worth keeping is your call."
+      description="The biggest files in your home folder. Odysync only lists them; what is worth keeping is your call."
       padded={false}
       actions={
         <Button size="sm" onClick={() => void find()} busy={busy} icon={<FileSearch className="w-3.5 h-3.5" />}>
@@ -284,7 +310,13 @@ function LargeFiles() {
                   size="sm"
                   variant="ghost"
                   icon={<FolderOpen className="w-3.5 h-3.5" />}
-                  onClick={() => void api.revealPath(f.path).catch(() => {})}
+                  aria-label={`Show ${f.path} in its folder`}
+                  onClick={() => {
+                    setError(null);
+                    api
+                      .revealPath(f.path)
+                      .catch((e: unknown) => setError(`${f.path} could not be shown: ${errorText(e)}`));
+                  }}
                 >
                   Show
                 </Button>
@@ -293,7 +325,7 @@ function LargeFiles() {
           </ul>
           <p className="px-5 py-3 border-t border-line text-xs text-faint">
             {report.scanned.toLocaleString()} files looked at
-            {report.truncated ? " — stopped at the time limit, so larger files may exist." : "."}
+            {report.truncated ? ", stopped at the time limit, so larger files may exist." : "."}
           </p>
         </>
       )}
@@ -310,6 +342,7 @@ function DiskTools({ elevated }: { elevated: boolean }) {
   const run = async (label: string, work: () => Promise<string>) => {
     setBusy(label);
     setError(null);
+    setOutput(null);
     try {
       setOutput({ title: label, text: await work() });
     } catch (e) {
@@ -358,6 +391,7 @@ function DiskTools({ elevated }: { elevated: boolean }) {
               onClick={() =>
                 void (async () => {
                   setBusy("plan");
+                  setError(null);
                   try {
                     setPlan(await api.diskOptimizationPlan());
                   } catch (e) {
@@ -377,7 +411,7 @@ function DiskTools({ elevated }: { elevated: boolean }) {
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium">Repair system files</div>
             <p className="text-sm text-muted">
-              Runs DISM and SFC to find and fix damaged Windows files. Takes 10–30 minutes.
+              Runs DISM and SFC to find and fix damaged Windows files. Takes 10 to 30 minutes.
             </p>
           </div>
           <Button

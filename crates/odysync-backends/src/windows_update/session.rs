@@ -13,11 +13,12 @@
 //!   * **`RebootRequired` was read and discarded**, which is why
 //!     `RunReport::reboot_required` was never once set to `true`.
 //!
-//! A fourth was found by running the real API against a live machine: a search
-//! can return `orcFailed` *and* a populated collection at the same time. The
-//! old code returned early on `orcFailed` and threw those results away. On the
-//! machine this was written against that meant discarding 14 pending updates,
-//! 10 of them security patches.
+//! A fourth was worse. The result codes were written down from memory and off
+//! by two: `orcFailed` was taken to be 2, which is `orcSucceeded`. A download
+//! that succeeded was reported as failed and nothing was installed, an install
+//! that succeeded was reported as failed, and a real failure (4) passed as
+//! success. The codes now live in [`orc`], checked against the Windows
+//! bindings by a test, and every decision about them in pure functions.
 //!
 //! Everything here is `cfg(windows)`. The interesting decision — what kind of
 //! update this is — lives in `odysync_core::windows_update` so it stays
@@ -25,6 +26,7 @@
 
 use std::future::Future;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use odysync_core::error::{Error, Result};
@@ -45,7 +47,87 @@ pub struct WuaUpdate {
     pub is_downloaded: bool,
     pub eula_accepted: bool,
     pub size_bytes: Option<u64>,
+    /// Installed, and waiting for a restart to finish. Windows keeps listing
+    /// such an update as not installed until then.
+    pub reboot_pending: bool,
+    /// Offered only to people who go looking: the optional previews under
+    /// "Advanced options" that Windows never installs on its own.
+    pub browse_only: bool,
     pub class: UpdateClass,
+}
+
+/// What one search found.
+#[derive(Debug, Clone, Default)]
+pub struct SearchResult {
+    pub updates: Vec<WuaUpdate>,
+    /// Whether every source Windows asked answered. A list from an incomplete
+    /// search is worth showing; that something is *missing* from it proves
+    /// nothing.
+    pub complete: bool,
+}
+
+/// `OperationResultCode`, named as Windows names it.
+pub mod orc {
+    pub const SUCCEEDED: i32 = 2;
+    pub const SUCCEEDED_WITH_ERRORS: i32 = 3;
+    pub const FAILED: i32 = 4;
+    pub const ABORTED: i32 = 5;
+}
+
+/// How much a finished search can be trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchVerdict {
+    Complete,
+    /// Some source failed, others answered.
+    Partial,
+    Failed,
+}
+
+/// Judge a search by its result code and how much it returned.
+///
+/// An unsuccessful search that returned nothing is a failure, never "no
+/// updates": telling someone a machine is up to date because Windows Update
+/// could not be reached is the most harmful answer this module can give.
+pub fn search_verdict(code: i32, count: i32) -> SearchVerdict {
+    match code {
+        orc::SUCCEEDED => SearchVerdict::Complete,
+        _ if count > 0 => SearchVerdict::Partial,
+        _ => SearchVerdict::Failed,
+    }
+}
+
+/// Whether a download or install of a single update did all of it.
+///
+/// `orcSucceededWithErrors` means "some of the updates": with exactly one in
+/// the collection that one is the error.
+pub fn operation_succeeded(code: i32) -> bool {
+    code == orc::SUCCEEDED
+}
+
+/// Whether the update `key` is in place, judged by a search made afterwards.
+///
+/// `Ok(true)` when Windows no longer offers it, or still lists it only because
+/// a restart is outstanding. An incomplete search, and the same update under
+/// another revision, are not evidence of anything.
+pub fn landed(after: &SearchResult, key: &str) -> Result<bool> {
+    if let Some(u) = after.updates.iter().find(|u| u.key() == key) {
+        return Ok(u.reboot_pending);
+    }
+    let id = key.rsplit_once('.').map_or(key, |(id, _)| id);
+    if after
+        .updates
+        .iter()
+        .any(|u| u.id.eq_ignore_ascii_case(id) && !u.reboot_pending)
+    {
+        return Ok(false);
+    }
+    if !after.complete {
+        return Err(Error::parse(
+            "Windows Update Agent",
+            "the search after the install did not complete, so the result could not be confirmed",
+        ));
+    }
+    Ok(true)
 }
 
 impl WuaUpdate {
@@ -138,10 +220,10 @@ impl<T: Clone> Default for SharedSearch<T> {
     }
 }
 
-static SOFTWARE_SEARCH: LazyLock<SharedSearch<Vec<WuaUpdate>>> = LazyLock::new(SharedSearch::new);
-static DRIVER_SEARCH: LazyLock<SharedSearch<Vec<WuaUpdate>>> = LazyLock::new(SharedSearch::new);
+static SOFTWARE_SEARCH: LazyLock<SharedSearch<SearchResult>> = LazyLock::new(SharedSearch::new);
+static DRIVER_SEARCH: LazyLock<SharedSearch<SearchResult>> = LazyLock::new(SharedSearch::new);
 
-fn shared_for(criteria: &'static str) -> Option<&'static SharedSearch<Vec<WuaUpdate>>> {
+fn shared_for(criteria: &'static str) -> Option<&'static SharedSearch<SearchResult>> {
     match criteria {
         CRITERIA_SOFTWARE => Some(&SOFTWARE_SEARCH),
         CRITERIA_DRIVER => Some(&DRIVER_SEARCH),
@@ -153,7 +235,7 @@ fn shared_for(criteria: &'static str) -> Option<&'static SharedSearch<Vec<WuaUpd
 ///
 /// Only for listing what is available. Installing, and checking afterwards
 /// that an install took, always ask Windows afresh through [`search`].
-pub async fn search_for_scan(criteria: &'static str) -> Result<Vec<WuaUpdate>> {
+pub async fn search_for_scan(criteria: &'static str) -> Result<SearchResult> {
     match shared_for(criteria) {
         Some(shared) => {
             shared
@@ -179,6 +261,10 @@ pub async fn install_and_forget(criteria: &'static str, key: String) -> Result<I
 /// this is generous. It exists to stop a wedged Windows Update service from
 /// pinning a background daemon forever, not to police slow hardware.
 pub const INSTALL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+/// How long a search may take. A first search after a fresh start can need
+/// several minutes; one that has not answered by now is not going to.
+pub const SEARCH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Turn a Windows Update `HRESULT` into something a user can act on.
 ///
@@ -216,6 +302,21 @@ pub fn explain_hresult(hr: i32) -> String {
     format!("{detail} (0x{code:08X})")
 }
 
+/// Set while an install is running, also after we stopped waiting for it.
+static INSTALLING: AtomicBool = AtomicBool::new(false);
+
+/// What to say when Windows needs longer than [`INSTALL_TIMEOUT`].
+///
+/// Not a timeout like any other: nothing was stopped, because nothing can stop
+/// it. Windows finishes on its own.
+fn still_working() -> Error {
+    Error::unavailable(
+        "Windows Update",
+        "Windows is still installing an update and continues in the background; \
+         check again when it has finished",
+    )
+}
+
 #[cfg(windows)]
 mod imp {
     use super::*;
@@ -224,14 +325,10 @@ mod imp {
         CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
     };
     use windows::Win32::System::UpdateAgent::{
-        IUpdate, IUpdateCollection, IUpdateSession, UpdateCollection, UpdateSession,
+        IUpdate, IUpdate2, IUpdate3, IUpdateCollection, IUpdateSession, UpdateCollection,
+        UpdateSession,
     };
-    use windows::core::BSTR;
-
-    /// `OperationResultCode::orcFailed`.
-    const ORC_FAILED: i32 = 2;
-    /// `OperationResultCode::orcSucceededWithErrors`.
-    const ORC_SUCCEEDED_WITH_ERRORS: i32 = 3;
+    use windows::core::{BSTR, Interface};
 
     /// Wrap a WUA COM failure, routing the code through [`explain_hresult`].
     ///
@@ -248,34 +345,46 @@ mod imp {
         )
     }
 
-    /// Run `f` on a blocking thread inside a COM apartment.
+    /// Run `f` on a thread of its own inside a COM apartment, for at most
+    /// `limit`.
     ///
     /// Every WUA interface is apartment-threaded and none of them are `Send`,
-    /// so the whole interaction has to happen on one thread. `spawn_blocking`
-    /// keeps that off the async runtime's worker pool, where a twenty-minute
-    /// install would otherwise starve every other task.
-    async fn with_com<T, F>(f: F) -> Result<T>
+    /// so the whole interaction has to happen on one thread. It is a plain
+    /// thread rather than `spawn_blocking` because the calls cannot be
+    /// interrupted: when the Windows Update service hangs, all we can do is
+    /// stop waiting, and the runtime would still wait for a blocking task of
+    /// its own before the program could exit.
+    async fn with_com<T, F>(what: &'static str, limit: Duration, f: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce() -> Result<T> + Send + 'static,
     {
-        tokio::task::spawn_blocking(move || {
-            let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
-            let result = f();
-            if initialized {
-                unsafe { CoUninitialize() };
-            }
-            result
-        })
-        .await
-        // A `JoinError` carries no HRESULT, so it does not go through
-        // `wua_err` — there is nothing for the translation table to explain.
-        .map_err(|e| {
-            Error::parse(
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name("odysync-wua".into())
+            .spawn(move || {
+                let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+                let result = f();
+                if initialized {
+                    unsafe { CoUninitialize() };
+                }
+                // The receiver is gone only when the caller gave up waiting.
+                let _ = tx.send(result);
+            })?;
+
+        match tokio::time::timeout(limit, rx).await {
+            Ok(Ok(result)) => result,
+            // A lost sender carries no HRESULT, so it does not go through
+            // `wua_err`: there is nothing for the translation table to explain.
+            Ok(Err(_)) => Err(Error::parse(
                 "Windows Update Agent",
-                format!("the COM worker thread panicked: {e}"),
-            )
-        })?
+                "the COM worker thread panicked",
+            )),
+            Err(_) => Err(Error::CommandTimeout {
+                command: format!("Windows Update ({what})"),
+                seconds: limit.as_secs(),
+            }),
+        }
     }
 
     /// Create an `IUpdateSession`.
@@ -340,6 +449,19 @@ mod imp {
             .map(|b| b.as_bool())
             .unwrap_or(false);
 
+        // Both live on later versions of the interface, which every supported
+        // Windows has; on one that did not, "no" is the older behaviour.
+        let reboot_pending = update
+            .cast::<IUpdate2>()
+            .and_then(|u| unsafe { u.RebootRequired() })
+            .map(|b| b.as_bool())
+            .unwrap_or(false);
+        let browse_only = update
+            .cast::<IUpdate3>()
+            .and_then(|u| unsafe { u.BrowseOnly() })
+            .map(|b| b.as_bool())
+            .unwrap_or(false);
+
         Ok(WuaUpdate {
             class: classify(&title, &category_ids),
             id,
@@ -354,12 +476,14 @@ mod imp {
             // an OLE automation dependency this crate does not carry. Left
             // unreported rather than reported wrongly.
             size_bytes: None,
+            reboot_pending,
+            browse_only,
         })
     }
 
     /// Search Windows Update, returning everything it offers for `criteria`.
-    pub async fn search(criteria: &'static str) -> Result<Vec<WuaUpdate>> {
-        with_com(move || {
+    pub async fn search(criteria: &'static str) -> Result<SearchResult> {
+        with_com("search", SEARCH_TIMEOUT, move || {
             let session = create_session()?;
             let searcher = unsafe { session.CreateUpdateSearcher() }
                 .map_err(|e| wua_err("could not create IUpdateSearcher", e))?;
@@ -372,28 +496,28 @@ mod imp {
             let count = unsafe { updates.Count() }
                 .map_err(|e| wua_err("could not count the search results", e))?;
 
-            // A failed ResultCode does *not* imply an empty collection. On a
-            // real machine this search returned orcFailed alongside 14 valid
-            // updates — one source in the aggregate had failed while the rest
-            // succeeded. Reporting the partial result and logging the failure
-            // beats discarding work Windows already did.
+            // An unsuccessful result code does not imply an empty collection:
+            // one source in the aggregate can fail while the rest answer.
+            // Showing the part Windows did find beats discarding it.
             let code = unsafe { result.ResultCode() }.map(|c| c.0).unwrap_or(0);
-            if code == ORC_FAILED || code == ORC_SUCCEEDED_WITH_ERRORS {
-                if count == 0 {
-                    tracing::info!(
+            let complete = match search_verdict(code, count) {
+                SearchVerdict::Complete => true,
+                SearchVerdict::Partial => {
+                    tracing::warn!(
                         criteria,
-                        "the Windows Update search failed and returned nothing; \
-                         treating it as no updates available from this source"
+                        code,
+                        count,
+                        "the Windows Update search was incomplete; using what it returned"
                     );
-                    return Ok(Vec::new());
+                    false
                 }
-                tracing::warn!(
-                    criteria,
-                    count,
-                    "the Windows Update search reported a failure but returned \
-                     results; using them and reporting the list as partial"
-                );
-            }
+                SearchVerdict::Failed => {
+                    return Err(Error::parse(
+                        "Windows Update Agent",
+                        format!("the update search did not succeed (result code {code})"),
+                    ));
+                }
+            };
 
             let mut out: Vec<WuaUpdate> = Vec::new();
             for i in 0..count {
@@ -414,7 +538,10 @@ mod imp {
                 out.push(read);
             }
 
-            Ok(out)
+            Ok(SearchResult {
+                updates: out,
+                complete,
+            })
         })
         .await
     }
@@ -425,7 +552,20 @@ mod imp {
     /// across the call: COM interfaces are not `Send`, and an offering can be
     /// superseded between scan and apply — in which case refusing is correct.
     pub async fn install(criteria: &'static str, key: String) -> Result<InstallOutcome> {
-        with_com(move || {
+        if INSTALLING.swap(true, Ordering::AcqRel) {
+            return Err(still_working());
+        }
+        /// Cleared when the work ends, not when we stop waiting for it.
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                INSTALLING.store(false, Ordering::Release);
+            }
+        }
+        let done = Done;
+
+        let result = with_com("install", INSTALL_TIMEOUT, move || {
+            let _done = done;
             let session = create_session()?;
             let searcher = unsafe { session.CreateUpdateSearcher() }
                 .map_err(|e| wua_err("could not create IUpdateSearcher", e))?;
@@ -485,7 +625,7 @@ mod imp {
                 let download = unsafe { downloader.Download() }
                     .map_err(|e| wua_err("the download failed", e))?;
                 let code = unsafe { download.ResultCode() }.map(|c| c.0).unwrap_or(0);
-                if code == ORC_FAILED {
+                if !operation_succeeded(code) {
                     let hr = unsafe { download.HResult() }.unwrap_or(0);
                     return Err(Error::parse(
                         "Windows Update Agent",
@@ -507,8 +647,12 @@ mod imp {
                 .map_err(|e| wua_err("the install could not be started", e))?;
 
             let code = unsafe { install.ResultCode() }.map(|c| c.0).unwrap_or(0);
-            if code == ORC_FAILED || code == ORC_SUCCEEDED_WITH_ERRORS {
-                let hr = unsafe { install.HResult() }.unwrap_or(0);
+            if !operation_succeeded(code) {
+                // The update's own code says more than the batch's.
+                let hr = unsafe { install.GetUpdateResult(0) }
+                    .and_then(|r| unsafe { r.HResult() })
+                    .or_else(|_| unsafe { install.HResult() })
+                    .unwrap_or(0);
                 return Err(Error::parse(
                     "Windows Update Agent",
                     format!("install failed: {}", explain_hresult(hr)),
@@ -521,7 +665,11 @@ mod imp {
                     .unwrap_or(false),
             })
         })
-        .await
+        .await;
+        match result {
+            Err(Error::CommandTimeout { .. }) => Err(still_working()),
+            other => other,
+        }
     }
 }
 
@@ -532,8 +680,11 @@ pub use imp::{install, search};
 // these exist so the module itself compiles everywhere and the tests below can
 // run on Linux and macOS CI.
 #[cfg(not(windows))]
-pub async fn search(_criteria: &'static str) -> Result<Vec<WuaUpdate>> {
-    Ok(Vec::new())
+pub async fn search(_criteria: &'static str) -> Result<SearchResult> {
+    Ok(SearchResult {
+        updates: Vec::new(),
+        complete: true,
+    })
 }
 
 #[cfg(not(windows))]
@@ -544,6 +695,63 @@ pub async fn install(_criteria: &'static str, _key: String) -> Result<InstallOut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The constants are Windows', not ours; they were once off by two.
+    #[cfg(windows)]
+    #[test]
+    fn result_codes_match_the_windows_bindings() {
+        use windows::Win32::System::UpdateAgent as wua;
+        assert_eq!(orc::SUCCEEDED, wua::orcSucceeded.0);
+        assert_eq!(orc::SUCCEEDED_WITH_ERRORS, wua::orcSucceededWithErrors.0);
+        assert_eq!(orc::FAILED, wua::orcFailed.0);
+        assert_eq!(orc::ABORTED, wua::orcAborted.0);
+    }
+
+    #[test]
+    fn only_a_full_success_counts_as_installed() {
+        assert!(operation_succeeded(2));
+        for code in [0, 1, 3, 4, 5, -1] {
+            assert!(!operation_succeeded(code), "result code {code}");
+        }
+    }
+
+    #[test]
+    fn a_search_that_failed_empty_is_never_no_updates() {
+        assert_eq!(search_verdict(orc::SUCCEEDED, 0), SearchVerdict::Complete);
+        assert_eq!(search_verdict(orc::SUCCEEDED, 9), SearchVerdict::Complete);
+        for code in [0, 1, 3, 4, 5] {
+            assert_eq!(search_verdict(code, 0), SearchVerdict::Failed);
+            assert_eq!(search_verdict(code, 14), SearchVerdict::Partial);
+        }
+    }
+
+    fn pending(id: &str, revision: i32, reboot_pending: bool) -> WuaUpdate {
+        WuaUpdate {
+            id: id.into(),
+            revision,
+            title: "t".into(),
+            category_ids: Vec::new(),
+            kb_ids: Vec::new(),
+            is_downloaded: true,
+            eula_accepted: true,
+            size_bytes: None,
+            reboot_pending,
+            browse_only: false,
+            class: UpdateClass::Security,
+        }
+    }
+
+    #[test]
+    fn an_update_has_landed_when_it_is_gone_or_waits_for_a_restart() {
+        let list = |updates, complete| SearchResult { updates, complete };
+        assert!(landed(&list(vec![], true), "aa.1").unwrap());
+        assert!(landed(&list(vec![pending("aa", 1, true)], true), "aa.1").unwrap());
+        assert!(!landed(&list(vec![pending("aa", 1, false)], true), "aa.1").unwrap());
+        // Revised between the install and the check: proves nothing.
+        assert!(!landed(&list(vec![pending("AA", 2, false)], true), "aa.1").unwrap());
+        // Missing from a list that is not the whole list: cannot tell.
+        assert!(landed(&list(vec![pending("bb", 1, false)], false), "aa.1").is_err());
+    }
 
     /// The code a real elevated run produced. It reached the user as the bare
     /// string `0x8024001E`, which tells them nothing they can act on — and the
@@ -613,6 +821,8 @@ mod tests {
             is_downloaded: false,
             eula_accepted: false,
             size_bytes: None,
+            reboot_pending: false,
+            browse_only: false,
             class: UpdateClass::Quality,
         }
     }

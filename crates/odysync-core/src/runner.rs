@@ -7,13 +7,15 @@
 //! update that did not converge is reported as a failure.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::backend::Backend;
+use crate::error::Error;
 use crate::history::UpdateHistory;
-use crate::model::{ApplyOutcome, BackendKind, PlannedUpdate};
+use crate::model::{ApplyOutcome, BackendKind, PlannedUpdate, SkipReason};
 use crate::report::RunReport;
 use crate::restore::RestorePointGuard;
-use crate::version::Version;
 
 /// Default number of retries when no explicit value is configured.
 pub const DEFAULT_MAX_RETRIES: u32 = 2;
@@ -24,6 +26,7 @@ pub struct Runner<'a> {
     dry_run: bool,
     history: Option<UpdateHistory>,
     max_retries: u32,
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 impl<'a> Runner<'a> {
@@ -33,7 +36,23 @@ impl<'a> Runner<'a> {
             dry_run,
             history: None,
             max_retries: DEFAULT_MAX_RETRIES,
+            cancel: None,
         }
+    }
+
+    /// Stop early once `flag` is set.
+    ///
+    /// The package being installed is finished: interrupting an installer is
+    /// how machines break. Everything after it is reported as skipped.
+    pub fn with_cancel(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(flag);
+        self
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|c| c.load(Ordering::Relaxed))
     }
 
     /// Enable persistent update history recording.
@@ -132,6 +151,17 @@ impl<'a> Runner<'a> {
                 continue;
             }
 
+            if self.cancelled() {
+                report.push(
+                    candidate.id.clone(),
+                    candidate.name.clone(),
+                    ApplyOutcome::Skipped {
+                        reason: SkipReason::Cancelled,
+                    },
+                );
+                continue;
+            }
+
             let Some(backend) = self.backends.get(&candidate.id.backend) else {
                 report.push(
                     candidate.id.clone(),
@@ -152,6 +182,19 @@ impl<'a> Runner<'a> {
                         to: candidate.available.raw().to_string(),
                     },
                 );
+                continue;
+            }
+
+            // Checked before each one: the previous update may have used it up.
+            if let Some(why) = crate::health::not_enough_space(candidate.size_bytes) {
+                report.push(
+                    candidate.id.clone(),
+                    candidate.name.clone(),
+                    ApplyOutcome::Failed {
+                        detail: format!("not started: {why}"),
+                    },
+                );
+                current += 1;
                 continue;
             }
 
@@ -182,17 +225,17 @@ impl<'a> Runner<'a> {
                     candidate.available.raw(),
                     &outcome,
                 );
+                // After every package, not once at the end: a run that is
+                // interrupted half-way must still leave a record of the half
+                // that happened.
+                if let Err(e) = history.save() {
+                    tracing::warn!(error = %e, "failed to save update history");
+                }
             }
 
             report.push(candidate.id.clone(), candidate.name.clone(), outcome);
             current += 1;
             emit(emitter, &candidate.name, current, "installing");
-        }
-
-        if let Some(history) = &self.history
-            && let Err(e) = history.save()
-        {
-            tracing::warn!(error = %e, "failed to save update history");
         }
 
         // Ask the OS whether it now wants a restart, rather than trusting a
@@ -214,11 +257,12 @@ impl<'a> Runner<'a> {
         report.finish();
     }
 
-    /// Apply an update with retry logic for transient errors.
+    /// Apply an update, retrying what failed before anything was changed.
     ///
     /// Retries up to `self.max_retries` times with exponential backoff
-    /// (1s, 2s, 4s, ...) when the error is retryable (transient, timeout,
-    /// certain I/O errors).
+    /// (1s, 2s, 4s, ...) when [`Error::is_retryable`] says so. A program that
+    /// ran into its time limit is never started again; whether it got there
+    /// after all is read back from the machine.
     async fn apply_with_retry(
         &self,
         backend: &dyn Backend,
@@ -230,6 +274,22 @@ impl<'a> Runner<'a> {
         for attempt in 0..=max_retries {
             match backend.apply(candidate).await {
                 Ok(()) => return self.confirm(backend, planned).await,
+                Err(e @ Error::CommandTimeout { .. }) => {
+                    tracing::warn!(
+                        package = %candidate.id,
+                        error = %e,
+                        "time limit reached; checking what is installed"
+                    );
+                    return match self.confirm(backend, planned).await {
+                        done @ ApplyOutcome::Updated { .. } => done,
+                        _ => ApplyOutcome::Failed {
+                            detail: format!(
+                                "{}; it was stopped and not started again",
+                                e.sanitize()
+                            ),
+                        },
+                    };
+                }
                 Err(e) => {
                     if e.is_retryable() && attempt < max_retries {
                         // Cap the shift so a large configured retry count
@@ -280,7 +340,7 @@ impl<'a> Runner<'a> {
             }
         };
 
-        let actual = Version::parse(&actual_raw);
+        let actual = expected.parse_like(&actual_raw);
 
         // Accept "at least what we asked for": some installers normalise the
         // version string, and a package that jumped further ahead is still not
@@ -322,4 +382,190 @@ pub struct ProgressEvent {
 /// The Tauri layer implements this to forward events via `app.emit()`.
 pub trait ProgressEmitter: Send + Sync {
     fn emit_progress(&self, event: ProgressEvent);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Result;
+    use crate::model::{PackageId, UpdateCandidate};
+    use crate::version::Version;
+    use std::sync::atomic::AtomicUsize;
+
+    /// A backend whose `apply` fails the way a test asks for, and which counts
+    /// how often it was started.
+    struct Fake {
+        error: fn() -> Option<Error>,
+        installed: &'static str,
+        applies: AtomicUsize,
+        cancel: Option<Arc<AtomicBool>>,
+    }
+
+    impl Fake {
+        fn new(error: fn() -> Option<Error>, installed: &'static str) -> Self {
+            Self {
+                error,
+                installed,
+                applies: AtomicUsize::new(0),
+                cancel: None,
+            }
+        }
+
+        fn applies(&self) -> usize {
+            self.applies.load(Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Backend for Fake {
+        fn kind(&self) -> BackendKind {
+            BackendKind::Direct
+        }
+        fn display_name(&self) -> &str {
+            "fake"
+        }
+        async fn is_available(&self) -> bool {
+            true
+        }
+        async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
+            Ok(Vec::new())
+        }
+        async fn apply(&self, _: &UpdateCandidate) -> Result<()> {
+            self.applies.fetch_add(1, Ordering::Relaxed);
+            if let Some(flag) = &self.cancel {
+                flag.store(true, Ordering::Relaxed);
+            }
+            match (self.error)() {
+                Some(e) => Err(e),
+                None => Ok(()),
+            }
+        }
+        async fn installed_version(&self, _: &UpdateCandidate) -> Result<Option<String>> {
+            Ok(Some(self.installed.to_string()))
+        }
+    }
+
+    fn planned(name: &str) -> PlannedUpdate {
+        PlannedUpdate {
+            candidate: UpdateCandidate {
+                id: PackageId::new(BackendKind::Direct, format!("user:{name}")),
+                name: name.into(),
+                installed: Version::parse("1.0"),
+                available: Version::parse("1.1"),
+                size_bytes: None,
+                expected_sha256: None,
+            },
+            blocked_by: None,
+        }
+    }
+
+    fn timed_out() -> Option<Error> {
+        Some(Error::CommandTimeout {
+            command: "installer".into(),
+            seconds: 1,
+        })
+    }
+
+    async fn run(fake: &Fake, plan: &[PlannedUpdate]) -> RunReport {
+        let mut report = RunReport::new();
+        Runner::new([fake as &dyn Backend], false)
+            .run(plan, &mut report, false)
+            .await;
+        report
+    }
+
+    #[tokio::test]
+    async fn an_installer_that_timed_out_is_not_started_again() {
+        let fake = Fake::new(timed_out, "1.0");
+        let report = run(&fake, &[planned("a")]).await;
+        assert_eq!(fake.applies(), 1);
+        match &report.entries[0].outcome {
+            ApplyOutcome::Failed { detail } => assert!(detail.contains("not started again")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_installer_that_timed_out_but_finished_is_a_success() {
+        let fake = Fake::new(timed_out, "1.1");
+        let report = run(&fake, &[planned("a")]).await;
+        assert_eq!(fake.applies(), 1);
+        assert_eq!(report.updated(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_installer_stays_failed() {
+        let fake = Fake::new(
+            || {
+                Some(Error::CommandFailed {
+                    command: "installer".into(),
+                    code: 143,
+                    stderr: String::new(),
+                })
+            },
+            "1.0",
+        );
+        let report = run(&fake, &[planned("a")]).await;
+        assert_eq!(fake.applies(), 1);
+        assert_eq!(report.failed(), 1);
+    }
+
+    #[tokio::test]
+    async fn exit_code_zero_without_a_new_version_is_not_success() {
+        let fake = Fake::new(|| None, "1.0");
+        let report = run(&fake, &[planned("a")]).await;
+        assert!(matches!(
+            report.entries[0].outcome,
+            ApplyOutcome::DidNotConverge { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancelling_finishes_the_current_package_and_skips_the_rest() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut fake = Fake::new(|| None, "1.1");
+        fake.cancel = Some(Arc::clone(&flag));
+        let mut report = RunReport::new();
+        Runner::new([&fake as &dyn Backend], false)
+            .with_cancel(flag)
+            .run(&[planned("a"), planned("b")], &mut report, false)
+            .await;
+        assert_eq!(fake.applies(), 1);
+        assert_eq!(report.updated(), 1);
+        assert_eq!(
+            report.entries[1].outcome,
+            ApplyOutcome::Skipped {
+                reason: SkipReason::Cancelled
+            }
+        );
+    }
+
+    /// A run that dies half-way must leave a record of the half that happened.
+    #[tokio::test]
+    async fn history_is_on_disk_after_every_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+        struct Watcher(std::path::PathBuf, AtomicUsize);
+        impl ProgressEmitter for Watcher {
+            fn emit_progress(&self, event: ProgressEvent) {
+                if event.phase == "installing" {
+                    let n = UpdateHistory::load_from(self.0.clone()).entries().len();
+                    self.1.fetch_max(n, Ordering::Relaxed);
+                }
+            }
+        }
+        let watcher = Watcher(path.clone(), AtomicUsize::new(0));
+        let fake = Fake::new(|| None, "1.1");
+        let mut report = RunReport::new();
+        Runner::new([&fake as &dyn Backend], false)
+            .with_history(UpdateHistory::load_from(path))
+            .run_with_progress(
+                &[planned("a"), planned("b")],
+                &mut report,
+                false,
+                Some(&watcher),
+            )
+            .await;
+        assert_eq!(watcher.1.load(Ordering::Relaxed), 2);
+    }
 }

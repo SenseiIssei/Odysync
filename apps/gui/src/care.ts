@@ -6,6 +6,10 @@
  * explained. This one is the opposite on purpose: every point taken off is a
  * line in the list with the reason next to it, nothing that cannot be acted on
  * costs points, and a machine with nothing to do scores 100.
+ *
+ * It is also honest about what it does not know. A check that failed is an
+ * entry in the list, never a silent zero, and when the update check failed as
+ * a whole there is no score at all.
  */
 
 import type { Tab } from "./nav";
@@ -16,6 +20,7 @@ import type {
   UpdateDto,
 } from "./types";
 import { formatSize } from "./format";
+import { isCancelled, nameList, type ScanHealth } from "./scan-health";
 
 export type CareTone = "danger" | "warning" | "info";
 
@@ -28,16 +33,35 @@ export interface CareIssue {
   tone: CareTone;
   /** Fixed by the one-click fix, or `null` when it needs a person. */
   fix: "updates" | "cleanup" | null;
+  /** The check itself failed, so the way forward is to run it again. */
+  retry?: boolean;
   /** Where to look at it. */
   tab: Tab;
 }
 
+/** A check other than the update scan that could not be completed. */
+export interface FailedCheck {
+  id: string;
+  /** e.g. "Junk files". */
+  label: string;
+  error: string;
+  tab: Tab;
+}
+
 export interface CareInput {
+  /** How far the update scan got; its failures are part of the assessment. */
+  scan: ScanHealth;
+  /** The display name of an update source. */
+  sourceName: (backend: string) => string;
+  /** Checks other than the update scan that failed. */
+  failedChecks: FailedCheck[];
+  /** Audit sections that could not run, in a report that did arrive. */
+  incompleteSecurity: number;
   /** The updates the one-click fix may install (no drivers, firmware, OS upgrades). */
   updates: UpdateDto[];
-  /** Ready drivers, firmware and OS upgrades — for a person to start. */
+  /** Ready drivers, firmware and OS upgrades, for a person to start. */
   attendedUpdates: UpdateDto[];
-  /** pip, npm, cargo … packages with newer versions — for the developer. */
+  /** pip, npm, cargo and other packages with newer versions, for the developer. */
   developerUpdates: UpdateDto[];
   /** Updates that only need administrator rights to go ahead. */
   needsAdmin: number;
@@ -53,6 +77,8 @@ export interface CareInput {
 
 export interface CareAssessment {
   score: number;
+  /** False when too little could be checked for the score to mean anything. */
+  scoreKnown: boolean;
   grade: string;
   tone: "success" | "accent" | "warning" | "danger";
   issues: CareIssue[];
@@ -79,6 +105,61 @@ export function safeCleanupItems(items: CleanupItemDto[]): CleanupItemDto[] {
 export function assess(input: CareInput): CareAssessment {
   const issues: CareIssue[] = [];
   const add = (issue: CareIssue) => issues.push(issue);
+
+  // What could not be checked. Points come off because a machine nobody could
+  // look at is not known to be fine, and the row says how to get them back.
+  if (input.scan.state === "failed") {
+    add({
+      id: "scan-failed",
+      title: "Updates could not be checked",
+      detail: input.scan.error,
+      points: 0,
+      tone: "danger",
+      fix: null,
+      retry: true,
+      tab: "updates",
+    });
+  } else if (input.scan.state === "partial") {
+    const { failed } = input.scan;
+    const n = failed.length;
+    const cancelled = failed.every(isCancelled);
+    add({
+      id: "sources-unchecked",
+      title: `${n} update ${plural(n, "source")} ${cancelled ? "not checked" : "could not be checked"}`,
+      detail: `${nameList(failed.map((f) => input.sourceName(f.backend)), 4)}. ${
+        cancelled ? "The check was cancelled." : "There may be updates nobody saw."
+      }`,
+      points: Math.min(12, 3 * n),
+      tone: "warning",
+      fix: null,
+      retry: true,
+      tab: "updates",
+    });
+  }
+  for (const check of input.failedChecks) {
+    add({
+      id: `failed-${check.id}`,
+      title: `${check.label} could not be checked`,
+      detail: check.error,
+      points: 3,
+      tone: "warning",
+      fix: null,
+      retry: true,
+      tab: check.tab,
+    });
+  }
+  if (input.incompleteSecurity > 0) {
+    const n = input.incompleteSecurity;
+    add({
+      id: "security-incomplete",
+      title: `${n} security ${plural(n, "check")} could not run`,
+      detail: "The Security page names them. Some need administrator rights.",
+      points: 0,
+      tone: "info",
+      fix: null,
+      tab: "security",
+    });
+  }
 
   if (input.updates.length > 0) {
     const n = input.updates.length;
@@ -115,7 +196,7 @@ export function assess(input: CareInput): CareAssessment {
     add({
       id: "drivers",
       title: `${n} driver or system ${plural(n, "update")} to review`,
-      detail: "Drivers and firmware are never installed without you — start them from the Drivers page.",
+      detail: "Drivers and firmware are never installed without you. Start them from the Drivers page.",
       points: Math.min(10, 4 * n),
       tone: "warning",
       fix: null,
@@ -128,7 +209,7 @@ export function assess(input: CareInput): CareAssessment {
     add({
       id: "developer",
       title: `${n} developer ${plural(n, "package")} can be updated`,
-      detail: "pip, npm and similar packages are only updated when you ask — your projects may depend on the versions you have.",
+      detail: "pip, npm and similar packages are only updated when you ask. Your projects may depend on the versions you have.",
       points: Math.min(4, n),
       tone: "info",
       fix: null,
@@ -176,7 +257,18 @@ export function assess(input: CareInput): CareAssessment {
   }
 
   const d = input.defender;
-  if (d && !d.real_time_protection) {
+  if (d && d.real_time_protection === null) {
+    // Unknown is not off: no points, but no all-clear either.
+    add({
+      id: "defender-unknown",
+      title: "Microsoft Defender's status could not be read",
+      detail: "Whether real-time protection is on is not known.",
+      points: 0,
+      tone: "info",
+      fix: null,
+      tab: "security",
+    });
+  } else if (d && d.real_time_protection === false) {
     add({
       id: "defender-off",
       title: "Real-time protection is off",
@@ -186,7 +278,7 @@ export function assess(input: CareInput): CareAssessment {
       fix: null,
       tab: "security",
     });
-  } else if (d && d.signature_age_days > 3) {
+  } else if (d && d.signature_age_days !== null && d.signature_age_days > 3) {
     add({
       id: "defender-old",
       title: `Virus definitions are ${d.signature_age_days} days old`,
@@ -203,7 +295,7 @@ export function assess(input: CareInput): CareAssessment {
     add({
       id: "security-serious",
       title: `${n} serious security ${plural(n, "finding")}`,
-      detail: "Look at these first — the Security page explains each one.",
+      detail: "Look at these first. The Security page explains each one.",
       points: Math.min(30, 15 * n),
       tone: "danger",
       fix: null,
@@ -263,6 +355,7 @@ export function assess(input: CareInput): CareAssessment {
 
   return {
     score,
+    scoreKnown: input.scan.state === "complete" || input.scan.state === "partial",
     grade,
     tone,
     issues,

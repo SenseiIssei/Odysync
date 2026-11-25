@@ -228,6 +228,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -237,6 +239,20 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+
+      # Signed proof of which commit and workflow built each file, free of
+      # charge and independent of the code-signing certificate that does not
+      # exist yet: `gh attestation verify <file> -R SenseiIssei/Odysync`.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            artifacts/*.exe
+            artifacts/*.zip
+            artifacts/*.tar.gz
+            artifacts/*.dmg
+            artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.AppImage
 
       # A tool whose entire purpose is keeping other software current should be
       # installable with `winget install Odysync`. The manifests are generated

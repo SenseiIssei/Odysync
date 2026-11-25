@@ -1,17 +1,19 @@
 //! fwupd / LVFS firmware update backend (Linux).
 //!
-//! Uses `fwupdagent` for machine-readable JSON output (guaranteed stable)
-//! and `fwupdmgr` for applying updates.  fwupd downloads firmware from the
-//! Linux Vendor Firmware Service (LVFS) at https://fwupd.org.
+//! fwupd downloads firmware from the Linux Vendor Firmware Service (LVFS) at
+//! <https://fwupd.org> and checks its signature. A flash that went wrong is
+//! not something to try again on its own, so nothing here is reported as
+//! retryable once the installation has started.
 //!
 //! Commands used:
-//!   - `fwupdmgr refresh` — download latest metadata from LVFS
-//!   - `fwupdagent get-updates --json` — list available firmware updates
-//!   - `fwupdmgr update <device-id> -y` — apply firmware update for a device
+//!   - `fwupdmgr refresh`: download latest metadata from LVFS
+//!   - `fwupdmgr get-updates --json`: available firmware (exit 2 = nothing to do)
+//!   - `fwupdmgr get-devices --json`: installed versions
+//!   - `fwupdmgr install <device-id> <version>`: install one exact release
 //!
 //! References:
-//!   - https://github.com/fwupd/fwupd
-//!   - https://manpages.debian.org/bullseye/fwupd/fwupdmgr.1.en.html
+//!   - <https://github.com/fwupd/fwupd/blob/main/src/fwupdmgr.md>
+//!   - <https://github.com/fwupd/fwupd/blob/1.9.20/src/fu-util.c>
 
 use std::time::Duration;
 
@@ -22,15 +24,39 @@ use odysync_core::model::{BackendKind, PackageId, UpdateCandidate};
 use odysync_core::proc;
 use odysync_core::version::Version;
 
-const REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
-const SCAN_TIMEOUT: Duration = Duration::from_secs(30);
-const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
+use crate::guard;
+
+const REFRESH_TIMEOUT: Duration = Duration::from_secs(120);
+const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
+/// Killing a flash halfway is worse than waiting, so this is generous.
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+/// "Commands that have no actions but were successfully executed."
+const EXIT_NOTHING_TO_DO: i32 = 2;
 
 pub struct FwupdBackend;
 
 impl FwupdBackend {
     pub fn new() -> Self {
         Self
+    }
+
+    async fn devices(command: &str) -> Result<Vec<FwupdDevice>> {
+        let out = proc::run(
+            "fwupdmgr",
+            // Without the metadata check fwupdmgr may stop to ask whether it
+            // should refresh first.
+            &[command, "--json", "--no-metadata-check"],
+            SCAN_TIMEOUT,
+        )
+        .await?;
+        if out.code == EXIT_NOTHING_TO_DO {
+            return Ok(Vec::new());
+        }
+        if !out.success() {
+            return Err(guard::failed(format!("fwupdmgr {command}"), out));
+        }
+        parse_devices(&out.stdout)
     }
 }
 
@@ -51,54 +77,52 @@ impl Backend for FwupdBackend {
     }
 
     async fn is_available(&self) -> bool {
-        if !cfg!(target_os = "linux") {
-            return false;
-        }
-        proc::exists("fwupdmgr", &["--version"]).await
+        cfg!(target_os = "linux") && proc::exists("fwupdmgr", &["--version"]).await
     }
 
     async fn scan(&self) -> Result<Vec<UpdateCandidate>> {
-        if !cfg!(target_os = "linux") {
-            return Ok(Vec::new());
-        }
+        // Refresh metadata first. Not with `-y`: that would also answer the
+        // question whether a disabled remote should be enabled.
+        let _ = proc::run(
+            "fwupdmgr",
+            &["refresh", "--no-remote-check"],
+            REFRESH_TIMEOUT,
+        )
+        .await;
 
-        // Refresh metadata first to ensure we have the latest update info.
-        let _ = proc::run("fwupdmgr", &["refresh", "-y"], REFRESH_TIMEOUT).await;
-
-        let out = proc::run("fwupdagent", &["get-updates", "--json"], SCAN_TIMEOUT).await?;
-
-        if !out.success() {
-            tracing::warn!(stderr = %out.stderr, "fwupdagent get-updates failed");
-            return Ok(Vec::new());
-        }
-
-        Ok(parse_fwupd_json(&out.stdout))
+        Ok(Self::devices("get-updates")
+            .await?
+            .iter()
+            .filter_map(FwupdDevice::candidate)
+            .collect())
     }
 
     async fn apply(&self, candidate: &UpdateCandidate) -> Result<()> {
-        if !candidate.available.is_known() {
-            return Err(Error::Verification {
-                package: candidate.id.to_string(),
-                detail: "refusing to install without an exact target version".into(),
-            });
-        }
+        guard::precheck(candidate)?;
 
-        let device_id = &candidate.id.native;
+        // `fwupdmgr install` allows older releases and reinstallation, so both
+        // ends are read again first.
+        let offered = Self::devices("get-updates").await?;
+        guard::same_target(
+            candidate,
+            offered
+                .iter()
+                .find(|d| d.device_id == candidate.id.native)
+                .and_then(FwupdDevice::newest_release),
+        )?;
+        guard::still_older(
+            candidate,
+            self.installed_version(candidate).await?.as_deref(),
+        )?;
 
-        let out = proc::run("fwupdmgr", &["update", device_id, "-y"], INSTALL_TIMEOUT).await?;
-
-        if out.success() {
-            Ok(())
-        } else {
-            Err(Error::CommandFailed {
-                command: format!("fwupdmgr update {device_id}"),
-                code: out.code,
-                stderr: if out.stderr.trim().is_empty() {
-                    out.stdout
-                } else {
-                    out.stderr
-                },
-            })
+        let args = install_args(&candidate.id.native, candidate.available.raw());
+        match proc::run("fwupdmgr", &args, INSTALL_TIMEOUT).await {
+            Ok(out) if out.success() => Ok(()),
+            Ok(out) => Err(never_retry(
+                candidate,
+                guard::failed(format!("fwupdmgr install {}", candidate.id.native), out),
+            )),
+            Err(e) => Err(never_retry(candidate, e)),
         }
     }
 
@@ -111,7 +135,7 @@ impl Backend for FwupdBackend {
             let _ = tx
                 .send(ApplyProgress {
                     percent: None,
-                    message: format!("Updating firmware for {}…", candidate.name),
+                    message: format!("Updating firmware for {}", candidate.name),
                     phase: ApplyPhase::Installing,
                 })
                 .await;
@@ -135,204 +159,240 @@ impl Backend for FwupdBackend {
     }
 
     async fn installed_version(&self, candidate: &UpdateCandidate) -> Result<Option<String>> {
-        if !cfg!(target_os = "linux") {
-            return Ok(None);
-        }
-
-        // Query the current firmware version for this device.
-        let out = proc::run("fwupdagent", &["get-devices", "--json"], SCAN_TIMEOUT).await?;
-
-        if !out.success() {
-            return Ok(None);
-        }
-
-        let devices = parse_fwupd_devices(&out.stdout);
-        for device in devices {
-            if device.instance_id == candidate.id.native {
-                return Ok(Some(device.version));
-            }
-        }
-
-        Ok(None)
+        Ok(Self::devices("get-devices")
+            .await?
+            .into_iter()
+            .find(|d| d.device_id == candidate.id.native)
+            .and_then(|d| d.version))
     }
 }
 
-/// A device from `fwupdagent get-devices --json`.
-#[derive(Debug)]
+/// `--no-reboot-check` belongs to `--assume-yes`: without it, "yes to all
+/// questions" includes "restart now?".
+fn install_args<'a>(device_id: &'a str, version: &'a str) -> [&'a str; 7] {
+    [
+        "install",
+        device_id,
+        version,
+        "--assume-yes",
+        "--no-reboot-check",
+        "--no-unreported-check",
+        "--no-metadata-check",
+    ]
+}
+
+/// Turn a failure the runner would retry into one it will not.
+fn never_retry(candidate: &UpdateCandidate, error: Error) -> Error {
+    if error.is_retryable() {
+        guard::refused(
+            candidate,
+            format!("{error}. A firmware update is not repeated; check the device first"),
+        )
+    } else {
+        error
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct FwupdDevice {
-    instance_id: String,
-    version: String,
+    name: Option<String>,
+    device_id: String,
+    version: Option<String>,
+    #[serde(default)]
+    releases: Vec<FwupdRelease>,
 }
 
-/// Parse `fwupdagent get-updates --json` output.
-///
-/// The JSON structure is:
-/// ```json
-/// {"Devices": [{"Name": "...", "InstanceId": "...", "Releases": [{"Version": "..."}]}]}
-/// ```
-fn parse_fwupd_json(json: &str) -> Vec<UpdateCandidate> {
-    let json = json.trim();
-    if json.is_empty() {
-        return Vec::new();
-    }
-
-    #[derive(serde::Deserialize)]
-    struct FwupdUpdate {
-        #[serde(rename = "Devices")]
-        devices: Vec<UpdateDevice>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct UpdateDevice {
-        name: String,
-        instance_id: Option<String>,
-        #[serde(rename = "InstanceId")]
-        instance_id_alt: Option<String>,
-        releases: Vec<Release>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct Release {
-        version: String,
-    }
-
-    let parsed: FwupdUpdate = match serde_json::from_str(json) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to parse fwupdagent get-updates JSON");
-            return Vec::new();
-        }
-    };
-
-    parsed
-        .devices
-        .into_iter()
-        .filter_map(|d| {
-            let instance_id = d.instance_id.or(d.instance_id_alt)?;
-            let release = d.releases.into_iter().next()?;
-            Some(UpdateCandidate {
-                id: PackageId::new(BackendKind::Fwupd, &instance_id),
-                name: d.name,
-                installed: Version::parse("0.0.0"),
-                available: Version::parse(&release.version),
-                size_bytes: None,
-                expected_sha256: None,
-            })
-        })
-        .collect()
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct FwupdRelease {
+    version: Option<String>,
+    size: Option<u64>,
 }
 
-/// Parse `fwupdagent get-devices --json` output.
-fn parse_fwupd_devices(json: &str) -> Vec<FwupdDevice> {
-    let json = json.trim();
-    if json.is_empty() {
-        return Vec::new();
+impl FwupdDevice {
+    /// The release `fwupdmgr update` would pick. fwupd lists the newest first;
+    /// where our own ordering disagrees, there is no safe answer.
+    fn newest_release(&self) -> Option<&str> {
+        let versions: Vec<&str> = self
+            .releases
+            .iter()
+            .filter_map(|r| r.version.as_deref())
+            .collect();
+        let newest = guard::newest(versions.iter().copied(), Version::parse)?;
+        (versions.first() == Some(&newest)).then_some(newest)
     }
 
+    fn candidate(&self) -> Option<UpdateCandidate> {
+        let available = self.newest_release()?;
+        let size_bytes = self
+            .releases
+            .iter()
+            .find(|r| r.version.as_deref() == Some(available))
+            .and_then(|r| r.size);
+        Some(UpdateCandidate {
+            id: PackageId::new(BackendKind::Fwupd, self.device_id.as_str()),
+            name: self.name.clone().unwrap_or_else(|| self.device_id.clone()),
+            installed: Version::parse(self.version.as_deref().unwrap_or("")),
+            available: Version::parse(available),
+            size_bytes,
+            expected_sha256: None,
+        })
+    }
+}
+
+/// Parse `get-updates --json` and `get-devices --json`; the first adds the
+/// releases. Entries without a device id are not something to act on.
+fn parse_devices(json: &str) -> Result<Vec<FwupdDevice>> {
     #[derive(serde::Deserialize)]
-    struct FwupdDevices {
-        #[serde(rename = "Devices")]
-        devices: Vec<DeviceEntry>,
+    struct Root {
+        #[serde(rename = "Devices", default)]
+        devices: Vec<serde_json::Value>,
     }
-
-    #[derive(serde::Deserialize)]
-    struct DeviceEntry {
-        instance_id: Option<String>,
-        #[serde(rename = "InstanceId")]
-        instance_id_alt: Option<String>,
-        version: Option<String>,
-    }
-
-    let parsed: FwupdDevices = match serde_json::from_str(json) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to parse fwupdagent get-devices JSON");
-            return Vec::new();
-        }
-    };
-
-    parsed
+    let root: Root = serde_json::from_str(json.trim())
+        .map_err(|e| Error::parse("fwupdmgr --json", e.to_string()))?;
+    Ok(root
         .devices
         .into_iter()
-        .filter_map(|d| {
-            let instance_id = d.instance_id.or(d.instance_id_alt)?;
-            Some(FwupdDevice {
-                instance_id,
-                version: d.version.unwrap_or_default(),
-            })
-        })
-        .collect()
+        .filter_map(|d| serde_json::from_value(d).ok())
+        .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang_backends::assert_refuses_bad_input;
+
+    /// Keys as `fwupd_device_to_json_full` writes them
+    /// (https://github.com/fwupd/fwupd/blob/1.9.20/libfwupd/fwupd-device.c);
+    /// the hub is the example of
+    /// https://developers.redhat.com/articles/2023/10/06/use-fwupd-deploy-linux-firmware-updates-and-more
+    const UPDATES: &str = r#"{
+  "Devices" : [
+    {
+      "Name" : "System Firmware",
+      "DeviceId" : "a45df35ac0e948ee180fe216a5f703f32dda163f",
+      "InstanceIds" : ["UEFI\\RES_{B4BEFE56-1B4C-5A1C-B3F0-0E0A4C0E6C7D}"],
+      "Guid" : ["b4befe56-1b4c-5a1c-b3f0-0e0a4c0e6c7d"],
+      "Plugin" : "uefi_capsule",
+      "Flags" : ["internal", "updatable", "require-ac", "supported"],
+      "Vendor" : "LENOVO",
+      "Version" : "0.1.39",
+      "VersionFormat" : "triplet",
+      "VersionRaw" : 65575,
+      "Releases" : [
+        {"AppstreamId" : "com.lenovo.ThinkPadN2JET.firmware", "RemoteId" : "lvfs", "Name" : "ThinkPad System Update", "Version" : "0.1.41", "Size" : 12345678, "Urgency" : "high"},
+        {"AppstreamId" : "com.lenovo.ThinkPadN2JET.firmware", "RemoteId" : "lvfs", "Version" : "0.1.40", "Size" : 12345670, "Urgency" : "high"}
+      ]
+    },
+    {
+      "Name" : "USB2.0 Hub",
+      "DeviceId" : "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "Guid" : ["5e09ae3e-3d6f-5e8b-b4b5-5ff0c3f6b8a1"],
+      "Summary" : "USB 3.x hub",
+      "Vendor" : "VIA Labs, Inc.",
+      "Version" : "51.63",
+      "VersionFormat" : "bcd"
+    },
+    {"Name" : "No id"}
+  ]
+}"#;
+
+    #[test]
+    fn updates_carry_the_installed_and_the_newest_version() {
+        for text in [UPDATES.to_string(), UPDATES.replace('\n', "\r\n")] {
+            let devices = parse_devices(&text).unwrap();
+            assert_eq!(devices.len(), 2);
+            let found: Vec<UpdateCandidate> =
+                devices.iter().filter_map(FwupdDevice::candidate).collect();
+            assert_eq!(found.len(), 1);
+            assert_eq!(
+                found[0].id.native,
+                "a45df35ac0e948ee180fe216a5f703f32dda163f"
+            );
+            assert_eq!(found[0].name, "System Firmware");
+            assert_eq!(found[0].installed.raw(), "0.1.39");
+            assert_eq!(found[0].available.raw(), "0.1.41");
+            assert_eq!(found[0].size_bytes, Some(12345678));
+            assert!(found[0].installed.is_upgrade_to(&found[0].available));
+        }
+    }
+
+    #[test]
+    fn a_release_list_in_an_order_we_do_not_understand_is_left_alone() {
+        let json = r#"{"Devices":[{"Name":"x","DeviceId":"1","Version":"1.0",
+            "Releases":[{"Version":"1.1"},{"Version":"1.2"}]}]}"#;
+        assert_eq!(parse_devices(json).unwrap()[0].newest_release(), None);
+        let json = r#"{"Devices":[{"Name":"x","DeviceId":"1","Version":"1.0",
+            "Releases":[{"Version":"banana"},{"Version":"1.2"}]}]}"#;
+        assert_eq!(parse_devices(json).unwrap()[0].newest_release(), None);
+    }
+
+    #[test]
+    fn broken_json_is_an_error_and_an_empty_list_is_not() {
+        assert!(parse_devices("").is_err());
+        assert!(parse_devices("No updates available").is_err());
+        assert!(parse_devices(r#"{"Devices":[]}"#).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_install_names_device_and_version_and_never_restarts() {
+        let args = install_args("a45d", "0.1.41");
+        assert_eq!(args[..3], ["install", "a45d", "0.1.41"]);
+        assert!(args.contains(&"--no-reboot-check"));
+        assert!(!args.iter().any(|a| {
+            a.contains("force") || a.contains("allow") || a.contains("no-safety-check")
+        }));
+    }
+
+    #[test]
+    fn a_flash_is_never_retried() {
+        let candidate = parse_devices(UPDATES).unwrap()[0].candidate().unwrap();
+        let errors = [
+            Error::transient("fwupd", "the daemon went away", 0),
+            Error::CommandTimeout {
+                command: "fwupdmgr".into(),
+                seconds: 3600,
+            },
+            Error::CommandFailed {
+                command: "fwupdmgr".into(),
+                code: 143,
+                stderr: String::new(),
+            },
+            Error::Io(std::io::ErrorKind::Interrupted.into()),
+        ];
+        assert!(errors.iter().any(Error::is_retryable));
+        for error in errors {
+            assert!(!never_retry(&candidate, error).is_retryable());
+        }
+        let failed = Error::CommandFailed {
+            command: "fwupdmgr".into(),
+            code: 1,
+            stderr: "device not found".into(),
+        };
+        assert!(matches!(
+            never_retry(&candidate, failed),
+            Error::CommandFailed { code: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn a_moved_target_is_refused() {
+        let candidate = parse_devices(UPDATES).unwrap()[0].candidate().unwrap();
+        assert!(guard::same_target(&candidate, Some("0.1.41")).is_ok());
+        assert!(guard::same_target(&candidate, Some("0.1.42")).is_err());
+        assert!(guard::still_older(&candidate, Some("0.1.41")).is_err());
+    }
 
     #[test]
     fn backend_kind_is_correct() {
         let b = FwupdBackend::new();
         assert_eq!(b.kind(), BackendKind::Fwupd);
-    }
-
-    #[test]
-    fn display_name_is_non_empty() {
-        let b = FwupdBackend::new();
         assert!(!b.display_name().is_empty());
     }
 
     #[tokio::test]
-    async fn apply_refuses_unknown_target_version() {
-        let backend = FwupdBackend::new();
-        let candidate = UpdateCandidate {
-            id: PackageId::new(BackendKind::Fwupd, "device-id"),
-            name: "Firmware".into(),
-            installed: Version::parse("1.0.0"),
-            available: Version::parse(""),
-            size_bytes: None,
-            expected_sha256: None,
-        };
-        let err = backend.apply(&candidate).await.unwrap_err();
-        assert!(matches!(err, Error::Verification { .. }));
-    }
-
-    #[test]
-    fn parses_fwupd_updates_json() {
-        let json = r#"{
-            "Devices": [
-                {
-                    "name": "System Firmware",
-                    "InstanceId": "b8d8f2c0-...",
-                    "releases": [
-                        {"version": "1.2.3"}
-                    ]
-                }
-            ]
-        }"#;
-        let candidates = parse_fwupd_json(json);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].id.native, "b8d8f2c0-...");
-        assert!(candidates[0].name.contains("System Firmware"));
-    }
-
-    #[test]
-    fn empty_json_yields_empty_vec() {
-        assert!(parse_fwupd_json("").is_empty());
-    }
-
-    #[test]
-    fn parses_devices_json() {
-        let json = r#"{
-            "Devices": [
-                {
-                    "name": "SSD",
-                    "InstanceId": "sata-ssd-1",
-                    "version": "2.0.0"
-                }
-            ]
-        }"#;
-        let devices = parse_fwupd_devices(json);
-        assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].instance_id, "sata-ssd-1");
-        assert_eq!(devices[0].version, "2.0.0");
+    async fn apply_refuses_options_and_unknown_targets() {
+        assert_refuses_bad_input(&FwupdBackend::new(), "a45df35ac0e9", None).await;
     }
 }

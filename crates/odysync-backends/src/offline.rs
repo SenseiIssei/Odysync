@@ -539,7 +539,7 @@ pub async fn download_and_cache(
         filename,
         sha256,
         size_bytes,
-        cached_at: chrono::Utc::now().to_rfc3339(),
+        cached_at: jiff::Timestamp::now().to_string(),
         signature,
     };
 

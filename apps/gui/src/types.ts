@@ -30,6 +30,29 @@ export interface BackendErrorDto {
   error: string;
 }
 
+/** One source's step in a running scan, from the `scan-progress` event. */
+export interface ScanProgressEvent {
+  backend: string;
+  name: string;
+  state: "started" | "done" | "failed";
+  /** Updates this source reported. */
+  found: number;
+  /** Sources finished so far, out of `total`. */
+  done: number;
+  total: number;
+}
+
+/** From the `apply-progress` event. */
+export interface ApplyProgress {
+  package: string;
+  current: number;
+  total: number;
+  /** "installing" while working, "done" at the end. */
+  phase: string;
+  /** 0 to 100, computed from the completed count. */
+  percent: number | null;
+}
+
 export interface ScanResult {
   actionable: UpdateDto[];
   skipped: SkippedDto[];
@@ -141,11 +164,6 @@ export interface Hold {
   note: string | null;
 }
 
-export interface Profile {
-  name: string;
-  packages: string[];
-}
-
 export interface PolicyConfig {
   stable_only: boolean;
   require_known_versions: boolean;
@@ -160,12 +178,10 @@ export interface Config {
   /** Opt-in backends the user has switched on. */
   enabled_backends: string[];
   /** Read-only: managed through the profile commands. */
-  profiles: Profile[];
+  profiles: ProfileDto[];
   restore_point: boolean;
   scan_interval_hours: number;
-  concurrency: number;
   proxy_url: string | null;
-  auto_apply: boolean;
   notifications: boolean;
   max_retries: number;
   backend_timeout_secs: number;
@@ -312,11 +328,12 @@ export interface SectionProgress {
   findings: number | null;
 }
 
+/** `null` means Defender did not say, which is neither on nor off. */
 export interface DefenderStatusDto {
-  real_time_protection: boolean;
-  tamper_protection: boolean;
-  antivirus_enabled: boolean;
-  signature_age_days: number;
+  real_time_protection: boolean | null;
+  tamper_protection: boolean | null;
+  antivirus_enabled: boolean | null;
+  signature_age_days: number | null;
   signature_version: string;
   last_quick_scan: string | null;
   last_full_scan: string | null;
