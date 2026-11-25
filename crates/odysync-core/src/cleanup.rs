@@ -544,11 +544,7 @@ fn is_safe_windows_root(root: &Path) -> bool {
     // `C:\Windows` itself is refused, but `C:\Windows\Temp` is a legitimate
     // target, so this checks for the tree ending there rather than containing
     // it.
-    if lowered.ends_with("\\windows") {
-        return false;
-    }
-
-    true
+    !lowered.ends_with("\\windows")
 }
 
 #[cfg(test)]
