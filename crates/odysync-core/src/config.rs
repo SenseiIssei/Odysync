@@ -34,21 +34,27 @@ pub struct Config {
     pub profiles: Vec<Profile>,
     /// Take a system restore point (Windows) before applying anything.
     pub restore_point: bool,
-    /// Scan interval in hours for background scanning (0 = manual only).
+    /// How often the app looks for updates while it sits in the tray, in hours
+    /// (0 = only when asked).
     pub scan_interval_hours: u32,
-    /// Max concurrent backend scans/applys.
+    /// Not used any more: sources are asked all at once, each with its own
+    /// time limit. Kept so that an existing config file still loads in an
+    /// older version.
     pub concurrency: u32,
-    /// HTTP proxy URL for web crawlers and registry requests.
+    /// HTTP proxy for lookups and downloads. Without one the system's applies.
     pub proxy_url: Option<String>,
-    /// Automatically apply updates after scanning (dangerous).
+    /// Not used any more: automatic care does this, with a schedule and
+    /// without drivers. Kept like `concurrency`.
     pub auto_apply: bool,
     /// Show desktop notifications for scan results and apply completion.
     pub notifications: bool,
     /// Skip pre-release versions (alias for policy.stable_only, kept for UI).
     pub skip_prerelease: bool,
-    /// Retry failed updates up to N times.
+    /// How often to try again what failed before anything was changed, such as
+    /// a download. An installer that was started is never started again.
     pub max_retries: u32,
-    /// Timeout for individual backend operations in seconds.
+    /// How long one source may take to scan, in seconds. Windows Update gets at
+    /// least five minutes.
     pub backend_timeout_secs: u32,
     /// Export the whole driver store before applying driver updates (Windows).
     ///

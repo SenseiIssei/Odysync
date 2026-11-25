@@ -185,6 +185,19 @@ impl<'a> Runner<'a> {
                 continue;
             }
 
+            // Checked before each one: the previous update may have used it up.
+            if let Some(why) = crate::health::not_enough_space(candidate.size_bytes) {
+                report.push(
+                    candidate.id.clone(),
+                    candidate.name.clone(),
+                    ApplyOutcome::Failed {
+                        detail: format!("not started: {why}"),
+                    },
+                );
+                current += 1;
+                continue;
+            }
+
             tracing::info!(
                 package = %candidate.id,
                 from = %candidate.installed,
