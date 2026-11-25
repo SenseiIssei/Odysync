@@ -45,7 +45,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
     return (
       <div className="max-w-2xl mx-auto space-y-4">
-        <h1 className="text-2xl font-bold text-danger">{this.props.label} failed to render</h1>
+        <h1 tabIndex={-1} className="text-2xl font-bold text-danger">{this.props.label} failed to render</h1>
         <p className="text-sm text-muted">
           This is a bug in Odysync. The rest of the app is still usable.
         </p>
@@ -56,7 +56,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <button
           type="button"
           onClick={this.reset}
-          className="px-4 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/20 transition-all"
+          className="px-4 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm font-medium hover:bg-accent/12 transition-all"
         >
           Try again
         </button>

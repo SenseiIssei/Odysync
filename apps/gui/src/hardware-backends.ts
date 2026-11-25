@@ -5,7 +5,7 @@
  * with `backend_kind_from_str` in the Tauri command layer.
  */
 
-export const DRIVER_BACKENDS = new Set([
+const DRIVER_BACKENDS = new Set([
   "windows-drivers",
   "nvidia-gpu",
   "amd-gpu",
@@ -15,7 +15,7 @@ export const DRIVER_BACKENDS = new Set([
   "intel-dsa",
 ]);
 
-export const FIRMWARE_BACKENDS = new Set([
+const FIRMWARE_BACKENDS = new Set([
   "dell-firmware",
   "hp-firmware",
   "lenovo-firmware",
@@ -23,7 +23,7 @@ export const FIRMWARE_BACKENDS = new Set([
   "mac-firmware",
 ]);
 
-export const OEM_BACKENDS = new Set([
+const OEM_BACKENDS = new Set([
   "dell-command-update",
   "hp-image-assistant",
   "lenovo-system-update",
@@ -35,7 +35,7 @@ export const OEM_BACKENDS = new Set([
   "virtualization-guest",
 ]);
 
-export type HardwareGroup = "driver" | "firmware" | "oem";
+type HardwareGroup = "driver" | "firmware" | "oem";
 
 export function hardwareGroupOf(backend: string): HardwareGroup | null {
   if (DRIVER_BACKENDS.has(backend)) return "driver";
@@ -52,11 +52,4 @@ export const GROUP_LABELS: Record<HardwareGroup, string> = {
   driver: "Drivers",
   firmware: "Firmware & BIOS",
   oem: "Vendor update tools",
-};
-
-export const GROUP_HINTS: Record<HardwareGroup, string> = {
-  driver: "Graphics, chipset and device drivers.",
-  firmware:
-    "Firmware and BIOS updates. These carry the most risk of the lot — do not interrupt one, and run it on mains power.",
-  oem: "Updates delivered through your machine vendor's own tool.",
 };

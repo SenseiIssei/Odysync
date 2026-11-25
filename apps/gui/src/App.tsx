@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
@@ -14,13 +14,17 @@ import {
   X,
 } from "lucide-react";
 import * as api from "./api";
-import { StoreProvider, useStore } from "./store";
+import { StoreProvider } from "./store";
+import { useStore } from "./store-context";
 import { MORE_TOOLS, NAV_GROUPS, NAV_ITEMS, TABS, isTab, type NavItem, type Tab } from "./nav";
 import { safeListen } from "./events";
 import { inTauri } from "./bridge";
 import { useTheme } from "./theme";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Logo } from "./components/Logo";
+import { ProgressAnnouncer } from "./components/Progress";
+import { Button, ConfirmBar, ErrorBar } from "./components/ui";
+import { errorText, isApplyRunning } from "./format";
 
 import Dashboard from "./pages/Dashboard";
 import Updates from "./pages/Updates";
@@ -92,15 +96,38 @@ function Shell() {
 
   const navigate = useCallback((next: Tab) => setTab(next), []);
 
+  // While an update is being installed the page shows that instead; a fresh
+  // scan follows on its own.
   const refreshScan = store.scan.refresh;
+  const applying = store.apply.running;
   useEffect(
     () =>
       safeListen("tray-scan", () => {
         setTab("updates");
-        void refreshScan();
+        if (!applying) void refreshScan();
       }),
-    [refreshScan],
+    [refreshScan, applying],
   );
+
+  // Quitting in the middle of an install can leave a program half installed,
+  // so the command refuses and the user is asked, with staying as the default.
+  const [askQuit, setAskQuit] = useState(false);
+  const [windowError, setWindowError] = useState<string | null>(null);
+  const quit = useCallback((force: boolean) => {
+    setWindowError(null);
+    setAskQuit(false);
+    api.quitApp(force).catch((e: unknown) => {
+      if (isApplyRunning(e) && !force) setAskQuit(true);
+      else setWindowError(`Odysync could not quit: ${errorText(e)}`);
+    });
+  }, []);
+  useEffect(() => safeListen("tray-quit", () => setAskQuit(true)), []);
+  const restartAsAdmin = useCallback(() => {
+    setWindowError(null);
+    api
+      .restartAsAdmin()
+      .catch((e: unknown) => setWindowError(`Not restarted as administrator. ${errorText(e)}`));
+  }, []);
 
   // Ctrl+R refreshes the data rather than reloading the webview — a reload in a
   // Tauri window discards every page's state and re-runs the whole startup load.
@@ -152,13 +179,47 @@ function Shell() {
         onToggleSidebar={() => setSidebarOpen((v) => !v)}
         theme={theme.resolved}
         onToggleTheme={() => theme.setChoice(theme.resolved === "dark" ? "light" : "dark")}
+        onQuit={() => quit(false)}
+        onRestartAsAdmin={restartAsAdmin}
       />
+      <ProgressAnnouncer />
 
       {store.booting && (
-        <div className="h-0.5 bg-transparent flex-shrink-0 overflow-hidden">
+        <div
+          role="progressbar"
+          aria-label="Loading"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(store.bootProgress * 100)}
+          className="h-0.5 bg-transparent flex-shrink-0 overflow-hidden"
+        >
           <div
             className="h-full bg-gradient-accent transition-[width] duration-300"
             style={{ width: `${Math.round(store.bootProgress * 100)}%` }}
+          />
+        </div>
+      )}
+
+      {askQuit && (
+        <div className="mx-6 mt-4 flex-shrink-0">
+          <ConfirmBar
+            message="An update is being installed. Quit anyway?"
+            cancelLabel="Stay"
+            confirmLabel="Quit anyway"
+            onCancel={() => setAskQuit(false)}
+            onConfirm={() => quit(true)}
+          />
+        </div>
+      )}
+      {windowError && (
+        <div className="mx-6 mt-4 flex-shrink-0">
+          <ErrorBar
+            message={windowError}
+            action={
+              <Button size="sm" variant="ghost" onClick={() => setWindowError(null)}>
+                Dismiss
+              </Button>
+            }
           />
         </div>
       )}
@@ -206,6 +267,8 @@ function TitleBar({
   onToggleSidebar,
   theme,
   onToggleTheme,
+  onQuit,
+  onRestartAsAdmin,
 }: {
   frameless: boolean;
   macOverlay: boolean;
@@ -218,14 +281,17 @@ function TitleBar({
   onToggleSidebar: () => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
+  onQuit: () => void;
+  onRestartAsAdmin: () => void;
 }) {
   // Resolved lazily and defensively: `getCurrentWindow` throws outside a Tauri
   // webview, and a throw here used to blank the entire window.
   const windowAction = (action: "minimize" | "toggleMaximize") => {
+    const failed = (e: unknown) => console.error(`[odysync] ${action} failed:`, e);
     try {
-      void getCurrentWindow()[action]();
+      getCurrentWindow()[action]().catch(failed);
     } catch (e) {
-      console.error(`[odysync] ${action} failed:`, e);
+      failed(e);
     }
   };
 
@@ -240,6 +306,7 @@ function TitleBar({
         <IconButton
           label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
           onClick={onToggleSidebar}
+          expanded={sidebarOpen}
         >
           {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
         </IconButton>
@@ -261,7 +328,7 @@ function TitleBar({
         {!elevated && platform === "windows" && (
           <button
             type="button"
-            onClick={() => void api.restartAsAdmin().catch(() => {})}
+            onClick={onRestartAsAdmin}
             className="ml-1 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line text-xs font-medium text-muted hover:text-fg hover:bg-raised transition-colors"
             title="Windows updates, drivers and machine-wide apps need administrator rights"
           >
@@ -277,7 +344,7 @@ function TitleBar({
             <IconButton label="Maximize" onClick={() => windowAction("toggleMaximize")}>
               <Square className="w-3.5 h-3.5" />
             </IconButton>
-            <IconButton label="Quit Odysync" danger onClick={() => void api.quitApp()}>
+            <IconButton label="Quit Odysync" danger onClick={onQuit}>
               <X className="w-4 h-4" />
             </IconButton>
           </div>
@@ -293,12 +360,15 @@ function IconButton({
   children,
   disabled,
   danger,
+  expanded,
 }: {
   label: string;
   onClick: () => void;
   children: React.ReactNode;
   disabled?: boolean;
   danger?: boolean;
+  /** For a button that opens and closes something. */
+  expanded?: boolean;
 }) {
   return (
     <button
@@ -307,8 +377,9 @@ function IconButton({
       disabled={disabled}
       title={label}
       aria-label={label}
+      aria-expanded={expanded}
       className={`h-8 w-8 inline-flex items-center justify-center rounded-lg text-muted transition-colors disabled:opacity-50 ${
-        danger ? "hover:bg-danger/15 hover:text-danger" : "hover:bg-raised hover:text-fg"
+        danger ? "hover:bg-danger/12 hover:text-danger" : "hover:bg-raised hover:text-fg"
       }`}
     >
       {children}
@@ -429,6 +500,15 @@ function NavButton({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       title={compact ? item.label : undefined}
+      // Collapsed, the button is only an icon; and a bare number beside the
+      // label says nothing about what it counts.
+      aria-label={
+        badge && badge > 0
+          ? `${item.label}, ${badge} ${badge === 1 ? "item" : "items"}`
+          : compact
+            ? item.label
+            : undefined
+      }
       className={`group relative w-full flex items-center gap-3 h-9 rounded-xl text-sm transition-all duration-150 ${
         compact ? "justify-center px-0" : "px-3"
       } ${
@@ -448,7 +528,7 @@ function NavButton({
         <span
           className={`${
             compact ? "absolute top-1 right-1.5 min-w-4 h-4 text-[10px]" : "ml-auto min-w-5 h-5 text-[11px]"
-          } px-1.5 inline-flex items-center justify-center rounded-full bg-accent/15 text-accent font-semibold tabular-nums`}
+          } px-1.5 inline-flex items-center justify-center rounded-full bg-accent text-accent-fg font-semibold tabular-nums`}
         >
           {badge}
         </span>
@@ -462,8 +542,20 @@ function NavButton({
  * and are made inert so their controls stay out of the tab order.
  */
 function Page({ active, children }: { active: boolean; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const wasActive = useRef(active);
+  // Opening a page moves the focus to its heading, so that a screen reader says
+  // where one is and Tab continues in the page. Not on the first render: the
+  // app has not been navigated yet.
+  useEffect(() => {
+    if (active && !wasActive.current) {
+      ref.current?.querySelector<HTMLElement>("h1")?.focus({ preventScroll: true });
+    }
+    wasActive.current = active;
+  }, [active]);
   return (
     <div
+      ref={ref}
       hidden={!active}
       aria-hidden={!active}
       className={`absolute inset-0 overflow-y-auto ${active ? "" : "pointer-events-none"}`}

@@ -14,7 +14,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{PlannedUpdate, SkipReason, UpdateCandidate};
+use crate::model::{PackageId, PlannedUpdate, SkipReason, UpdateCandidate};
+use crate::version::Version;
 
 /// User-tunable safety settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +63,27 @@ pub struct Hold {
 }
 
 impl Policy {
+    /// Drop every hold that applies to `id`, whichever way it was written
+    /// down. Returns how many there were.
+    ///
+    /// A hold can name a package as `backend:id`, by its bare id or by an
+    /// alias, in any case; releasing only the exact spelling left the others
+    /// in force with no way to lift them from the app.
+    pub fn release(&mut self, id: &PackageId) -> usize {
+        let candidate = UpdateCandidate {
+            id: id.clone(),
+            name: String::new(),
+            installed: Version::parse(""),
+            available: Version::parse(""),
+            size_bytes: None,
+            expected_sha256: None,
+        };
+        let before = self.holds.len();
+        self.holds
+            .retain(|h| !Self::matches(&h.package, &candidate));
+        before - self.holds.len()
+    }
+
     /// Does `pattern` refer to this candidate? Matches either the fully
     /// qualified `backend:id` or the bare native id, case-insensitively.
     fn matches(pattern: &str, candidate: &UpdateCandidate) -> bool {
@@ -171,8 +193,7 @@ impl Policy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{BackendKind, PackageId};
-    use crate::version::Version;
+    use crate::model::BackendKind;
 
     fn candidate(installed: &str, available: &str) -> UpdateCandidate {
         UpdateCandidate {
@@ -187,6 +208,30 @@ mod tests {
 
     fn policy() -> Policy {
         Policy::default()
+    }
+
+    #[test]
+    fn a_hold_is_released_however_it_was_written() {
+        let id = PackageId::new(BackendKind::Winget, "Mozilla.Firefox");
+        for written in [
+            "winget:Mozilla.Firefox",
+            "Mozilla.Firefox",
+            "mozilla.firefox",
+            " WINGET:mozilla.firefox ",
+        ] {
+            let hold = |package: &str| Hold {
+                package: package.into(),
+                pin: None,
+                note: None,
+            };
+            let mut p = Policy {
+                holds: vec![hold(written), hold("Other.Package")],
+                ..Policy::default()
+            };
+            assert_eq!(p.release(&id), 1, "{written:?}");
+            assert_eq!(p.holds.len(), 1);
+            assert_eq!(p.release(&id), 0);
+        }
     }
 
     /// A Windows update: native id is `<guid>.<revision>`, but the name a user

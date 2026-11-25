@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { ArrowRight, History as HistoryIcon, RefreshCw, Trash2 } from "lucide-react";
 import * as api from "../api";
-import { OutcomeIcon } from "./Updates";
-import { useStore } from "../store";
+import { OutcomeIcon } from "../components/OutcomeIcon";
+import { useStore } from "../store-context";
 import {
   Button,
   Card,
+  ConfirmBar,
   EmptyState,
   ErrorBar,
   PageHeader,
@@ -32,16 +33,12 @@ export default function History() {
   const failed = entries.filter((e) => e.status !== "updated" && e.status !== "skipped").length;
 
   const clear = async () => {
-    if (!confirmClear) {
-      setConfirmClear(true);
-      return;
-    }
     setConfirmClear(false);
     setClearing(true);
     setError(null);
     try {
       await api.clearUpdateHistory();
-      await history.refresh();
+      await history.reload();
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -69,18 +66,27 @@ export default function History() {
             </Button>
             {entries.length > 0 && (
               <Button
-                variant={confirmClear ? "danger" : "ghost"}
-                onClick={() => void clear()}
+                variant="ghost"
+                onClick={() => setConfirmClear(true)}
                 busy={clearing}
+                disabled={confirmClear}
                 icon={<Trash2 className="w-4 h-4" />}
               >
-                {confirmClear ? "Really clear?" : "Clear"}
+                Clear
               </Button>
             )}
           </>
         }
       />
 
+      {confirmClear && entries.length > 0 && (
+        <ConfirmBar
+          message={`All ${entries.length} entries are deleted. Nothing installed changes, but this list cannot be brought back.`}
+          confirmLabel="Clear the history"
+          onConfirm={() => void clear()}
+          onCancel={() => setConfirmClear(false)}
+        />
+      )}
       {error && <ErrorBar message={error} />}
       {history.error && <ErrorBar message={history.error} />}
 
@@ -97,7 +103,9 @@ export default function History() {
               history.loading && history.loadedAt === null
                 ? "Loading history…"
                 : entries.length === 0
-                  ? "Nothing installed yet"
+                  ? history.error
+                    ? "The history could not be read"
+                    : "Nothing installed yet"
                   : "No entry matches the filter"
             }
           />
@@ -111,13 +119,14 @@ export default function History() {
                   <div className="text-sm text-muted">
                     <span className="font-mono text-[13px] selectable">
                       {e.from_version}
-                      <ArrowRight className="inline w-3.5 h-3.5 mx-1 -mt-0.5 text-faint" />
+                      <ArrowRight aria-hidden className="inline w-3.5 h-3.5 mx-1 -mt-0.5 text-faint" />
+                      <span className="sr-only"> to </span>
                       {e.to_version}
                     </span>
                     <span className="text-faint"> · {e.backend} · {formatDate(e.timestamp)}</span>
                   </div>
                   {e.status !== "updated" && e.detail && (
-                    <div className="text-sm text-danger/90 mt-0.5 selectable">{e.detail}</div>
+                    <div className="text-sm text-danger mt-0.5 selectable">{e.detail}</div>
                   )}
                 </div>
               </li>

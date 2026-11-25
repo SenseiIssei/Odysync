@@ -198,7 +198,7 @@ pub async fn probe_backends(config: &Config) -> Vec<ProbedBackend> {
 /// they are there.
 pub async fn probe_kinds(
     config: &Config,
-    wanted: &dyn Fn(odysync_core::model::BackendKind) -> bool,
+    wanted: &(dyn Fn(odysync_core::model::BackendKind) -> bool + Sync),
 ) -> Vec<ProbedBackend> {
     direct::http::set_proxy(config.proxy_url.as_deref());
     let candidates: Vec<_> = all_backends()

@@ -3,9 +3,10 @@
  *
  * This is what the README screenshots show and what the component tests run
  * against, so it is kept realistic: real app names, plausible versions, the
- * same shapes the Rust side returns. It never runs inside the app — `bridge`
+ * same shapes the Rust side returns. It never runs inside the app: `bridge`
  * imports it only when there is no Tauri IPC.
  */
+import { emitLocal } from "../events";
 import type {
   ApplyRequest,
   ApplyResultDto,
@@ -19,8 +20,10 @@ import type {
   HardwareInfoDto,
   HealthReportDto,
   HistoryEntryDto,
+  HoldRequest,
   InstalledPackageDto,
   LargeFileReport,
+  ScanProgressEvent,
   ScanReport,
   ScanResult,
   StartupProgramDto,
@@ -38,6 +41,13 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const applied = new Set<string>();
 const cleaned = new Set<string>();
 const schedules = new Set<string>();
+/** Held packages, as `backend:id`. */
+const holds = new Set<string>();
+
+/** What is running, so that it can be cancelled or refused like in the app. */
+let applyRunning = false;
+let applyCancelled = false;
+let scanCancelled = false;
 
 const health: HealthReportDto = {
   disks: [
@@ -130,13 +140,11 @@ const config: Config = {
   profiles: [{ name: "Work tools", packages: ["vscode", "git", "nodejs"] }],
   restore_point: true,
   scan_interval_hours: 24,
-  concurrency: 4,
   proxy_url: null,
-  auto_apply: false,
   notifications: true,
   max_retries: 2,
   backend_timeout_secs: 120,
-} as Config;
+};
 
 const cleanup: CleanupItemDto[] = [
   c("temp-files", "Temporary files", "Files applications left behind. A program still using one keeps it.", 3.4 * GB, 18_420, "regenerated", true),
@@ -260,6 +268,88 @@ const largeFiles: LargeFileReport = {
   ],
 };
 
+/** A scan that takes a moment and reports every source, like the real one. */
+async function runScan(): Promise<ScanResult> {
+  const sources = backends.filter((s) => s.available && s.enabled);
+  const total = sources.length;
+  const failed: ScanResult["failed_backends"] = [];
+  const answered = new Set<string>();
+  const report = (s: BackendDto, state: ScanProgressEvent["state"], found: number) => {
+    const event: ScanProgressEvent = {
+      backend: s.kind,
+      name: s.name,
+      state,
+      found,
+      done: answered.size,
+      total,
+    };
+    emitLocal("scan-progress", event);
+  };
+  const left = scan.actionable.filter(
+    (u) => !applied.has(`${u.backend}:${u.id}`) && !holds.has(`${u.backend}:${u.id}`),
+  );
+
+  scanCancelled = false;
+  for (const s of sources) report(s, "started", 0);
+  for (const s of sources) {
+    await wait(500 / total);
+    if (scanCancelled) break;
+    answered.add(s.kind);
+    report(s, "done", left.filter((u) => u.backend === s.kind).length);
+  }
+  for (const s of sources) {
+    if (!answered.has(s.kind)) failed.push({ backend: s.kind, error: "cancelled" });
+  }
+
+  const actionable = left.filter((u) => answered.has(u.backend));
+  const held = scan.actionable
+    .filter((u) => answered.has(u.backend) && holds.has(`${u.backend}:${u.id}`))
+    .map((u) => ({ ...u, reason: "held by policy" }));
+  const skipped = [...held, ...scan.skipped.filter((s) => answered.has(s.backend))];
+  return { actionable, skipped, total: actionable.length + skipped.length, failed_backends: failed };
+}
+
+async function runApply(request: ApplyRequest | undefined): Promise<ApplyResultDto> {
+  if (applyRunning) throw "apply-running";
+  const updates = request?.updates ?? [];
+  applyRunning = true;
+  applyCancelled = false;
+  const entries: ApplyResultDto["entries"] = [];
+  const progress = (name: string, phase: string) =>
+    emitLocal("apply-progress", {
+      package: name,
+      current: entries.length,
+      total: updates.length,
+      phase,
+      percent: updates.length > 0 ? Math.round((entries.length / updates.length) * 100) : 100,
+    });
+  try {
+    for (const u of updates) {
+      if (applyCancelled) {
+        entries.push({ name: u.name, status: "skipped", detail: "cancelled" });
+        continue;
+      }
+      progress(u.name, "installing");
+      await wait(1600 / updates.length);
+      if (!request?.dry_run) applied.add(`${u.backend}:${u.id}`);
+      entries.push({ name: u.name, status: "updated", detail: "" });
+    }
+    progress("", "done");
+  } finally {
+    applyRunning = false;
+  }
+  if (!request?.dry_run) emitLocal("apply-finished", null);
+  const skipped = entries.filter((e) => e.status === "skipped").length;
+  return {
+    updated: entries.length - skipped,
+    failed: 0,
+    skipped,
+    reboot_required: false,
+    exit_code: 0,
+    entries,
+  };
+}
+
 /** Answer one command the way the Rust side would. */
 export async function demoInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   await wait(120);
@@ -269,19 +359,38 @@ export async function demoInvoke<T>(command: string, args?: Record<string, unkno
     case "get_system_info":
       return answer({ os: "Windows", platform: "windows", elevated: false, version: "3.1.1", config_error: null });
     case "scan":
-      await wait(500);
-      return answer({
-        ...scan,
-        actionable: scan.actionable.filter((u) => !applied.has(`${u.backend}:${u.id}`)),
-      });
+      return answer(await runScan());
+    case "cancel_scan":
+      scanCancelled = true;
+      return answer(undefined);
     case "list_backends":
     case "refresh_backends":
       return answer(backends);
     case "get_config":
-      return answer(config);
+      return answer({
+        ...config,
+        policy: {
+          ...config.policy,
+          holds: [...holds].map((p) => ({ package: p, pin: null, note: null })),
+        },
+      });
+    case "hold": {
+      const request = args?.request as HoldRequest;
+      holds.add(`${request.backend}:${request.id}`);
+      return answer(undefined);
+    }
+    case "unhold": {
+      const request = args?.request as HoldRequest;
+      holds.delete(`${request.backend}:${request.id}`);
+      return answer(undefined);
+    }
+    case "quit_app":
+      if (applyRunning && !args?.force) throw "apply-running";
+      return answer(undefined);
+    case "restart_as_admin":
+      if (applyRunning) throw "apply-running";
+      throw "Restarting as administrator is not available in the browser demo.";
     case "save_config":
-    case "hold":
-    case "unhold":
     case "report_frontend_error":
     case "create_profile":
     case "delete_profile":
@@ -291,20 +400,11 @@ export async function demoInvoke<T>(command: string, args?: Record<string, unkno
     case "clear_update_history":
     case "reveal_path":
       return answer(undefined);
-    case "apply": {
-      const request = args?.request as ApplyRequest | undefined;
-      await wait(1600);
-      for (const u of request?.updates ?? []) applied.add(`${u.backend}:${u.id}`);
-      const result: ApplyResultDto = {
-        updated: request?.updates.length ?? 0,
-        failed: 0,
-        skipped: 0,
-        reboot_required: false,
-        exit_code: 0,
-        entries: (request?.updates ?? []).map((u) => ({ name: u.name, status: "updated", detail: "" })),
-      };
-      return answer(result);
-    }
+    case "apply":
+      return answer(await runApply(args?.request as ApplyRequest | undefined));
+    case "cancel_apply":
+      applyCancelled = true;
+      return answer(undefined);
     case "get_update_history":
       return answer(history);
     case "get_hardware_info":
@@ -348,8 +448,6 @@ export async function demoInvoke<T>(command: string, args?: Record<string, unkno
         last_quick_scan: "2026-10-15T07:02:11Z",
         last_full_scan: "2026-10-01T03:12:40Z",
       });
-    case "list_maintenance":
-      return answer(["system_health"]);
     case "check_schedule":
       return answer(schedules.has(String(args?.taskName ?? args?.task_name ?? "")));
     case "create_schedule": {
@@ -403,8 +501,6 @@ export async function demoInvoke<T>(command: string, args?: Record<string, unkno
       return answer(devices);
     case "driver_backups":
       return answer(driverBackups);
-    case "driver_backup_prune":
-      return answer(0);
     default:
       throw new Error(`"${command}" is not available in the browser demo`);
   }

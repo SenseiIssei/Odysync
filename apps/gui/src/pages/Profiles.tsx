@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { ListChecks, Plus, Trash2, X } from "lucide-react";
 import * as api from "../api";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import {
   Badge,
   Button,
   Card,
+  ConfirmBar,
   EmptyState,
   ErrorBar,
   PageHeader,
@@ -37,7 +38,7 @@ export default function Profiles() {
       setNewName("");
       setNewPackages("");
       setShowCreate(false);
-      await Promise.allSettled([profiles.refresh(), config.refresh()]);
+      await Promise.allSettled([profiles.reload(), config.reload()]);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -46,16 +47,12 @@ export default function Profiles() {
   };
 
   const remove = async (name: string) => {
-    if (confirmDelete !== name) {
-      setConfirmDelete(name);
-      return;
-    }
     setConfirmDelete(null);
     setBusy(true);
     setError(null);
     try {
       await api.deleteProfile(name);
-      await Promise.allSettled([profiles.refresh(), config.refresh()]);
+      await Promise.allSettled([profiles.reload(), config.reload()]);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -67,10 +64,11 @@ export default function Profiles() {
     <>
       <PageHeader
         title="Profiles"
-        subtitle="Named groups of packages, for updating only some things at a time — for example your work tools before a deadline. Use one with `odysync apply --profile <name>`."
+        subtitle="Named groups of packages, for updating only some things at a time, for example your work tools before a deadline. Use one with `odysync apply --profile <name>`."
         actions={
           <Button
             variant={showCreate ? "ghost" : "primary"}
+            aria-expanded={showCreate}
             onClick={() => setShowCreate((v) => !v)}
             icon={showCreate ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
           >
@@ -94,7 +92,7 @@ export default function Profiles() {
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-line bg-canvas text-sm placeholder:text-faint outline-none focus:border-accent"
+                className="w-full h-9 px-3 rounded-lg border border-control bg-canvas text-sm placeholder:text-faint outline-none focus:border-accent"
                 placeholder="Work tools"
               />
             </div>
@@ -107,7 +105,7 @@ export default function Profiles() {
                 value={newPackages}
                 onChange={(e) => setNewPackages(e.target.value)}
                 rows={4}
-                className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm font-mono placeholder:text-faint outline-none focus:border-accent selectable"
+                className="w-full px-3 py-2 rounded-lg border border-control bg-canvas text-sm font-mono placeholder:text-faint outline-none focus:border-accent selectable"
                 placeholder={"vscode\ngit\nnodejs"}
               />
             </div>
@@ -120,7 +118,7 @@ export default function Profiles() {
         </Card>
       )}
 
-      {list.length === 0 && !showCreate ? (
+      {list.length === 0 && profiles.error !== null ? null : list.length === 0 && !showCreate ? (
         <Card>
           <EmptyState
             icon={<ListChecks />}
@@ -140,15 +138,25 @@ export default function Profiles() {
               actions={
                 <Button
                   size="sm"
-                  variant={confirmDelete === p.name ? "danger" : "ghost"}
-                  onClick={() => void remove(p.name)}
-                  disabled={busy}
+                  variant="ghost"
+                  onClick={() => setConfirmDelete(p.name)}
+                  disabled={busy || confirmDelete === p.name}
+                  aria-label={`Delete the profile ${p.name}`}
                   icon={<Trash2 className="w-3.5 h-3.5" />}
                 >
-                  {confirmDelete === p.name ? "Delete?" : "Delete"}
+                  Delete
                 </Button>
               }
             >
+              {confirmDelete === p.name && (
+                <ConfirmBar
+                  className="mb-4"
+                  message={`The profile "${p.name}" is deleted. The packages in it stay installed.`}
+                  confirmLabel="Delete profile"
+                  onConfirm={() => void remove(p.name)}
+                  onCancel={() => setConfirmDelete(null)}
+                />
+              )}
               {p.packages.length === 0 ? (
                 <p className="text-sm text-muted">This profile is empty.</p>
               ) : (

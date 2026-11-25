@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -10,12 +10,13 @@ import {
   Wrench,
 } from "lucide-react";
 import * as api from "../api";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import {
   Badge,
   Button,
   Card,
   Checkbox,
+  ConfirmBar,
   EmptyState,
   ErrorBar,
   InfoBar,
@@ -26,15 +27,18 @@ import {
 import { errorText, formatDate, formatSize } from "../format";
 import { GROUP_LABELS, hardwareGroupOf, isHardwareBackend } from "../hardware-backends";
 import type { ApplyResultDto, ComponentStatus, UpdateDto } from "../types";
-import { OutcomeIcon } from "./Updates";
+import { ApplyProgressView, ScanProgressView } from "../components/Progress";
+import { FirmwareWarning } from "../components/FirmwareWarning";
+import { OutcomeIcon } from "../components/OutcomeIcon";
 
 export default function Drivers() {
-  const { scan, sysInfo, history, backup } = useStore();
-  const [applying, setApplying] = useState(false);
+  const { scan, apply, sysInfo, backends } = useStore();
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApplyResultDto | null>(null);
   const [deselected, setDeselected] = useState<Set<string>>(new Set());
-  const [confirmFirmware, setConfirmFirmware] = useState(false);
+  // The selection the firmware question was asked about; a different one has
+  // not been asked about, which closes the question.
+  const [confirmFor, setConfirmFor] = useState<string | null>(null);
 
   const info = sysInfo.data;
   const elevated = info?.elevated ?? false;
@@ -52,11 +56,16 @@ export default function Drivers() {
     () => (scan.data?.failed_backends ?? []).filter((f) => isHardwareBackend(f.backend)),
     [scan.data],
   );
+  const scanFailed = scan.health.state === "failed";
+  // Failures of sources that carry no drivers do not matter on this page.
+  const allChecked = !scanFailed && scan.health.state !== "unknown" && failures.length === 0;
   const selected = useMemo(
     () => updates.filter((u) => !deselected.has(key(u))),
     [updates, deselected],
   );
   const selectedHasFirmware = selected.some((u) => hardwareGroupOf(u.backend) === "firmware");
+  const selection = selected.map(key).join("|");
+  const confirming = confirmFor !== null && confirmFor === selection;
 
   const toggle = (u: UpdateDto) =>
     setDeselected((prev) => {
@@ -67,31 +76,28 @@ export default function Drivers() {
       return next;
     });
 
-  const install = useCallback(async () => {
-    if (selected.length === 0) return;
-    if (selectedHasFirmware && !confirmFirmware) {
-      setConfirmFirmware(true);
-      return;
-    }
-    setConfirmFirmware(false);
-    setApplying(true);
+  const install = async () => {
+    setConfirmFor(null);
     setError(null);
     setResult(null);
     try {
-      const r = await api.apply({
+      const { result: r } = await apply.run({
         updates: selected,
         dry_run: false,
         // Hardware changes are the ones you most want to be able to roll back.
         restore_point: true,
       });
       setResult(r);
-      await Promise.allSettled([scan.refresh(), history.refresh(), backup.refresh()]);
     } catch (e) {
       setError(errorText(e));
-    } finally {
-      setApplying(false);
     }
-  }, [selected, selectedHasFirmware, confirmFirmware, scan, history, backup]);
+  };
+
+  const start = () => {
+    if (selected.length === 0) return;
+    if (selectedHasFirmware) setConfirmFor(selection);
+    else void install();
+  };
 
   return (
     <>
@@ -102,7 +108,7 @@ export default function Drivers() {
           <Button
             onClick={() => void scan.refresh()}
             busy={scan.loading}
-            disabled={applying}
+            disabled={apply.running}
             icon={<RefreshCw className="w-4 h-4" />}
           >
             Rescan
@@ -114,14 +120,33 @@ export default function Drivers() {
         <InfoBar message="Checking for drivers works without administrator rights; installing them does not. Use Run as admin in the title bar when you are ready to install." />
       )}
 
-      {failures.length > 0 && (
+      {scanFailed && !scan.loading && scan.health.state === "failed" && (
+        <ErrorBar
+          message={`Driver updates could not be checked: ${scan.health.error}`}
+          action={
+            <Button
+              size="sm"
+              onClick={() => void scan.refresh()}
+              icon={<RefreshCw className="w-3.5 h-3.5" />}
+            >
+              Try again
+            </Button>
+          }
+        />
+      )}
+      {failures.length > 0 && !scan.loading && (
         <WarningBar
           message={
             <>
               {failures.length} driver source{failures.length === 1 ? "" : "s"} could not be
               checked:{" "}
-              <span className="font-mono text-xs">
-                {failures.map((f) => `${f.backend}: ${f.error}`).join("; ")}
+              <span className="text-xs">
+                {failures
+                  .map(
+                    (f) =>
+                      `${backends.data.find((b) => b.kind === f.backend)?.name ?? f.backend}: ${errorText(f.error)}`,
+                  )
+                  .join("; ")}
               </span>
             </>
           }
@@ -130,10 +155,16 @@ export default function Drivers() {
 
       {error && <ErrorBar message={error} />}
 
+      <ApplyProgressView />
+
       {result && (
         <Card
-          title="Driver installation finished"
-          description={`${result.updated} updated, ${result.failed} failed${result.reboot_required ? " — restart to finish" : ""}.`}
+          title={
+            result.failed > 0
+              ? "Finished, but not everything was installed"
+              : "Driver installation finished"
+          }
+          description={`${result.updated} updated, ${result.failed} failed${result.skipped > 0 ? `, ${result.skipped} skipped` : ""}.${result.reboot_required ? " Restart to finish." : ""}`}
           padded={false}
         >
           <ul className="divide-y divide-line border-t border-line">
@@ -155,20 +186,30 @@ export default function Drivers() {
         actions={
           updates.length > 0 ? (
             <Button
-              variant={confirmFirmware ? "danger" : "primary"}
-              onClick={install}
-              busy={applying}
-              disabled={scan.loading || selected.length === 0}
+              variant="primary"
+              onClick={start}
+              busy={apply.running}
+              disabled={scan.loading || scanFailed || confirming || selected.length === 0}
               icon={<Download className="w-4 h-4" />}
             >
-              {confirmFirmware ? "Confirm: includes firmware" : `Install ${selected.length}`}
+              {apply.running ? "Installing…" : `Install ${selected.length}`}
             </Button>
           ) : undefined
         }
       >
-        {confirmFirmware && (
+        {confirming && (
           <div className="px-5 pb-4">
-            <WarningBar message="Your selection includes firmware or BIOS updates. Keep the machine on mains power and do not shut it down while they run — an interrupted firmware update can leave a device unbootable." />
+            <ConfirmBar
+              message={<FirmwareWarning />}
+              confirmLabel={`Install ${selected.length}, including firmware`}
+              onConfirm={() => void install()}
+              onCancel={() => setConfirmFor(null)}
+            />
+          </div>
+        )}
+        {scan.loading && (
+          <div className="px-5 pb-4">
+            <ScanProgressView />
           </div>
         )}
         {updates.length === 0 && waiting.length === 0 ? (
@@ -177,15 +218,27 @@ export default function Drivers() {
               icon={
                 scan.loading ? (
                   <RefreshCw className="animate-spin text-accent" />
-                ) : (
+                ) : allChecked ? (
                   <CheckCircle2 className="text-success" />
+                ) : (
+                  <AlertTriangle className="text-warning" />
                 )
               }
-              title={scan.loading ? "Checking driver sources…" : "No driver updates"}
+              title={
+                scan.loading
+                  ? "Checking driver sources…"
+                  : allChecked
+                    ? "No driver updates"
+                    : scan.health.state === "unknown"
+                      ? "Not checked yet"
+                      : "Not every driver source could be checked"
+              }
               hint={
                 scan.loading
                   ? undefined
-                  : "Windows Update and the hardware makers have nothing newer for this machine."
+                  : allChecked
+                    ? "Windows Update and the hardware makers have nothing newer for this machine."
+                    : "There may be driver updates nobody saw. Scan again to check."
               }
             />
           </div>
@@ -239,8 +292,9 @@ function key(u: UpdateDto) {
 function VersionJump({ from, to }: { from: string; to: string }) {
   return (
     <span className="font-mono text-[13px] whitespace-nowrap selectable">
-      <span className="text-muted">{from || "—"}</span>
-      <ArrowRight className="inline w-3.5 h-3.5 mx-1.5 text-faint -mt-0.5" />
+      <span className="text-muted">{from || "-"}</span>
+      <span className="sr-only"> to </span>
+      <ArrowRight aria-hidden className="inline w-3.5 h-3.5 mx-1.5 text-faint -mt-0.5" />
       <span className="text-fg">{to}</span>
     </span>
   );
@@ -265,23 +319,36 @@ function DeviceProblems() {
         </Button>
       }
     >
-      {devices.data.length === 0 ? (
-        <div className="border-t border-line px-5 py-4 text-sm text-muted flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-success" />
-          {devices.loadedAt === null ? "Checking devices…" : "Every device reports that it is working."}
+      {devices.error && (
+        <div className="px-5 pb-4">
+          <ErrorBar message={`Devices could not be checked: ${devices.error}`} />
         </div>
+      )}
+      {devices.data.length === 0 ? (
+        devices.error === null && (
+          <div className="border-t border-line px-5 py-4 text-sm text-muted flex items-center gap-2">
+            {devices.loadedAt === null ? (
+              "Checking devices…"
+            ) : (
+              <>
+                <CheckCircle2 aria-hidden className="w-4 h-4 text-success" />
+                Every device reports that it is working.
+              </>
+            )}
+          </div>
+        )
       ) : (
         <ul className="divide-y divide-line border-t border-line">
           {devices.data.map((d) => (
             <li key={d.deviceId} className="px-5 py-4">
               <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0" />
+                <AlertTriangle aria-hidden className="w-4 h-4 text-warning flex-shrink-0" />
                 <span className="text-sm font-medium text-fg">{d.name}</span>
                 <Badge>{d.class || "Device"}</Badge>
                 <span className="text-xs text-faint ml-auto">code {d.code}</span>
               </div>
               <p className="text-sm text-muted mt-1.5 ml-6">{d.meaning}</p>
-              <p className="text-sm text-fg/90 mt-0.5 ml-6">{d.suggestion}</p>
+              <p className="text-sm text-fg mt-0.5 ml-6">{d.suggestion}</p>
             </li>
           ))}
         </ul>
@@ -308,7 +375,7 @@ function Runtimes({ elevated }: { elevated: boolean }) {
     try {
       const text = await api.componentInstall(c.id);
       setMessage({ ok: true, text });
-      await components.refresh();
+      await components.reload();
     } catch (e) {
       setMessage({ ok: false, text: errorText(e) });
     } finally {
@@ -319,7 +386,7 @@ function Runtimes({ elevated }: { elevated: boolean }) {
   return (
     <Card
       title="Game & app runtimes"
-      description="Visual C++, DirectX and .NET, installed or repaired with Microsoft's own installers — never loose DLLs from a download site."
+      description="Visual C++, DirectX and .NET, installed or repaired with Microsoft's own installers, never with loose DLLs from a download site."
       padded={false}
     >
       {message && (
@@ -327,8 +394,25 @@ function Runtimes({ elevated }: { elevated: boolean }) {
           {message.ok ? <SuccessBar message={message.text} /> : <ErrorBar message={message.text} />}
         </div>
       )}
+      {components.error && (
+        <div className="px-5 pb-4">
+          <ErrorBar
+            message={`Runtimes could not be checked: ${components.error}`}
+            action={
+              <Button
+                size="sm"
+                busy={components.loading}
+                onClick={() => void components.refresh()}
+                icon={<RefreshCw className="w-3.5 h-3.5" />}
+              >
+                Try again
+              </Button>
+            }
+          />
+        </div>
+      )}
       <ul className="divide-y divide-line border-t border-line">
-        {components.loadedAt === null && (
+        {components.loadedAt === null && components.error === null && (
           <li className="px-5 py-4 text-sm text-muted">Checking runtimes…</li>
         )}
         {components.data.map((c) => {
@@ -378,12 +462,12 @@ function DriverBackups({ elevated }: { elevated: boolean }) {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
 
-  const run = async (label: string, work: () => Promise<string>) => {
+  const run = async (label: string, work: () => Promise<{ ok: boolean; text: string }>) => {
     setBusy(label);
     setMessage(null);
     try {
-      setMessage({ ok: true, text: await work() });
-      await driverBackups.refresh();
+      setMessage(await work());
+      await driverBackups.reload();
     } catch (e) {
       setMessage({ ok: false, text: errorText(e) });
     } finally {
@@ -394,14 +478,14 @@ function DriverBackups({ elevated }: { elevated: boolean }) {
   const backupNow = () =>
     run("backup", async () => {
       const b = await api.driverBackupCreate("taken from the Odysync app");
-      return `Saved ${b.package_count} driver packages (${formatSize(b.size_bytes)}).${b.complete ? "" : " Some packages could not be exported."}`;
+      return {
+        // A backup with holes in it is not a success.
+        ok: b.complete,
+        text: `Saved ${b.package_count} driver packages (${formatSize(b.size_bytes)}).${b.complete ? "" : " Some packages could not be exported, so this backup is incomplete."}`,
+      };
     });
 
   const restore = (id: string) => {
-    if (confirmRestore !== id) {
-      setConfirmRestore(id);
-      return;
-    }
     setConfirmRestore(null);
     void run(`restore:${id}`, async () => {
       const r = await api.driverBackupRestore(id);
@@ -410,7 +494,10 @@ function DriverBackups({ elevated }: { elevated: boolean }) {
         `${r.already_current.length} already current`,
         r.failed.length > 0 ? `${r.failed.length} failed` : null,
       ].filter(Boolean);
-      return `${parts.join(", ")}.${r.reboot_required ? " Restart to finish." : ""}`;
+      return {
+        ok: r.failed.length === 0,
+        text: `${parts.join(", ")}.${r.reboot_required ? " Restart to finish." : ""}${r.failed.length > 0 ? ` Not restored: ${r.failed.join(", ")}.` : ""}`,
+      };
     });
   };
 
@@ -436,43 +523,56 @@ function DriverBackups({ elevated }: { elevated: boolean }) {
           {message.ok ? <SuccessBar message={message.text} /> : <ErrorBar message={message.text} />}
         </div>
       )}
-      {driverBackups.data.length === 0 ? (
-        <div className="border-t border-line px-5 py-4 text-sm text-muted">
-          No backups yet. A full backup is usually 3–6 GB, so Odysync does not take one
-          automatically unless you turn that on in Settings.
+      {driverBackups.error && (
+        <div className="px-5 pb-4">
+          <ErrorBar message={`The backups could not be read: ${driverBackups.error}`} />
         </div>
+      )}
+      {driverBackups.data.length === 0 ? (
+        driverBackups.error === null && (
+          <div className="border-t border-line px-5 py-4 text-sm text-muted">
+            {driverBackups.loadedAt === null
+              ? "Reading the backups…"
+              : "No backups yet. A full backup is usually 3 to 6 GB, so Odysync takes one only when you ask."}
+          </div>
+        )
       ) : (
         <ul className="divide-y divide-line border-t border-line">
           {driverBackups.data.map((b) => (
-            <li key={b.id} className="flex items-center gap-4 px-5 py-3.5">
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-fg">{formatDate(b.created_at)}</div>
-                <div className="text-sm text-muted">
-                  {b.package_count} packages · {formatSize(b.size_bytes)} · {b.reason}
-                  {!b.complete && " · incomplete"}
+            <li key={b.id} className="px-5 py-3.5">
+              <div className="flex items-center gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-fg">{formatDate(b.created_at)}</div>
+                  <div className="text-sm text-muted">
+                    {b.package_count} packages · {formatSize(b.size_bytes)} · {b.reason}
+                    {!b.complete && " · incomplete"}
+                  </div>
                 </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  busy={busy === `restore:${b.id}`}
+                  disabled={!elevated || busy !== null || confirmRestore === b.id}
+                  title={elevated ? undefined : "Needs administrator rights"}
+                  aria-label={`Restore the backup of ${formatDate(b.created_at)}`}
+                  icon={<RotateCcw className="w-3.5 h-3.5" />}
+                  onClick={() => setConfirmRestore(b.id)}
+                >
+                  Restore
+                </Button>
               </div>
-              <Button
-                size="sm"
-                variant={confirmRestore === b.id ? "danger" : "ghost"}
-                busy={busy === `restore:${b.id}`}
-                disabled={!elevated || (busy !== null && busy !== `restore:${b.id}`)}
-                title={elevated ? undefined : "Needs administrator rights"}
-                icon={<RotateCcw className="w-3.5 h-3.5" />}
-                onClick={() => restore(b.id)}
-              >
-                {confirmRestore === b.id ? "Confirm restore" : "Restore"}
-              </Button>
+              {confirmRestore === b.id && (
+                <ConfirmBar
+                  className="mt-3"
+                  message="Restoring adds the saved packages again and lets Windows install them where they fit. It does not force a downgrade: if a newer driver is still installed, Windows may keep preferring it."
+                  confirmLabel="Restore these drivers"
+                  onConfirm={() => restore(b.id)}
+                  onCancel={() => setConfirmRestore(null)}
+                />
+              )}
             </li>
           ))}
         </ul>
-      )}
-      {confirmRestore && (
-        <p className="px-5 py-3 border-t border-line text-sm text-muted">
-          Restoring re-adds the saved packages and lets Windows install them where they fit.
-          It does not force a downgrade: if a newer driver is still installed, Windows may
-          keep preferring it.
-        </p>
       )}
     </Card>
   );

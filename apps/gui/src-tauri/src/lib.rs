@@ -1,3 +1,4 @@
+mod background;
 mod commands;
 mod state;
 mod tools;
@@ -32,12 +33,11 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_dialog::init())
         .manage(state::AppState::new())
         .setup(|app| {
             tray::setup(app.handle())?;
+            background::start(app.handle().clone());
 
             // Launched by the Windows "Run" key with --minimized: stay in the
             // tray instead of stealing focus during login.
@@ -59,7 +59,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::scan,
+            commands::cancel_scan,
             commands::apply,
+            commands::cancel_apply,
             commands::list_backends,
             commands::refresh_backends,
             commands::get_config,
@@ -74,7 +76,6 @@ pub fn run() {
             commands::create_diagnostics,
             commands::get_system_info,
             commands::report_frontend_error,
-            commands::background_scan,
             commands::get_update_history,
             commands::clear_update_history,
             commands::get_hardware_info,

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import { Power, RefreshCw, Search } from "lucide-react";
+import { Power, RefreshCw } from "lucide-react";
 import * as api from "../api";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import {
   Badge,
   Button,
@@ -9,6 +9,7 @@ import {
   EmptyState,
   ErrorBar,
   PageHeader,
+  SearchInput,
   Switch,
 } from "../components/ui";
 import { errorText } from "../format";
@@ -42,7 +43,7 @@ export default function Startup() {
     setError(null);
     try {
       await api.toggleStartupProgram(name, location, enable);
-      await startup.refresh();
+      await startup.reload();
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -56,7 +57,7 @@ export default function Startup() {
         title="Startup"
         subtitle={
           programs.length > 0
-            ? `${enabledCount} of ${programs.length} programs start when you sign in. Turning one off only stops it starting — nothing is uninstalled, and you can turn it back on here.`
+            ? `${enabledCount} of ${programs.length} programs start when you sign in. Turning one off only stops it starting. Nothing is uninstalled, and you can turn it back on here.`
             : "Programs that start when you sign in."
         }
         actions={
@@ -76,16 +77,11 @@ export default function Startup() {
       <Card padded={false}>
         {programs.length > 0 && (
           <div className="px-5 py-3 border-b border-line">
-            <label className="flex items-center gap-2 h-9 px-3 rounded-lg border border-line bg-canvas focus-within:border-accent">
-              <Search className="w-4 h-4 text-faint" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="flex-1 bg-transparent text-sm outline-none placeholder:text-faint"
-                placeholder="Filter by name or command"
-              />
-            </label>
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Filter by name or command"
+            />
           </div>
         )}
 
@@ -96,7 +92,9 @@ export default function Startup() {
               startup.loading && startup.loadedAt === null
                 ? "Reading startup entries…"
                 : programs.length === 0
-                  ? "Nothing starts automatically"
+                  ? startup.error
+                    ? "The startup entries could not be read"
+                    : "Nothing starts automatically"
                   : "No entries match the filter"
             }
           />

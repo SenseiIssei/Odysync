@@ -1,6 +1,6 @@
 import { BatteryMedium, Cpu, HardDrive, HeartPulse, MemoryStick, Monitor, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import {
   Badge,
   Button,
@@ -28,7 +28,7 @@ export default function Hardware() {
     <>
       <PageHeader
         title="System & health"
-        subtitle="What this machine is made of, and how its disks and battery are holding up — read from the hardware itself."
+        subtitle="What this machine is made of, and how its disks and battery are holding up, read from the hardware itself."
         actions={
           <Button
             onClick={() => {
@@ -98,7 +98,7 @@ export default function Hardware() {
                             {formatSize(d.free_bytes)} free of {formatSize(d.size_bytes)}
                           </span>
                         </div>
-                        <Meter value={used} tone={used > 0.9 ? "danger" : used > 0.8 ? "warning" : "accent"} />
+                        <Meter label={`Space used on ${d.mount}`} value={used} tone={used > 0.9 ? "danger" : used > 0.8 ? "warning" : "accent"} />
                       </li>
                     );
                   })}
@@ -147,7 +147,7 @@ function HealthCard({ report }: { report: HealthReportDto }) {
           <HeartPulse className="w-4 h-4 text-accent" /> Hardware health
         </span>
       }
-      description="Disks and batteries wear out on their own. Odysync reads what they report about themselves — nothing is estimated."
+      description="Disks and batteries wear out on their own. Odysync reads what they report about themselves; nothing is estimated."
       padded={false}
     >
       <ul className="divide-y divide-line border-t border-line">
@@ -176,6 +176,7 @@ function HealthCard({ report }: { report: HealthReportDto }) {
                     <span className="tabular-nums">{d.wear_percent}%</span>
                   </div>
                   <Meter
+                    label={`Write endurance used, ${d.name}`}
                     value={d.wear_percent / 100}
                     tone={d.wear_percent >= 80 ? "danger" : d.wear_percent >= 50 ? "warning" : "success"}
                   />
@@ -203,6 +204,7 @@ function HealthCard({ report }: { report: HealthReportDto }) {
             {report.battery.capacity_percent !== null && (
               <div className="mt-2.5 pl-7">
                 <Meter
+                  label="Battery capacity left"
                   value={report.battery.capacity_percent / 100}
                   tone={
                     report.battery.capacity_percent >= 80

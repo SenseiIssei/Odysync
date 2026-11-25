@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { CheckCircle2, HardDriveDownload, RefreshCw, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import * as api from "../api";
-import { useStore } from "../store";
+import { useStore } from "../store-context";
 import {
   Button,
   Card,
+  ConfirmBar,
   EmptyState,
   ErrorBar,
   PageHeader,
@@ -57,15 +58,11 @@ export default function Offline() {
   };
 
   const clearAll = () => {
-    if (!confirmClear) {
-      setConfirmClear(true);
-      return;
-    }
     setConfirmClear(false);
     void run(async () => {
       await api.clearOfflineManifest();
       setVerified({});
-      await offline.refresh();
+      await offline.reload();
     });
   };
 
@@ -77,7 +74,7 @@ export default function Offline() {
           ? "Every cached entry still has its file on disk."
           : `Removed ${dropped} entr${dropped === 1 ? "y" : "ies"} whose file was missing.`,
       );
-      await offline.refresh();
+      await offline.reload();
     });
 
   return (
@@ -113,13 +110,23 @@ export default function Offline() {
                 <Button size="sm" variant="ghost" onClick={prune} disabled={busy || verifying}>
                   Prune missing
                 </Button>
-                <Button size="sm" variant={confirmClear ? "danger" : "ghost"} onClick={clearAll} disabled={busy} icon={<Trash2 className="w-3.5 h-3.5" />}>
-                  {confirmClear ? "Delete all?" : "Clear"}
+                <Button size="sm" variant="ghost" onClick={() => setConfirmClear(true)} disabled={busy || confirmClear} icon={<Trash2 className="w-3.5 h-3.5" />}>
+                  Clear
                 </Button>
               </>
             ) : undefined
           }
         >
+          {confirmClear && entries.length > 0 && (
+            <div className="px-5 pb-4">
+              <ConfirmBar
+                message={`All ${entries.length} cached installer${entries.length === 1 ? " is" : "s are"} deleted. They can be downloaded again.`}
+                confirmLabel="Delete all"
+                onConfirm={clearAll}
+                onCancel={() => setConfirmClear(false)}
+              />
+            </div>
+          )}
           {entries.length === 0 ? (
             <div className="border-t border-line">
               <EmptyState
@@ -134,10 +141,16 @@ export default function Offline() {
                 const v = verified[key(e.backend, e.package_id)];
                 return (
                   <li key={key(e.backend, e.package_id)} className="flex items-center gap-3 px-5 py-3">
-                    {v === true && <CheckCircle2 className="w-4 h-4 text-success" aria-label="Checksum verified" />}
-                    {v === false && <XCircle className="w-4 h-4 text-danger" aria-label="Checksum mismatch or file missing" />}
+                    {v === true && <CheckCircle2 aria-hidden className="w-4 h-4 text-success" />}
+                    {v === false && <XCircle aria-hidden className="w-4 h-4 text-danger" />}
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-fg truncate">{e.package_id}</div>
+                      <div className="text-sm font-medium text-fg truncate">
+                        {e.package_id}
+                        {v === true && <span className="sr-only">: checksum verified</span>}
+                        {v === false && (
+                          <span className="text-danger font-normal">: checksum wrong or file missing</span>
+                        )}
+                      </div>
                       <div className="text-sm text-muted">
                         {e.backend} · v{e.version} · {formatSize(e.size_bytes)} · {formatDate(e.cached_at)}
                       </div>
@@ -146,10 +159,11 @@ export default function Offline() {
                       size="sm"
                       variant="ghost"
                       disabled={busy}
+                      aria-label={`Remove ${e.package_id} from the cache`}
                       onClick={() =>
                         void run(async () => {
                           await api.removeOfflineEntry(e.package_id, e.backend);
-                          await offline.refresh();
+                          await offline.reload();
                         })
                       }
                     >

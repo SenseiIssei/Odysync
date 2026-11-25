@@ -36,8 +36,25 @@ export async function scan(): Promise<ScanResult> {
   return invoke<ScanResult>("scan");
 }
 
+/**
+ * Stop the running scan. Sources that have not answered come back in
+ * `failed_backends` with the error "cancelled".
+ */
+export async function cancelScan(): Promise<void> {
+  return invoke<void>("cancel_scan");
+}
+
+/** Rejects with "apply-running" while another apply is still going. */
 export async function apply(request: ApplyRequest): Promise<ApplyResultDto> {
   return invoke<ApplyResultDto>("apply", { request });
+}
+
+/**
+ * Stop after the package that is being installed now. The rest come back with
+ * the status "skipped".
+ */
+export async function cancelApply(): Promise<void> {
+  return invoke<void>("cancel_apply");
 }
 
 export async function listBackends(): Promise<BackendDto[]> {
@@ -69,10 +86,6 @@ export async function runMaintenance(action: string): Promise<string> {
   return invoke<string>("run_maintenance", { action });
 }
 
-export async function listMaintenance(): Promise<string[]> {
-  return invoke<string[]>("list_maintenance");
-}
-
 export async function createSchedule(request: ScheduleRequest): Promise<string> {
   return invoke<string>("create_schedule", { request });
 }
@@ -83,10 +96,6 @@ export async function removeSchedule(taskName: string): Promise<boolean> {
 
 export async function checkSchedule(taskName: string): Promise<boolean> {
   return invoke<boolean>("check_schedule", { taskName });
-}
-
-export async function createDiagnostics(outPath: string): Promise<void> {
-  return invoke<void>("create_diagnostics", { outPath });
 }
 
 export async function getSystemInfo(): Promise<SystemInfoDto> {
@@ -169,32 +178,18 @@ export async function removeOfflineEntry(packageId: string, backend: string): Pr
   return invoke<void>("remove_offline_entry", { packageId, backend });
 }
 
-export async function downloadOfflineInstaller(
-  url: string,
-  packageId: string,
-  backend: string,
-  version: string,
-  expectedSha256?: string,
-): Promise<void> {
-  return invoke<void>("download_offline_installer", {
-    url,
-    packageId,
-    backend,
-    version,
-    expectedSha256: expectedSha256 ?? null,
-  });
-}
-
 export async function verifyOfflineCache(): Promise<boolean[]> {
   return invoke<boolean[]>("verify_offline_cache");
 }
 
+/** Rejects with "apply-running" while an update is being installed. */
 export async function restartAsAdmin(): Promise<void> {
   return invoke<void>("restart_as_admin");
 }
 
-export async function quitApp(): Promise<void> {
-  return invoke<void>("quit_app");
+/** Rejects with "apply-running" while an update is being installed, unless forced. */
+export async function quitApp(force: boolean): Promise<void> {
+  return invoke<void>("quit_app", { force });
 }
 
 export async function listStartupPrograms(): Promise<StartupProgramDto[]> {
@@ -322,8 +317,4 @@ export async function driverBackupCreate(reason: string): Promise<DriverBackupDt
 
 export async function driverBackupRestore(id: string): Promise<DriverRestoreDto> {
   return invoke<DriverRestoreDto>("driver_backup_restore", { id });
-}
-
-export async function driverBackupPrune(keep: number): Promise<number> {
-  return invoke<number>("driver_backup_prune", { keep });
 }

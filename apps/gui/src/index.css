@@ -12,7 +12,9 @@
  * The look: a near-black canvas lit by two soft, slowly drifting glows
  * (violet and blue, with a warm amber accent for what needs attention),
  * glass cards on top, and one gradient for the things you press. Text colours
- * meet WCAG AA against the surfaces they sit on in both themes.
+ * meet WCAG AA (4.5:1) against every surface and tint they sit on, and
+ * `--control`, the outline of inputs and switches, meets 3:1. The numbers are
+ * asserted in src/test/contrast.test.ts, which reads this file.
  */
 :root,
 :root[data-theme="dark"] {
@@ -22,12 +24,13 @@
   --raised: #1a1e28;
   --line: #232835;
   --line-strong: #323949;
+  --control: #6b7488;
   --fg: #eceef3;
   --muted: #a4abb9;
-  --faint: #788091;
-  --accent: #8f8cff;
+  --faint: #8b94a6;
+  --accent: #9c99ff;
   --accent-2: #4fb2ff;
-  --accent-fg: #ffffff;
+  --accent-fg: #0b0d14;
   --warm: #ffc66d;
   --success: #4fd39a;
   --warning: #f2bc5c;
@@ -48,17 +51,18 @@
   --raised: #eef0f6;
   --line: #e2e5ee;
   --line-strong: #cdd2de;
+  --control: #7a8293;
   --fg: #141821;
   --muted: #515b6b;
-  --faint: #727a8a;
-  --accent: #5a54f0;
-  --accent-2: #1f86ee;
+  --faint: #596171;
+  --accent: #4841d6;
+  --accent-2: #1668bd;
   --accent-fg: #ffffff;
   --warm: #b97a06;
-  --success: #12875a;
-  --warning: #9a6410;
-  --danger: #c93636;
-  --info: #1b6fc0;
+  --success: #0b6844;
+  --warning: #7b4d08;
+  --danger: #a82424;
+  --info: #12548f;
   --glass: rgb(255 255 255 / 0.72);
   --glass-edge: rgb(255 255 255 / 0.9);
   --glow-1: rgb(110 96 255 / 0.13);
@@ -79,6 +83,7 @@
   --color-raised: var(--raised);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
+  --color-control: var(--control);
   --color-fg: var(--fg);
   --color-muted: var(--muted);
   --color-faint: var(--faint);
@@ -354,6 +359,14 @@ pre {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 6px;
+}
+
+/*
+ * Page headings take focus after navigation so a screen reader announces the
+ * new page. They are not controls, so they get no focus ring.
+ */
+h1[tabindex="-1"]:focus {
+  outline: none;
 }
 
 button {

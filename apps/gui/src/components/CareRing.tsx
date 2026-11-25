@@ -19,7 +19,8 @@ const C = 2 * Math.PI * R;
  * The care ring: the score while idle, a spinning sweep while Odysync looks
  * or fixes, and a ripple when it is done.
  *
- * `value` is 0–100 — the score, or the progress of the running job.
+ * `value` is the score from 0 to 100 or the progress of the running job, and
+ * `null` when there is no score because nothing could be checked.
  */
 export function CareRing({
   mode,
@@ -30,7 +31,7 @@ export function CareRing({
   center,
 }: {
   mode: RingMode;
-  value: number;
+  value: number | null;
   tone: RingTone;
   /** Under the number, e.g. "Excellent" or "Checking updates". */
   label: string;
@@ -39,7 +40,7 @@ export function CareRing({
   /** Replaces the number, e.g. with an icon. */
   center?: ReactNode;
 }) {
-  const clamped = Math.max(0, Math.min(100, value));
+  const clamped = Math.max(0, Math.min(100, value ?? 0));
   const shown = useCountUp(Math.round(clamped));
   const [from, to] = STOPS[tone];
   const gradientId = `ring-${tone}`;
@@ -49,7 +50,7 @@ export function CareRing({
       className="relative flex-shrink-0"
       style={{ width: SIZE, height: SIZE }}
       role="img"
-      aria-label={`${label}${mode === "idle" ? `: ${Math.round(clamped)} of 100` : ""}`}
+      aria-label={`${label}${mode === "idle" && value !== null ? `: ${Math.round(clamped)} of 100` : ""}`}
     >
       {/* The light behind the ring. */}
       <div
