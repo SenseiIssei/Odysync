@@ -83,7 +83,7 @@
         "type": "github",
         "repo": "keepassxreboot/keepassxc",
         "tag": "^(?P<v>\\d+\\.\\d+\\.\\d+)$",
-        "assets": { "x64": "^KeePassXC-[\\d.]+-Win64\\.msi$" }
+        "assets": { "x64": "^KeePassXC-[\\d.]+-(?:x64|Win64)\\.msi$" }
       },
       "installer": "msi",
       "processes": ["KeePassXC.exe", "keepassxc-proxy.exe"],
@@ -219,6 +219,7 @@
       "source": {
         "type": "github",
         "repo": "PowerShell/PowerShell",
+        "same_line": 2,
         "tag": "^v(?P<v>\\d+\\.\\d+\\.\\d+)$",
         "assets": { "x64": "^PowerShell-[\\d.]+-win-x64\\.msi$" }
       },

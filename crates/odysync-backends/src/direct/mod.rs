@@ -162,13 +162,25 @@ async fn resolve(
             tag,
             assets,
             user_assets,
+            same_line,
         } => {
             let Some(pattern) = catalog::asset_pattern(assets, user_assets, app.scope, app.arch)
             else {
                 return Ok(None);
             };
-            let url = format!("https://api.github.com/repos/{repo}/releases/latest");
-            let release = http::get_json_for(client, &url, purpose).await?;
+            let api = format!("https://api.github.com/repos/{repo}/releases");
+            let release = match same_line {
+                None => http::get_json_for(client, &format!("{api}/latest"), purpose).await?,
+                Some(parts) => {
+                    let list =
+                        http::get_json_for(client, &format!("{api}?per_page=50"), purpose).await?;
+                    let installed = app.display_version.as_deref().unwrap_or_default();
+                    match catalog::pick_github_release(&list, tag, installed, *parts) {
+                        Some(release) => release.clone(),
+                        None => return Ok(None),
+                    }
+                }
+            };
             if release.get("draft").and_then(|v| v.as_bool()) == Some(true)
                 || release.get("prerelease").and_then(|v| v.as_bool()) == Some(true)
             {
@@ -195,7 +207,12 @@ async fn resolve(
                         .is_some_and(|n| asset_re.is_match(n))
                 })
             else {
-                return Ok(None);
+                // The publisher renamed or dropped the file. Saying nothing
+                // would make the app look up to date from then on.
+                return Err(Error::parse(
+                    format!("{} release", entry.id),
+                    format!("{version} has no installer matching {pattern}"),
+                ));
             };
             let url = asset
                 .get("browser_download_url")
@@ -774,41 +791,45 @@ mod tests {
     use super::*;
     use catalog::Technology;
 
-    /// Every GitHub-sourced entry still resolves against the live API to a
-    /// stable version, an installer of that repository and a published
+    /// Every entry still resolves against its publisher to a stable version,
+    /// an installer of that publisher and a published
     /// SHA-256 — the three things `lock_and_verify` will insist on. Run it
     /// after editing the catalog: `cargo test -p odysync-backends -- --ignored
     /// catalog_entries_resolve`.
     #[tokio::test]
-    #[ignore = "asks the live GitHub API"]
-    async fn catalog_entries_resolve_against_github() {
+    #[ignore = "asks the publishers; the weekly CI run includes it"]
+    async fn catalog_entries_resolve_against_their_publishers() {
         let client = http::client(None, std::time::Duration::from_secs(30)).expect("http client");
         let catalog = Catalog::embedded();
+        let mut problems = Vec::new();
         for entry in &catalog.apps {
-            if !matches!(entry.source, Source::Github { .. }) {
-                continue;
-            }
             let app = InstalledApp {
                 display_name: entry.name.clone(),
-                display_version: Some("0".into()),
+                // Sources that stay on a line need one that is alive.
+                display_version: Some(
+                    match entry.id.as_str() {
+                        "powershell" => "7.6.0",
+                        "nodejs" => "24.0.0",
+                        _ => "0",
+                    }
+                    .into(),
+                ),
                 publisher: None,
                 scope: Scope::Machine,
                 arch: "x64",
                 technology: Technology::Other,
                 install_dir: None,
             };
-            let release = resolve(&client, entry, &app, Purpose::Install)
-                .await
-                .unwrap_or_else(|e| panic!("{}: {e}", entry.id))
-                .unwrap_or_else(|| panic!("{}: no release or no x64 asset", entry.id));
-            assert!(
-                release.sha256.is_some(),
-                "{}: {} has no published SHA-256",
-                entry.id,
-                release.url
-            );
-            println!("{:<20} {:<14} {}", entry.id, release.version, release.url);
+            match resolve(&client, entry, &app, Purpose::Install).await {
+                Ok(Some(r)) if r.sha256.is_some() => {
+                    println!("{:<20} {:<14} {}", entry.id, r.version, r.url);
+                }
+                Ok(Some(r)) => problems.push(format!("{}: {} has no SHA-256", entry.id, r.url)),
+                Ok(None) => problems.push(format!("{}: no release or no x64 asset", entry.id)),
+                Err(e) => problems.push(format!("{}: {e}", entry.id)),
+            }
         }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
     #[test]
